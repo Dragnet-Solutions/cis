@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
+import { operatorFirmSource as firmSource } from '../reports/source';
 import { FirmReport as FirmReportDocument } from '../reports/FirmReport';
 import type { AdminClient } from '../api/client';
-import { ApiError, type FirmReport, type FirmSummary } from '../api/types';
+import {
+  ApiError,
+  type FirmReport,
+  type FirmSummary,
+  type ReleaseFirmReportsResult,
+} from '../api/types';
 
 /**
  * UX-ADM-006 — Firm report generation & release, live-wired to the real
@@ -36,10 +42,10 @@ export function FirmReportsPage({
   const [nationalApproved, setNationalApproved] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [releaseResult, setReleaseResult] = useState<{
-    released: string[];
-    held: { organizationId: string; reason: string }[];
-  } | null>(null);
+  const [releaseResult, setReleaseResult] = useState<ReleaseFirmReportsResult | null>(null);
+  const [notices, setNotices] = useState<
+    Record<string, { sent: number; logged: number; failed: number; queued: number }>
+  >({});
   const [generationAttempted, setGenerationAttempted] = useState(false);
   const [viewingFirm, setViewingFirm] = useState<string | null>(null);
 
@@ -53,6 +59,7 @@ export function FirmReportsPage({
         client.getLatestNationalReport(editionId),
       ]);
       setReports(reportsRes.reports);
+      setNotices(reportsRes.notices ?? {});
       setFirms(firmsRes);
       setAuthoritativeRunId(runsRes.authoritative?.calculationRunId ?? null);
       if (latestNational.report) {
@@ -89,9 +96,7 @@ export function FirmReportsPage({
   if (viewingFirm) {
     return (
       <FirmReportDocument
-        client={client}
-        editionId={editionId}
-        firmId={viewingFirm}
+        source={firmSource(client, editionId, viewingFirm)}
         onBack={() => setViewingFirm(null)}
       />
     );
@@ -251,6 +256,15 @@ export function FirmReportsPage({
                             ? 'Held'
                             : 'Not released'}
                       </span>
+                      {notices[r.id] && (
+                        <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                          {notices[r.id]!.sent > 0
+                            ? `Emailed ${notices[r.id]!.sent}`
+                            : notices[r.id]!.failed > 0
+                              ? `Email failed (${notices[r.id]!.failed})`
+                              : 'Notice recorded, not sent'}
+                        </div>
+                      )}
                     </td>
                     <td>
                       <button
@@ -318,7 +332,8 @@ export function FirmReportsPage({
                   {releaseResult && (
                     <div className="note">
                       <p>
-                        Released to {releaseResult.released.length} firms.{' '}
+                        Released to {releaseResult.released.length} firms, each with its written
+                        analysis frozen as released. {noticeLine(releaseResult.notified)}{' '}
                         {releaseResult.held.length > 0 &&
                           `${releaseResult.held.length} held: ${releaseResult.held
                             .map((h) => `${firmName(h.organizationId)} (${h.reason})`)
@@ -337,7 +352,9 @@ export function FirmReportsPage({
                         )
                       }
                     >
-                      Release the {readyToRelease.length} approved
+                      {busy
+                        ? 'Releasing — writing any missing analyses first…'
+                        : `Release the ${readyToRelease.length} approved`}
                     </button>
                   </div>
                 </>
@@ -348,4 +365,17 @@ export function FirmReportsPage({
       )}
     </main>
   );
+}
+
+/** How a release's notices to the firms' coordinators went, in one line. */
+function noticeLine(n: { sent: number; logged: number; failed: number }): string {
+  const parts: string[] = [];
+  if (n.sent) parts.push(`${n.sent} coordinator email${n.sent === 1 ? '' : 's'} sent`);
+  if (n.logged) {
+    parts.push(
+      `${n.logged} coordinator notice${n.logged === 1 ? '' : 's'} recorded but not sent — no mail server is configured (SMTP_URL)`,
+    );
+  }
+  if (n.failed) parts.push(`${n.failed} email${n.failed === 1 ? '' : 's'} failed to send`);
+  return parts.length ? `${parts.join('; ')}.` : 'No coordinators to notify.';
 }

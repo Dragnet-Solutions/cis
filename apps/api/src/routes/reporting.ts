@@ -279,6 +279,35 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
     },
   );
 
+  // Institutional Perspectives — the Industry report's section 10 as its own
+  // document, from the same content and narrative.
+  app.get(
+    '/editions/:id/reports/institutional/pdf',
+    { preHandler: [app.authenticate], schema: { params: z.object({ id: z.string().uuid() }) } },
+    async (request, reply) => {
+      const pool = getPool();
+      const ready = await ensureIndustryNarrative(
+        pool,
+        request.params.id,
+        foundryModelFromEnv,
+        request.session.email,
+      );
+      if (!ready) {
+        return reply.status(409).send(noNarrative);
+      }
+      const content = await buildIndustryReportContent(pool, request.params.id);
+      const pdf = await renderReportPdf(
+        `/print/institutional?edition=${request.params.id}`,
+        pdfSession(request),
+      );
+      return sendPdf(
+        reply,
+        pdf,
+        `CIS-Dragnet-Institutional-Perspectives-${content.edition.label}.pdf`,
+      );
+    },
+  );
+
   app.get(
     '/editions/:id/firms/:firmId/report/pdf',
     {

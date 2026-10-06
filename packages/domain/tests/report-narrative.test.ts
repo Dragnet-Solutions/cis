@@ -15,6 +15,11 @@ import {
   ensureIndustryNarrative,
   narrativeDue,
   checkNarrativeSentence,
+  sectionFinding,
+  institutionalThemes,
+  industryFacts,
+  type InstitutionalReading,
+  type IndustryReportContent,
   parseModelSections,
   firmFacts,
   type NarrativeModel,
@@ -402,5 +407,76 @@ describe('Drafting the narrative by default', () => {
     expect(narrativeDue([fact('Old figure.')], null)).toBe(true);
     // Nothing to write about yet: never drafted.
     expect(narrativeDue([], null)).toBe(false);
+  });
+});
+
+describe('Institutional Perspectives', () => {
+  const reading = (
+    code: string,
+    family: string,
+    issue: string[],
+    consequence: string[],
+  ): InstitutionalReading => ({
+    key: `${family}_${code}`,
+    role: `${code} institution`,
+    code,
+    familyCode: family,
+    vantage: 'Its mandate',
+    responses: 1,
+    topIssues: [],
+    issue: { greatest: issue[0] ?? null, others: issue.slice(1) },
+    frequency: 'Occasionally',
+    marks: ['Operational discipline'],
+    consequence: { greatest: consequence[0] ?? null, others: consequence.slice(1) },
+    capability: 'Adequate',
+  });
+
+  it('finds what institutions share from their own wording, and who stands apart', () => {
+    const { themes, standsApart } = institutionalThemes([
+      reading('SEC', 'A', ['Documentation and record keeping'], ['Internal controls']),
+      reading('CSCS', 'C', ['Reconciliation issues'], ['Documentation deficiencies']),
+      reading('CSCS', 'D', ['Securities-account record mismatches requiring investigation'], []),
+      reading('LCFE', 'B', ['Staff competence'], []),
+    ]);
+    const doc = themes.find((t) => t.theme === 'Documentation and record keeping');
+    // CSCS in two roles is still one institution.
+    expect(doc?.codes).toEqual(['CSCS', 'SEC']);
+    expect(standsApart).toEqual(['LCFE']);
+  });
+
+  it('gives the model each reading as a qualitative fact — never a figure', () => {
+    const readings = [
+      reading('SEC', 'A', ['Documentation and record keeping'], ['Internal controls']),
+      reading('NGX', 'B', ['Manual processes'], ['Late submissions']),
+    ];
+    const content = {
+      participation: [],
+      frictions: null,
+      frustrations: null,
+      participationImpact: null,
+      confidenceLevers: null,
+      localVsForeign: { rows: [] },
+      comparators: null,
+      selfVsInvestors: { firmSelfBelief: { value: null }, investorExperience: { value: null } },
+      institutional: readings,
+      institutionalParticipation: { invited: 2, contributed: 2 },
+      institutionalThemes: institutionalThemes(readings),
+    } as unknown as IndustryReportContent;
+    const facts = industryFacts(content);
+    const sec = facts.find((f) => f.id === 'INST.A_SEC');
+    expect(sec?.state).toBe('BANDED');
+    expect(sec?.numbers).toEqual([]);
+    expect(sec?.statement).toContain('Documentation and record keeping');
+    expect(facts.find((f) => f.id === 'INST.PART')?.numbers).toEqual([2, 2]);
+  });
+
+  it('holds back a quotation in an institution’s reading', () => {
+    expect(sectionFinding('INST_A_SEC', 'The SEC calls records “the weak point”.')?.kind).toBe(
+      'QUOTATION',
+    );
+    expect(
+      sectionFinding('INST_A_SEC', 'The SEC sees record keeping as the weak point.'),
+    ).toBeNull();
+    expect(sectionFinding('EXEC', 'Firms cite "Manual processes".')).toBeNull();
   });
 });

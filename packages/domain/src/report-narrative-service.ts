@@ -150,13 +150,65 @@ export function industryFacts(c: IndustryReportContent): NarrativeFact[] {
       ),
     );
   }
-  c.institutional.forEach((i) =>
+  // Institutions: a handful of considered positions — qualitative only, never a
+  // figure (BANDED), and never words put in an institution's mouth.
+  const ip = c.institutionalParticipation;
+  if (ip.invited > 0) {
     facts.push(
       fact(
-        `INST.${i.familyCode}`,
-        `${i.role}${i.familyCode === 'D' ? ' (depository role)' : ''} most often sees: ${i.topIssues.map((t) => t.label).join('; ') || 'no recurring issue named'}. It rates the profession's overall capability as "${i.capability ?? 'not stated'}".`,
+        'INST.PART',
+        `${ip.contributed} of ${ip.invited} invited institutions contributed a reading.`,
+        [ip.contributed, ip.invited],
+      ),
+    );
+  }
+  for (const i of c.institutional) {
+    const list = (xs: string[]) => xs.map((x) => `"${x}"`).join(', ');
+    facts.push(
+      fact(
+        `INST.${i.key}`,
+        [
+          `${i.role} (${i.code}; vantage: ${i.vantage.toLowerCase()}).`,
+          i.issue.greatest
+            ? `Most frequently cited issue: "${i.issue.greatest}"${i.issue.others.length ? `, alongside ${list(i.issue.others)}` : ''}.`
+            : 'Named no recurring issue.',
+          i.frequency
+            ? `How often firm-level weaknesses need its intervention: "${i.frequency}".`
+            : '',
+          i.marks.length ? `What marks a firm that works well with it: ${list(i.marks)}.` : '',
+          i.consequence.greatest
+            ? `Weakness with the greatest consequence: "${i.consequence.greatest}".`
+            : '',
+          i.capability
+            ? `Its overall assessment of the profession's capability: "${i.capability}".`
+            : '',
+        ]
+          .filter(Boolean)
+          .join(' '),
         [],
-        // A handful of institutions — qualitative only, never a figure.
+        'BANDED',
+      ),
+    );
+  }
+  const th = c.institutionalThemes;
+  th.themes.forEach((t, k) =>
+    facts.push(
+      fact(
+        `INST.THEME.${k + 1}`,
+        t.codes.length > 1
+          ? `${t.theme} is named among the most frequent issues or greatest consequences by ${t.codes.join(', ')} — a reading shared across institutions.`
+          : `${t.theme} is named by ${t.codes[0]} alone.`,
+        [],
+        'BANDED',
+      ),
+    ),
+  );
+  th.standsApart.forEach((code) =>
+    facts.push(
+      fact(
+        `INST.APART.${code}`,
+        `${code}'s reading stands apart: no other institution names any of the operational areas it names.`,
+        [],
         'BANDED',
       ),
     ),
@@ -274,10 +326,18 @@ const INDUSTRY_SECTIONS: SectionBrief[] = [
   },
   {
     key: 'PUB_10_INSTITUTIONAL_PERSPECTIVES',
-    brief: 'Institutional perspectives (INST.*), qualitatively — no figures.',
+    brief:
+      'The institutions read together (INST.THEME.*, INST.APART.*, INST.PART): where their readings converge, and any that stands apart — only what the facts show, no figures, no consensus the facts do not state.',
   },
   { key: 'CLOSING', brief: 'A closing reflection, 2 sentences: from a reading to a trajectory.' },
 ];
+
+/** One paraphrase per institutional reading — the reading in our words, never theirs. */
+const institutionBriefs = (c: IndustryReportContent): SectionBrief[] =>
+  c.institutional.map((i) => ({
+    key: `INST_${i.key}`,
+    brief: `One or two sentences characterising the ${i.code} reading (INST.${i.key}) in your own words: what it sees from its vantage. A paraphrase, never a quotation — no quotation marks, and never present a selected answer as the institution's own words.`,
+  }));
 
 const FIRM_SECTIONS: SectionBrief[] = [
   {
@@ -459,6 +519,24 @@ export function checkNarrativeSentence(
   return null;
 }
 
+/**
+ * Rules that depend on where a sentence sits. An institution's reading is our
+ * paraphrase: nothing in it may be put in quotation marks, since only words an
+ * institution supplied or approved may be quoted.
+ */
+export function sectionFinding(
+  section: string,
+  text: string,
+): { kind: string; why: string } | null {
+  if (section.startsWith('INST_') && /["“”]/.test(text)) {
+    return {
+      kind: 'QUOTATION',
+      why: 'Puts words in quotation marks in an institution’s reading; only words an institution supplied or approved may be quoted.',
+    };
+  }
+  return null;
+}
+
 async function draft(
   model: NarrativeModel,
   audience: string,
@@ -479,9 +557,10 @@ async function draft(
   const sentences: NarrativeSentence[] = [];
   for (const [section, items] of Object.entries(bySection)) {
     for (const item of items) {
-      const finding = allowedSections.has(section)
-        ? checkNarrativeSentence(item, factsById, alwaysAllowed)
-        : { kind: 'UNKNOWN SECTION', why: `"${section}" is not a section of this report.` };
+      const finding = !allowedSections.has(section)
+        ? { kind: 'UNKNOWN SECTION', why: `"${section}" is not a section of this report.` }
+        : (sectionFinding(section, item.text) ??
+          checkNarrativeSentence(item, factsById, alwaysAllowed));
       sentences.push({ section, text: item.text, factIds: item.factIds, finding });
     }
   }
@@ -525,7 +604,10 @@ async function draftIndustry(
     model,
     'the public Industry report',
     facts,
-    INDUSTRY_SECTIONS.filter((s) => !suppressed.has(s.key)),
+    [
+      ...INDUSTRY_SECTIONS.filter((s) => !suppressed.has(s.key)),
+      ...(suppressed.has('PUB_10_INSTITUTIONAL_PERSPECTIVES') ? [] : institutionBriefs(content)),
+    ],
     [Number(content.edition.label)].filter(Number.isFinite),
   );
   return insertReportNarrative(pool, {

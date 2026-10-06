@@ -527,6 +527,22 @@ export interface ReportPending {
   note: string;
 }
 
+/** One institution's reading, in one of its roles (Institutional Perspectives). */
+export interface InstitutionalReading {
+  key: string;
+  role: string;
+  code: string;
+  familyCode: string;
+  vantage: string;
+  responses: number;
+  topIssues: ReportShare[];
+  issue: { greatest: string | null; others: string[] };
+  frequency: string | null;
+  marks: string[];
+  consequence: { greatest: string | null; others: string[] };
+  capability: string | null;
+}
+
 /** The AI-drafted narrative in force for a report document. */
 export interface ReportNarrativeView {
   model: string;
@@ -573,13 +589,9 @@ export interface IndustryReportContent {
     rows: Array<{ comparator: string; better: number; same: number; worse: number; n: number }>;
   } | null;
   selfVsInvestors: { firmSelfBelief: ReportRating; investorExperience: ReportRating };
-  institutional: Array<{
-    role: string;
-    familyCode: string;
-    responses: number;
-    topIssues: ReportShare[];
-    capability: string | null;
-  }>;
+  institutional: InstitutionalReading[];
+  institutionalParticipation: { invited: number; contributed: number };
+  institutionalThemes: { themes: Array<{ theme: string; codes: string[] }>; standsApart: string[] };
   narrative: ReportNarrativeView | null;
   /** When the document left CIS (released to its firm / published); then final. */
   publishedAt?: string | null;

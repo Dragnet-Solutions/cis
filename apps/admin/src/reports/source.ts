@@ -16,6 +16,8 @@ export type Audience = 'operator' | 'firm' | 'public';
 
 export interface ReportSource<T> {
   audience: Audience;
+  /** Identifies the document and reader: a source rebuilt each render with the same key is the same source. */
+  key: string;
   load(): Promise<T>;
   /** Draft the narrative if it is due (operator only). */
   ensure?: () => Promise<unknown>;
@@ -31,6 +33,7 @@ export const operatorIndustrySource = (
   editionId: string,
 ): ReportSource<IndustryReportContent> => ({
   audience: 'operator',
+  key: `operator:industry:${editionId}`,
   load: () => client.getIndustryReport(editionId),
   ensure: () => client.ensureIndustryNarrative(editionId),
   regenerate: () => client.generateIndustryNarrative(editionId),
@@ -44,6 +47,7 @@ export const operatorFirmSource = (
   firmId: string,
 ): ReportSource<FirmReportContent> => ({
   audience: 'operator',
+  key: `operator:firm:${editionId}:${firmId}`,
   load: () => client.getFirmReport(editionId, firmId),
   ensure: () => client.ensureFirmNarrative(editionId, firmId),
   regenerate: () => client.generateFirmNarrative(editionId, firmId),
@@ -55,6 +59,7 @@ export const portalFirmSource = (
   editionId: string,
 ): ReportSource<FirmReportContent> => ({
   audience: 'firm',
+  key: `firm:${editionId}`,
   load: async () => {
     const r = await portalClient.getReport(token, editionId);
     if (!r.report) throw new ApiError(404, 'Your firm report has not been released yet.');
@@ -65,6 +70,7 @@ export const portalFirmSource = (
 
 export const publicIndustrySource = (editionId: string): ReportSource<IndustryReportContent> => ({
   audience: 'public',
+  key: `public:industry:${editionId}`,
   load: async () => {
     const res = await fetch(`/api/public/editions/${editionId}/industry-report`);
     const data = (await res.json()) as IndustryReportContent & { message?: string };
@@ -72,4 +78,30 @@ export const publicIndustrySource = (editionId: string): ReportSource<IndustryRe
     return data;
   },
   pdf: () => requestBlob(`/public/editions/${editionId}/industry-report/pdf`, null),
+});
+
+/**
+ * Institutional Perspectives: the Industry report's own content and narrative
+ * (it is that report's section 10), printed as its own document.
+ */
+export const operatorInstitutionalSource = (
+  client: AdminClient,
+  editionId: string,
+): ReportSource<IndustryReportContent> => {
+  // Published with the Industry report — never on its own, so no publish here.
+  const { publish: _published, ...industry } = operatorIndustrySource(client, editionId);
+  void _published;
+  return {
+    ...industry,
+    key: `operator:institutional:${editionId}`,
+    pdf: () => client.downloadInstitutionalPdf(editionId),
+  };
+};
+
+export const publicInstitutionalSource = (
+  editionId: string,
+): ReportSource<IndustryReportContent> => ({
+  ...publicIndustrySource(editionId),
+  key: `public:institutional:${editionId}`,
+  pdf: () => requestBlob(`/public/editions/${editionId}/institutional-report/pdf`, null),
 });

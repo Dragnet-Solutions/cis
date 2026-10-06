@@ -201,6 +201,7 @@ export interface AdminClient {
   ): Promise<{ narrative: ReportNarrativeView | null }>;
   /** The finished report as a PDF file (server-rendered). */
   downloadIndustryPdf(id: string): Promise<Blob>;
+  downloadInstitutionalPdf(id: string): Promise<Blob>;
   downloadFirmPdf(id: string, firmId: string): Promise<Blob>;
   generateFirmReports(id: string, scoringRunId: string): Promise<unknown>;
   approveFirmReport(reportId: string): Promise<{ approvalState: string }>;
@@ -470,6 +471,8 @@ export function createClient(token: string | null, hooks: SessionHooks = {}): Ad
     publishIndustryReport: (id) =>
       request(`/editions/${id}/reports/industry/publish`, { method: 'POST', token }),
     downloadIndustryPdf: (id) => requestBlob(`/editions/${id}/reports/industry/pdf`, token),
+    downloadInstitutionalPdf: (id) =>
+      requestBlob(`/editions/${id}/reports/institutional/pdf`, token),
     downloadFirmPdf: (id, firmId) =>
       requestBlob(`/editions/${id}/firms/${firmId}/report/pdf`, token),
     generateFirmReports: (id, scoringRunId) =>

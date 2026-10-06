@@ -22,6 +22,8 @@ import {
   type FirmDirectoryEntry,
   type FirmResults,
 } from './portalClient';
+import { FirmReport } from '../reports/FirmReport';
+import { portalFirmSource } from '../reports/source';
 import { usePortalSession, type PortalSession } from './usePortalSession';
 import { ApiError } from '../api/types';
 import { ErrorState, type ErrorStateKind } from '../shared/ErrorState';
@@ -816,7 +818,7 @@ function PrivacyModal({ onClose }: { onClose: () => void }): JSX.Element {
 
 // ─── Authenticated portal ───────────────────────────────────────────────────
 
-type PortalScreen = 'landing' | 'assign' | 'outreach' | 'whylink' | 'team' | 'results';
+type PortalScreen = 'landing' | 'assign' | 'outreach' | 'whylink' | 'team' | 'results' | 'report';
 
 function Portal({
   session,
@@ -830,6 +832,8 @@ function Portal({
   const [seats, setSeats] = useState<SeatAssignment[] | null>(null);
   const [errorKind, setErrorKind] = useState<ErrorStateKind | null>(null);
   const [seatNote, setSeatNote] = useState<string | null>(null);
+  // Whether CIS has released this firm's report — nothing of it shows before.
+  const [released, setReleased] = useState(false);
 
   async function load(): Promise<void> {
     try {
@@ -839,6 +843,15 @@ function Portal({
       ]);
       setMe(meResult);
       setSeats(seatsResult);
+      const editionId = meResult.currentEdition?.id;
+      setReleased(
+        editionId
+          ? await portalClient
+              .getReport(session.token, editionId)
+              .then((r) => r.released)
+              .catch(() => false)
+          : false,
+      );
     } catch (e) {
       if (e instanceof ApiError && e.statusCode === 401) {
         setErrorKind('expired_link');
@@ -914,6 +927,8 @@ function Portal({
             onOutreach={() => go('outreach')}
             onTeam={() => go('team')}
             onResults={() => go('results')}
+            released={released}
+            onReport={() => go('report')}
           />
         )}
         {screen === 'assign' && (
@@ -936,6 +951,14 @@ function Portal({
         {screen === 'whylink' && <WhyLinkView onBack={() => go('outreach')} />}
         {screen === 'team' && (
           <TeamView session={session} onBack={() => go('landing')} onReload={load} me={me} />
+        )}
+        {screen === 'report' && me.currentEdition && (
+          <div className="portal-report">
+            <FirmReport
+              source={portalFirmSource(session.token, me.currentEdition.id)}
+              onBack={() => go('landing')}
+            />
+          </div>
         )}
         {screen === 'results' && (
           <ResultsView
@@ -962,6 +985,8 @@ function PortalLanding({
   onOutreach,
   onTeam,
   onResults,
+  released,
+  onReport,
 }: {
   firm: string;
   phase: 'setup' | 'running' | 'closed';
@@ -971,6 +996,8 @@ function PortalLanding({
   onOutreach: () => void;
   onTeam: () => void;
   onResults: () => void;
+  released: boolean;
+  onReport: () => void;
 }): JSX.Element {
   const assigned = seats.filter((s) => s.state !== 'empty').length;
   const complete = seats.filter((s) => s.state === 'complete').length;
@@ -1064,23 +1091,39 @@ function PortalLanding({
         </>
       )}
 
-      {phase === 'closed' && (
+      {released && (
         <div className="resultcard">
-          <p className="eyebrow">Results</p>
-          <h2>Your results are ready.</h2>
+          <p className="eyebrow">Your report</p>
+          <h2>Your firm report is ready.</h2>
           <p>
-            How your firm compares with the industry, across every measure in the study. Yours alone
-            — no other firm is named.
+            How your firm compares with the industry, across every measure in the study, with your
+            own investors’ view of your service. Yours alone — no other firm is named. Read it here
+            or download the PDF.
           </p>
           <div className="actions">
-            <button type="button" className="btn" onClick={onResults}>
-              Open your results
+            <button type="button" className="btn" onClick={onReport}>
+              Read your report
+            </button>
+            <button type="button" className="btn-2" onClick={onResults}>
+              Your results at a glance
             </button>
           </div>
         </div>
       )}
 
-      {allAssigned && mine && phase !== 'closed' && (
+      {!released && phase === 'closed' && (
+        <div className="resultcard">
+          <p className="eyebrow">Your report</p>
+          <h2>Your firm report is being prepared.</h2>
+          <p>
+            Collection has closed. CIS checks and approves each firm’s report, and releases it once
+            the national results are approved. Your coordinators will get an email the moment yours
+            is here.
+          </p>
+        </div>
+      )}
+
+      {allAssigned && mine && phase !== 'closed' && !released && (
         <div className="resultcard" style={{ marginTop: 16 }}>
           <p className="eyebrow">Your survey</p>
           <h2>Your {mine.roleLabel.toLowerCase()} survey is waiting.</h2>

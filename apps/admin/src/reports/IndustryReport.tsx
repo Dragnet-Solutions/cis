@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
-import type { AdminClient } from '../api/client';
-import { ApiError, type IndustryReportContent } from '../api/types';
+import type { IndustryReportContent } from '../api/types';
+import type { ReportSource } from './source';
+import { useReport } from './useReport';
+import { InstitutionCard } from './institutional';
 import {
   Bar,
   Brand,
@@ -14,7 +15,6 @@ import {
   Toolbar,
   Withheld,
   gapOf,
-  saveFile,
   show,
 } from './parts';
 
@@ -50,94 +50,24 @@ const INDICES = [
   'Service excellence',
 ];
 
-const ROLE_TONE: Record<string, string> = { A: 'b', B: 'g', C: '', D: 'r' };
-
 export function IndustryReport({
-  client,
-  editionId,
+  source,
   onBack,
   printMode = false,
   onReady,
 }: {
-  client: AdminClient;
-  editionId: string;
-  onBack: () => void;
-  /** The PDF render: the document alone, no operator controls. */
+  source: ReportSource<IndustryReportContent>;
+  onBack?: () => void;
+  /** The PDF render: the document alone, no controls. */
   printMode?: boolean;
   /** Called once the report has rendered (the PDF renderer waits for it). */
   onReady?: () => void;
 }): JSX.Element {
-  const [c, setC] = useState<IndustryReportContent | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<'generating' | 'downloading' | null>(null);
-  const [aiError, setAiError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      setC(await client.getIndustryReport(editionId));
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load the report');
-    }
-  }, [client, editionId]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  // The narrative drafts itself once the figures are in — nobody presses a
-  // button. The server returns the narrative in force untouched unless it is
-  // missing or was written from figures that have since changed.
-  useEffect(() => {
-    if (printMode) return;
-    let live = true;
-    setBusy('generating');
-    void client
-      .ensureIndustryNarrative(editionId)
-      .then(() => (live ? load() : undefined))
-      .catch((err: unknown) => {
-        if (live) {
-          setAiError(
-            err instanceof ApiError ? err.message : 'The AI narrative could not be drafted',
-          );
-        }
-      })
-      .finally(() => {
-        if (live) setBusy(null);
-      });
-    return () => {
-      live = false;
-    };
-  }, [client, editionId, printMode, load]);
-
-  useEffect(() => {
-    if (c) onReady?.();
-  }, [c, onReady]);
-
-  const generate = async (): Promise<void> => {
-    setBusy('generating');
-    setAiError(null);
-    try {
-      await client.generateIndustryNarrative(editionId);
-      await load();
-    } catch (err) {
-      setAiError(err instanceof ApiError ? err.message : 'The AI narrative could not be drafted');
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const download = async (): Promise<void> => {
-    setBusy('downloading');
-    setAiError(null);
-    try {
-      const pdf = await client.downloadIndustryPdf(editionId);
-      saveFile(pdf, `CIS-Dragnet-Industry-Report-${c?.edition.label ?? ''}.pdf`);
-    } catch (err) {
-      setAiError(err instanceof ApiError ? err.message : 'The PDF could not be produced');
-    } finally {
-      setBusy(null);
-    }
-  };
+  const { c, error, busy, aiError, regenerate, publish, download } = useReport(source, {
+    printMode,
+    onReady,
+  });
+  const operator = source.audience === 'operator';
 
   if (!c) {
     return (
@@ -223,12 +153,22 @@ export function IndustryReport({
   return (
     <main style={{ padding: 0 }}>
       {!printMode && (
-        <Toolbar onBack={onBack} title="Industry report">
+        <Toolbar onBack={onBack} title={`Industry report ${c.edition.label}`}>
+          {publish && !c.publishedAt && (
+            <button
+              type="button"
+              className="btn-2 small"
+              disabled={busy !== null || !c.narrative}
+              onClick={() => void publish()}
+            >
+              {busy === 'publishing' ? 'Publishing…' : 'Publish now'}
+            </button>
+          )}
           <NarrativeControls
             narrative={c.narrative}
             busy={busy}
-            onGenerate={() => void generate()}
-            onDownload={() => void download()}
+            onGenerate={regenerate && !c.publishedAt ? () => void regenerate() : undefined}
+            onDownload={() => void download(`CIS-Dragnet-Industry-Report-${c.edition.label}.pdf`)}
           />
         </Toolbar>
       )}
@@ -238,9 +178,33 @@ export function IndustryReport({
             narrative={c.narrative}
             error={aiError}
             drafting={busy === 'generating'}
+            operator={operator}
           />
         )}
-        {draftNote && <div className="rpt-draft-banner">{draftNote}</div>}
+        {operator && !printMode && (
+          <div className="rpt-draft-banner">
+            {c.publishedAt ? (
+              <>
+                Published to the public on {new Date(c.publishedAt).toLocaleString()} — this is
+                final. Anyone can read it at{' '}
+                <a
+                  href={`/reports/industry?edition=${c.edition.id}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  /reports/industry
+                </a>
+                .
+              </>
+            ) : (
+              <>
+                Not yet public. It is published automatically when the national report is approved;
+                if that has happened and it is still not public, use “Publish now”.
+              </>
+            )}
+          </div>
+        )}
+        {operator && draftNote && <div className="rpt-draft-banner">{draftNote}</div>}
         <Cover
           watermark={c.edition.label.slice(-2)}
           right={<span className="rpt-kind">Flagship industry benchmark</span>}
@@ -643,36 +607,17 @@ export function IndustryReport({
           {gated(
             'PUB_10_INSTITUTIONAL_PERSPECTIVES',
             c.institutional.length ? (
-              <div className="rpt-inst">
-                {c.institutional.map((i) => (
-                  <div
-                    key={`${i.role}-${i.familyCode}`}
-                    className={`rpt-box ${ROLE_TONE[i.familyCode] ?? ''}`}
-                  >
-                    <p className="rpt-eyebrow">
-                      {i.role}
-                      {i.familyCode === 'D' ? ' · depository' : ''}
-                    </p>
-                    <p>
-                      {i.topIssues.length ? (
-                        <>
-                          Most often sees{' '}
-                          <b>{i.topIssues.map((t) => t.label.toLowerCase()).join('; ')}</b> among
-                          firm-level operational issues.
-                        </>
-                      ) : (
-                        'Named no recurring operational issue.'
-                      )}{' '}
-                      {i.capability && (
-                        <>
-                          Rates the profession’s overall capability as{' '}
-                          <b>{i.capability.toLowerCase()}</b>.
-                        </>
-                      )}
-                    </p>
-                  </div>
+              <>
+                {c.institutional.map((r) => (
+                  <InstitutionCard key={r.key} reading={r} narrative={c.narrative} />
                 ))}
-              </div>
+                <p className="rpt-note">
+                  {c.institutionalParticipation.contributed} of{' '}
+                  {c.institutionalParticipation.invited} invited institutions contributed. The full
+                  reading, with what the institutions share, is published as the companion report
+                  Institutional Perspectives on Market Operations.
+                </p>
+              </>
             ) : (
               <div className="rpt-pending">
                 <b>No institutional responses yet</b>

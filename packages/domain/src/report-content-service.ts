@@ -106,13 +106,44 @@ export interface IndustryReportContent {
     }>;
   } | null;
   selfVsInvestors: { firmSelfBelief: Rating; investorExperience: Rating };
-  institutional: Array<{
-    role: string;
-    familyCode: string;
-    responses: number;
-    topIssues: Share[];
-    capability: string | null;
-  }>;
+  institutional: InstitutionalReading[];
+  /** Institutions invited to give a reading, and how many gave one. */
+  institutionalParticipation: { invited: number; contributed: number };
+  /**
+   * Operational themes the institutions' readings name (most frequent issues and
+   * greatest consequences), with which institutions name each — computed from
+   * the answers, never assumed. `standsApart`: institutions none of whose
+   * themes another institution names.
+   */
+  institutionalThemes: { themes: Array<{ theme: string; codes: string[] }>; standsApart: string[] };
+}
+
+/**
+ * One institution's reading, in one of its roles (CSCS reads both clearing and
+ * depository). Qualitative by design: a handful of institutions, so it is the
+ * answers they gave — never a percentage over a base of one or two.
+ */
+export interface InstitutionalReading {
+  /** Stable key for this institution-in-role, e.g. "A_SEC". */
+  key: string;
+  role: string;
+  /** Short name, e.g. "SEC". */
+  code: string;
+  familyCode: string;
+  /** The institution's own mandate: its vantage on stockbroking operations. */
+  vantage: string;
+  responses: number;
+  topIssues: Share[];
+  /** Q1: the issue named as greatest, and the others named with it. */
+  issue: { greatest: string | null; others: string[] };
+  /** Q2: how often firm-level weaknesses need the institution's intervention. */
+  frequency: string | null;
+  /** Q3: what distinguishes a firm that works well with the institution. */
+  marks: string[];
+  /** Q4: the weakness named as carrying the greatest consequence, and the others. */
+  consequence: { greatest: string | null; others: string[] };
+  /** Q5: the institution's overall assessment of the profession's capability. */
+  capability: string | null;
 }
 
 export interface InvestorDimension {
@@ -439,12 +470,85 @@ const SEGMENT_LABEL: Record<string, string> = {
   local_institution: 'Local institutional investors',
   foreign_institution: 'Foreign institutional investors',
 };
-const INSTITUTIONAL: Record<string, { code: string; issues: string; capability: string }> = {
-  A: { code: 'I-SEC', issues: 'I-SEC-Q1', capability: 'I-SEC-Q5' },
-  B: { code: 'I-NGX', issues: 'I-NGX-Q1', capability: 'I-NGX-Q5' },
-  C: { code: 'I-CSCS', issues: 'I-CSCS-Q1', capability: 'I-CSCS-Q5' },
-  D: { code: 'I-DEP', issues: 'D-Q1', capability: 'D-Q5' },
+/** Each institutional family's instrument, and the prefix of its five questions. */
+const INSTITUTIONAL: Record<string, { code: string; q: string }> = {
+  A: { code: 'I-SEC', q: 'I-SEC-Q' },
+  B: { code: 'I-NGX', q: 'I-NGX-Q' },
+  C: { code: 'I-CSCS', q: 'I-CSCS-Q' },
+  D: { code: 'I-DEP', q: 'D-Q' },
 };
+
+/** The short names the market uses; anything else falls back to its initials. */
+const SHORT_NAME: Record<string, string> = {
+  'Securities and Exchange Commission': 'SEC',
+  'Nigerian Exchange Limited': 'NGX',
+  'Central Securities Clearing System': 'CSCS',
+  'Lagos Commodities and Futures Exchange': 'LCFE',
+  'NASD OTC Securities Exchange': 'NASD',
+  'FMDQ Securities Exchange Limited': 'FMDQ',
+  'FMDQ Clear Limited': 'FMDQ Clear',
+  'FMDQ Depository Limited': 'FMDQ Depository',
+};
+export const shortNameOf = (name: string): string =>
+  SHORT_NAME[name] ??
+  name
+    .split(/\s+/)
+    .filter((w) => /^[A-Z]/.test(w))
+    .map((w) => w[0])
+    .join('');
+
+/**
+ * Operational themes, for reading the institutions together. Each institution's
+ * instrument words its options for its own mandate; these group the wordings
+ * that name the same area of operations.
+ */
+const THEMES: Array<{ theme: string; match: RegExp }> = [
+  { theme: 'Documentation and record keeping', match: /document|record/i },
+  { theme: 'Reconciliation', match: /reconcil/i },
+  { theme: 'Technology and systems', match: /technolog|system|cyber/i },
+  { theme: 'Manual processing', match: /manual|automat/i },
+  { theme: 'Timeliness', match: /\blate\b|delay|timel/i },
+  { theme: 'Controls, governance and compliance', match: /control|governance|compliance|kyc|aml/i },
+  {
+    theme: 'Trade and instruction accuracy',
+    match: /incorrect|inaccurate|instruction|trade information/i,
+  },
+  { theme: 'Staff competence', match: /staff|competen/i },
+  { theme: 'Communication', match: /communicat/i },
+  { theme: 'Settlement coordination', match: /settlement/i },
+];
+
+export function institutionalThemes(readings: InstitutionalReading[]): {
+  themes: Array<{ theme: string; codes: string[] }>;
+  standsApart: string[];
+} {
+  const named = new Map<string, Set<string>>();
+  for (const r of readings) {
+    const labels = [
+      ...(r.issue.greatest ? [r.issue.greatest] : []),
+      ...r.issue.others,
+      ...(r.consequence.greatest ? [r.consequence.greatest] : []),
+      ...r.consequence.others,
+    ];
+    for (const { theme, match } of THEMES) {
+      if (labels.some((l) => match.test(l))) {
+        if (!named.has(theme)) named.set(theme, new Set());
+        named.get(theme)!.add(r.code);
+      }
+    }
+  }
+  const themes = [...named.entries()]
+    .map(([theme, codes]) => ({ theme, codes: [...codes].sort() }))
+    .sort((a, b) => b.codes.length - a.codes.length || a.theme.localeCompare(b.theme));
+  const institutions = [...new Set(readings.map((r) => r.code))];
+  const standsApart =
+    institutions.length < 2
+      ? []
+      : institutions.filter((code) =>
+          themes.filter((t) => t.codes.includes(code)).every((t) => t.codes.length === 1),
+        );
+  return { themes, standsApart };
+}
 
 async function editionOf(pool: Pool, editionId: string) {
   const edition = await getEditionById(pool, editionId);
@@ -496,31 +600,56 @@ export async function buildIndustryReportContent(
   const q = (rows: ReportAnswerRow[], id: string) => rows.filter((r) => r.questionId === id);
 
   const roles = await listRegulators(pool, editionId);
-  const institutional = roles
+  const single = (rows: ReportAnswerRow[]): string | null => {
+    const a = rows[0]?.answer;
+    return typeof a === 'string' ? a : null;
+  };
+  const greatestOf = (rows: ReportAnswerRow[]) => {
+    const a = rows[0]?.answer;
+    const picked = pickedOptions(a).filter((o) => o !== 'Other');
+    const g = a && typeof a === 'object' ? (a as { greatest?: unknown }).greatest : undefined;
+    const greatest = typeof g === 'string' && g !== 'Other' ? g : (picked[0] ?? null);
+    return { greatest, others: picked.filter((o) => o !== greatest) };
+  };
+  const institutional: InstitutionalReading[] = roles
     .filter((r) => r.state === 'confirmed')
     .map((r) => {
       const inst = INSTITUTIONAL[r.familyCode]!;
       const rows = of(inst.code).filter((a) => a.institutionName === r.name);
       const issues = new Map<string, number>();
-      for (const a of q(rows, inst.issues)) {
+      for (const a of q(rows, `${inst.q}1`)) {
         for (const o of pickedOptions(a.answer)) {
           if (o !== 'Other') issues.set(o, (issues.get(o) ?? 0) + 1);
         }
       }
-      const capability = q(rows, inst.capability)[0]?.answer;
+      const code = shortNameOf(r.name);
       return {
+        key: `${r.familyCode}_${code.replace(/[^A-Za-z0-9]+/g, '')}`,
         role: r.name,
+        code,
         familyCode: r.familyCode,
+        vantage: r.mandate,
         responses: new Set(rows.map((a) => a.respondentId)).size,
-        // Qualitative by design: a handful of institutions, so the reading is the
-        // issues they name — never a percentage over a base of one or two.
         topIssues: [...issues.entries()]
           .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
           .slice(0, 3)
           .map(([label, count]) => ({ label, count, pct: 0 })),
-        capability: typeof capability === 'string' ? capability : null,
+        issue: greatestOf(q(rows, `${inst.q}1`)),
+        frequency: single(q(rows, `${inst.q}2`)),
+        marks: pickedOptions(q(rows, `${inst.q}3`)[0]?.answer).filter((o) => o !== 'Other'),
+        consequence: greatestOf(q(rows, `${inst.q}4`)),
+        capability: single(q(rows, `${inst.q}5`)),
       };
-    });
+    })
+    .filter((r) => r.responses > 0);
+  // Institutions, not roles: CSCS answering in two roles is one institution.
+  const askedNames = new Set(
+    roles.filter((r) => ['invited', 'confirmed', 'declined'].includes(r.state)).map((r) => r.name),
+  );
+  const institutionalParticipation = {
+    invited: askedNames.size,
+    contributed: new Set(institutional.map((r) => r.role)).size,
+  };
 
   const investorRows = answers.filter((a) => INVESTOR_CODES.includes(a.instrumentCode));
 
@@ -565,6 +694,8 @@ export async function buildIndustryReportContent(
       investorExperience: rating(experienceValues(investorRows)),
     },
     institutional,
+    institutionalParticipation,
+    institutionalThemes: institutionalThemes(institutional),
   };
 }
 

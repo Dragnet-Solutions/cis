@@ -1,4 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
+import {
+  operatorIndustrySource as industrySource,
+  operatorInstitutionalSource,
+} from '../reports/source';
+import { InstitutionalReport } from '../reports/InstitutionalReport';
 import type { AdminClient } from '../api/client';
 import {
   ApiError,
@@ -65,7 +70,7 @@ export function NationalReportPage({
   const [counted, setCounted] = useState<Record<string, { counted: number; floor: number }>>({});
   const [regulatorsEngaged, setRegulatorsEngaged] = useState(0);
   const [approveReason, setApproveReason] = useState('');
-  const [viewing, setViewing] = useState(false);
+  const [viewing, setViewing] = useState<false | 'industry' | 'institutional'>(false);
 
   const load = useCallback(async () => {
     setError(null);
@@ -143,9 +148,17 @@ export function NationalReportPage({
     [load],
   );
 
+  if (viewing === 'institutional') {
+    return (
+      <InstitutionalReport
+        source={operatorInstitutionalSource(client, editionId)}
+        onBack={() => setViewing(false)}
+      />
+    );
+  }
   if (viewing) {
     return (
-      <IndustryReport client={client} editionId={editionId} onBack={() => setViewing(false)} />
+      <IndustryReport source={industrySource(client, editionId)} onBack={() => setViewing(false)} />
     );
   }
 
@@ -262,8 +275,11 @@ export function NationalReportPage({
           </p>
         </div>
         <div className="actions">
-          <button type="button" className="btn" onClick={() => setViewing(true)}>
+          <button type="button" className="btn" onClick={() => setViewing('industry')}>
             Open the industry report
+          </button>
+          <button type="button" className="btn-2" onClick={() => setViewing('institutional')}>
+            Institutional Perspectives
           </button>
         </div>
       </main>
@@ -282,8 +298,11 @@ export function NationalReportPage({
         the sufficiency view is the surface.
       </p>
       <div className="actions">
-        <button type="button" className="btn-2" onClick={() => setViewing(true)}>
+        <button type="button" className="btn-2" onClick={() => setViewing('industry')}>
           Open the industry report
+        </button>
+        <button type="button" className="btn-2" onClick={() => setViewing('institutional')}>
+          Institutional Perspectives
         </button>
       </div>
 

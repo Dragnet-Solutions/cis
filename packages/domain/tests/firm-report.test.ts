@@ -19,6 +19,8 @@ import {
   approveNationalReport,
   listReleaseHistory,
   getFirmReport,
+  insertReportNarrative,
+  createCoordinator,
 } from '@cis/db';
 import {
   seedReferenceData,
@@ -32,6 +34,14 @@ import {
   buildEvidencePack,
   requestSignoff,
   approveSignoff,
+  getFirmNarrative,
+  generateFirmNarrative,
+  getReleasedFirmReport,
+  queueReleaseNotices,
+  publishIndustryReport,
+  generateIndustryNarrative,
+  getPublishedIndustryReport,
+  type NarrativeModel,
 } from '../src';
 import { getTestPool, runMigrations, truncateAllTables, closeTestPool } from '../../db/tests/setup';
 
@@ -236,5 +246,115 @@ describe('Regeneration — retrying a failed report, never a released one', () =
     });
     // Never even reached the DB's own trigger — the release state is unchanged.
     expect((await getFirmReport(pool, releasedReport.id))?.releaseState).toBe('released');
+  });
+});
+
+describe('Delivery: what leaves CIS, frozen as it left', () => {
+  const draftFor = (firmId: string, text: string) =>
+    insertReportNarrative(pool, {
+      editionId,
+      kind: 'firm',
+      subjectId: firmId,
+      sentences: [
+        { section: 'SUMMARY', text, factIds: ['X'], finding: null },
+        {
+          section: 'SUMMARY',
+          text: 'A sentence the checker held back.',
+          factIds: ['X'],
+          finding: { kind: 'SPECULATIVE', why: 'test' },
+        },
+      ],
+      facts: [],
+      model: 'fake-model',
+      createdBy: 'op@cis.example',
+    });
+
+  it('releases a report only with its analysis, frozen; one that cannot be prepared is held', async () => {
+    const a = await participatingFirm('firm-prepared');
+    const b = await participatingFirm('firm-unprepared');
+    const gen = await generateFirmReports(pool, { editionId, scoringRunId });
+    for (const r of gen.reports) await approveFirmReport(pool, r.id);
+    await approveNationalFor();
+    const drafted = await draftFor(a.id, 'The analysis as released.');
+
+    const result = await releaseFirmReports(pool, editionId, {
+      releasedBy: 'op@cis.example',
+      prepare: async (r) => {
+        if (r.organizationId === b.id) throw new Error('the model is unavailable');
+        return { narrativeId: drafted.id };
+      },
+    });
+    expect(result.released.map((r) => r.organizationId)).toEqual([a.id]);
+    expect(result.held[0]?.report.organizationId).toBe(b.id);
+    expect(result.held[0]?.reason).toMatch(/written analysis could not be prepared/);
+
+    // A later draft never changes what the firm was given, and cannot be made.
+    await draftFor(a.id, 'A later redraft.');
+    expect((await getFirmNarrative(pool, editionId, a.id))?.id).toBe(drafted.id);
+    const model: NarrativeModel = { name: 'fake', complete: async () => '{}' };
+    await expect(
+      generateFirmNarrative(pool, editionId, a.id, model, 'op@cis.example'),
+    ).rejects.toMatchObject({ code: 'ALREADY_PUBLISHED' });
+
+    // The firm sees its released report: passed sentences only, no drafter.
+    const released = await getReleasedFirmReport(pool, editionId, a.id);
+    expect(released?.narrative?.sentences.map((x) => x.text)).toEqual([
+      'The analysis as released.',
+    ]);
+    expect(JSON.stringify(released)).not.toContain('op@cis.example');
+    // The held firm sees nothing.
+    expect(await getReleasedFirmReport(pool, editionId, b.id)).toBeNull();
+  });
+
+  it('tells each released firm’s coordinators where to find it — and nothing else', async () => {
+    const a = await participatingFirm('firm-notice');
+    await createCoordinator(pool, {
+      organizationId: a.id,
+      name: 'Ngozi',
+      email: 'ngozi@firm-notice.example',
+      accessCode: 'NOTICE-1',
+      isLead: true,
+    });
+    const gen = await generateFirmReports(pool, { editionId, scoringRunId });
+    for (const r of gen.reports) await approveFirmReport(pool, r.id);
+    await approveNationalFor();
+    const { released } = await releaseFirmReports(pool, editionId);
+
+    expect(await queueReleaseNotices(pool, released, 'https://cis.example/firm')).toBe(1);
+    const { rows } = await pool.query<{ to_address: string; body_text: string; status: string }>(
+      'SELECT to_address, body_text, status FROM email_outbox',
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.to_address).toBe('ngozi@firm-notice.example');
+    expect(rows[0]!.status).toBe('queued');
+    expect(rows[0]!.body_text).toContain('https://cis.example/firm');
+    expect(rows[0]!.body_text).toContain('FIRM-NOTICE');
+  });
+
+  it('publishes the Industry report only once the national report is approved, then freezes it', async () => {
+    const model: NarrativeModel = {
+      name: 'fake-model',
+      complete: async () =>
+        JSON.stringify({
+          sections: { EXEC: [{ text: 'The published analysis.', factIds: ['PART.firm'] }] },
+        }),
+    };
+    await expect(
+      publishIndustryReport(pool, editionId, () => model, 'op@cis.example'),
+    ).rejects.toMatchObject({ code: 'NATIONAL_NOT_APPROVED' });
+    await expect(getPublishedIndustryReport(pool, editionId)).rejects.toMatchObject({
+      code: 'NOT_PUBLISHED',
+    });
+
+    await approveNationalFor();
+    const first = await publishIndustryReport(pool, editionId, () => model, 'op@cis.example');
+    const again = await publishIndustryReport(pool, editionId, () => model, 'op@cis.example');
+    expect(again.id).toBe(first.id);
+
+    const published = await getPublishedIndustryReport(pool, editionId);
+    expect(published.narrative?.sentences.map((x) => x.text)).toEqual(['The published analysis.']);
+    await expect(
+      generateIndustryNarrative(pool, editionId, model, 'op@cis.example'),
+    ).rejects.toMatchObject({ code: 'ALREADY_PUBLISHED' });
   });
 });

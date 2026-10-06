@@ -458,8 +458,10 @@ export {
   buildIndustryReportContent,
   buildFirmReportContent,
   ReportContentError,
+  institutionalThemes,
   type IndustryReportContent,
   type FirmReportContent,
+  type InstitutionalReading,
 } from './report-content-service';
 export {
   generateIndustryNarrative,
@@ -472,6 +474,7 @@ export {
   industryFacts,
   firmFacts,
   checkNarrativeSentence,
+  sectionFinding,
   parseModelSections,
   buildNarrativePrompt,
   ReportNarrativeError,

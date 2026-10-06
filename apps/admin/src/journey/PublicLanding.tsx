@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react';
+
 /**
  * UX-PUB-001 public landing. Built in full, INCLUDING the results section, which
  * is shown or hidden by a governed content flag (public.results_section_visible)
@@ -20,6 +22,18 @@ export function PublicLanding({
   onHelpAbout: () => void;
   onPreviousEditions: () => void;
 }): JSX.Element {
+  // Published Industry reports — shown whenever there is one, whatever the
+  // results-section flag says: a published report is already public.
+  const [published, setPublished] = useState<Array<{ editionId: string; editionLabel: string }>>(
+    [],
+  );
+  useEffect(() => {
+    void fetch('/api/public/industry-reports')
+      .then((r) => (r.ok ? (r.json() as Promise<{ reports: typeof published }>) : { reports: [] }))
+      .then(({ reports }) => setPublished(reports))
+      .catch(() => undefined);
+  }, []);
+
   return (
     <div className="journey public-landing">
       <p className="eyebrow">CIS × Dragnet · {editionLabel ?? 'Current edition'}</p>
@@ -48,6 +62,27 @@ export function PublicLanding({
           Firm participation →
         </a>
       </section>
+
+      {published.length > 0 && (
+        <section className="landing-results">
+          <h2>The Industry report</h2>
+          <p className="lede">
+            The profession’s benchmark of how firms operate and how investors experience them.
+          </p>
+          <div className="actions">
+            {published.map((r) => (
+              <span key={r.editionId} style={{ display: 'contents' }}>
+                <a className="btn-2" href={`/reports/industry?edition=${r.editionId}`}>
+                  Read the {r.editionLabel} report
+                </a>
+                <a className="textlink" href={`/reports/institutional?edition=${r.editionId}`}>
+                  Institutional Perspectives →
+                </a>
+              </span>
+            ))}
+          </div>
+        </section>
+      )}
 
       {resultsSectionVisible && (
         <section className="landing-results">
