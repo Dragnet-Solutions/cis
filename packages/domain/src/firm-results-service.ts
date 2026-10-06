@@ -6,6 +6,7 @@ import {
   getConfig,
   getCoordinatorByAccessCode,
   countRetailRespondentsRatingFirm,
+  hasReleasedFirmReport,
 } from '@cis/db';
 import type { FirmReportCutState, CalculatedResult } from '@cis/shared-types';
 import { DomainError } from './errors';
@@ -176,6 +177,15 @@ export async function getFirmResults(
   input: { editionId: string; firmId: string; coordinatorAccessCode: string },
 ): Promise<FirmResults> {
   await assertCoordinatorAccess(pool, input.firmId, input.coordinatorAccessCode);
+
+  // A firm sees its results with its report, never before: nothing reaches a
+  // firm until CIS has approved and released its report.
+  if (!(await hasReleasedFirmReport(pool, input.editionId, input.firmId))) {
+    throw new FirmResultsError(
+      'Your results are shared with your firm report, once CIS has released it.',
+      'NOT_RELEASED',
+    );
+  }
 
   const signoff = await getAuthoritativeSignoff(pool, input.editionId);
   if (!signoff) {

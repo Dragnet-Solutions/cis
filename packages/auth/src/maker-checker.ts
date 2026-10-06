@@ -25,7 +25,7 @@ export async function requestCriticalAction(
 ): Promise<CriticalAction> {
   if (!canRequestCriticalAction(rbac, data.actionType)) {
     throw new Error(
-      `User ${rbac.userId} does not have permission to request action: ${data.actionType}`,
+      'You do not have permission to request this — it needs the “Request a critical action” right.',
     );
   }
   return createCriticalAction(pool, {
@@ -51,7 +51,7 @@ export async function approveCriticalActionWithRbac(
 
   if (!canApproveCriticalAction(rbac, action.actionType)) {
     throw new Error(
-      `User ${rbac.userId} does not have permission to approve action: ${action.actionType}`,
+      'You do not have permission to approve this — it needs the “Approve a critical action” right.',
     );
   }
 
@@ -80,7 +80,7 @@ export async function rejectCriticalActionWithRbac(
 
   if (!canApproveCriticalAction(rbac, action.actionType)) {
     throw new Error(
-      `User ${rbac.userId} does not have permission to reject action: ${action.actionType}`,
+      'You do not have permission to reject this — it needs the “Approve a critical action” right.',
     );
   }
 

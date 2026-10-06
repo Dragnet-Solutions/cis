@@ -32,13 +32,16 @@ import {
   reopenDeclined,
   recordHistory,
   getResumeByToken,
+  getRegulator,
+  submitJourney,
   saveDraftAnswer,
   getMissionBoard,
   NATIONAL_SECTIONS,
   evaluateSection,
 } from '../src';
-import { listInstitutions } from '@cis/db';
+import { listInstitutions, getInstrumentItems } from '@cis/db';
 import { getTestPool, runMigrations, truncateAllTables, closeTestPool } from '../../db/tests/setup';
+import { answerAll } from './helpers/answers';
 
 let pool: Pool;
 let editionId: string;
@@ -329,5 +332,50 @@ describe('Public-naming regression — PUB_10 names CSCS as market infrastructur
     expect(disposition).toBe('suppressed');
     expect(reason).toContain('clearing and settlement');
     expect(reason).not.toMatch(/CSCS is (a|the) regulator/i);
+  });
+});
+
+// Regression (E2E, 2026-09-30): a regulator submitting through the issued link
+// never moved its role off 'invited' — so the national report (which counts
+// confirmed roles) kept Institutional Perspectives suppressed for good.
+describe('Submitting through the issued link confirms the role', () => {
+  it('moves the role to confirmed and records it, in the same submission', async () => {
+    await saveContact(pool, editionId, sec, 'A', CONTACT);
+    const invited = await issueSurveyLink(pool, editionId, sec, 'A', { targetBy: '2026-09-01' });
+    const token = invited.surveyLink!.split('/').pop()!;
+    const respondentId = (await getResumeByToken(pool, token))!.respondent.id;
+
+    await answerAll(pool, respondentId, await getInstrumentItems(pool, 'I-SEC'), []);
+    await submitJourney(pool, respondentId);
+
+    const after = await getRegulator(pool, editionId, sec, 'A');
+    expect(after.status).toBe('confirmed');
+    expect(after.state).toBe('confirmed');
+    expect(after.history[0]!.entry).toMatch(/Submitted through their survey link/);
+  });
+
+  it('leaves another role untouched when an unrelated survey is submitted', async () => {
+    await saveContact(pool, editionId, cscs, 'C', { ...CONTACT, who: 'CSCS Contact' });
+    await issueSurveyLink(pool, editionId, cscs, 'C', { targetBy: '2026-09-01' });
+    await saveContact(pool, editionId, sec, 'A', CONTACT);
+    const secInvited = await issueSurveyLink(pool, editionId, sec, 'A', { targetBy: '2026-09-01' });
+    const token = secInvited.surveyLink!.split('/').pop()!;
+    const respondentId = (await getResumeByToken(pool, token))!.respondent.id;
+
+    await answerAll(pool, respondentId, await getInstrumentItems(pool, 'I-SEC'), []);
+    await submitJourney(pool, respondentId);
+
+    expect((await getRegulator(pool, editionId, cscs, 'C')).status).toBe('invited');
+  });
+});
+
+describe('Each role reads as its own mandate', () => {
+  it('CSCS’s depository role does not borrow its clearing tagline', async () => {
+    const roles = await listRegulators(pool, editionId);
+    const cscsRoles = roles.filter((r) => r.institutionId === cscs);
+    expect(cscsRoles.find((r) => r.familyCode === 'C')!.mandate).toBe(
+      'Clearing, settlement and custody',
+    );
+    expect(cscsRoles.find((r) => r.familyCode === 'D')!.mandate).toMatch(/Depository/);
   });
 });

@@ -80,3 +80,14 @@ describe('Mission Board rail — no stale "not built" claim for a routed surface
     expect(byKey.get('dragnet')?.label).toBe('Dragnet analysis');
   });
 });
+
+describe('Mission Board rail — every shortcut navigates (QA F7/F8)', () => {
+  it('every rail entry names the shell tab it opens', () => {
+    const tabs = ['invitations', 'regulators', 'responses', 'scoring', 'dragnet', 'edition'];
+    for (const section of RAIL) {
+      expect(tabs, `rail section "${section.key}" has no navigation target`).toContain(
+        section.target,
+      );
+    }
+  });
+});

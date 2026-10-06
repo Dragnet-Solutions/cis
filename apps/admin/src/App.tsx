@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createClient } from './api/client';
 import { ApiError } from './api/types';
 import { ErrorState } from './shared/ErrorState';
@@ -92,14 +92,31 @@ function NavTab({
 }
 
 export function App(): JSX.Element {
-  const { session, signIn, signOut } = useSession();
-  const client = useMemo(() => createClient(session?.token ?? null), [session]);
+  const { session, signIn, signOut, replaceToken } = useSession();
+  const [expired, setExpired] = useState(false);
+  const client = useMemo(
+    () =>
+      createClient(session?.token ?? null, {
+        onToken: replaceToken,
+        onUnauthorized: () => {
+          setExpired(true);
+          signOut();
+        },
+      }),
+    [session?.token, replaceToken, signOut],
+  );
 
   const [editionId, setEditionId] = useState<string | null>(null);
   const [phase, setPhase] = useState<EditionPhase>('before_launch');
   const [tab, setTab] = useState<Tab>('edition');
   const [loadError, setLoadError] = useState<string | null>(null);
   const [serviceDown, setServiceDown] = useState(false);
+
+  const applyEdition = useCallback(
+    (detail: { status: string; surveyCloseAt: string | null }) =>
+      setPhase(editionPhase(detail.status, detail.surveyCloseAt)),
+    [],
+  );
 
   useEffect(() => {
     if (!session) {
@@ -113,12 +130,12 @@ export function App(): JSX.Element {
         if (cancelled) return;
         const current = editions.find((e) => e.label === '2026') ?? editions[0];
         setEditionId(current ? current.id : null);
-        setLoadError(current ? null : 'No edition exists yet — seed the database.');
+        setLoadError(current ? null : 'No study edition has been set up yet.');
         setServiceDown(false);
         if (current) {
           const detail = await client.getEdition(current.id);
           if (cancelled) return;
-          setPhase(editionPhase(detail.status, detail.surveyCloseAt));
+          applyEdition(detail);
         }
       } catch (err) {
         if (cancelled) return;
@@ -138,12 +155,37 @@ export function App(): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [session, client, signOut]);
+  }, [session, client, signOut, applyEdition]);
+
+  // The phase is not fixed for a session: a lock approved by someone else, or
+  // the close date passing, moves it. Re-check on every tab change so the nav
+  // re-gates without a manual page reload.
+  useEffect(() => {
+    if (!editionId) return;
+    let cancelled = false;
+    client
+      .getEdition(editionId)
+      .then((detail) => {
+        if (!cancelled) applyEdition(detail);
+      })
+      .catch(() => {
+        // The page itself surfaces load failures; the nav keeps its last phase.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, editionId, client, applyEdition]);
 
   if (!session) {
     return (
-      <div className="shell">
-        <LoginPage onSignIn={signIn} />
+      <div className="login-page">
+        <LoginPage
+          onSignIn={(next) => {
+            setExpired(false);
+            signIn(next);
+          }}
+          notice={expired ? 'Your session has ended. Please sign in again.' : null}
+        />
       </div>
     );
   }
@@ -248,13 +290,18 @@ export function App(): JSX.Element {
           )}
         </main>
       ) : tab === 'board' ? (
-        <MissionBoardPage client={client} editionId={editionId} />
+        <MissionBoardPage client={client} editionId={editionId} onNavigate={setTab} />
       ) : tab === 'responses' ? (
         <ResponsesPage client={client} editionId={editionId} />
       ) : tab === 'unfinished' ? (
         <UnfinishedPage client={client} editionId={editionId} />
       ) : tab === 'edition' ? (
-        <EditionPage client={client} editionId={editionId} viewer={session.user} />
+        <EditionPage
+          client={client}
+          editionId={editionId}
+          viewer={session.user}
+          onLoaded={applyEdition}
+        />
       ) : tab === 'surveys' ? (
         <SurveysPage client={client} editionId={editionId} viewer={session.user} />
       ) : tab === 'renderer' ? (
@@ -266,7 +313,7 @@ export function App(): JSX.Element {
       ) : tab === 'invitations' ? (
         <InvitationsPage client={client} editionId={editionId} />
       ) : tab === 'regulators' ? (
-        <RegulatorsPage />
+        <RegulatorsPage client={client} editionId={editionId} />
       ) : tab === 'scoring' ? (
         <ScoresSignoffPage client={client} editionId={editionId} viewer={session.user} />
       ) : tab === 'national' ? (

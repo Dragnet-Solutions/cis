@@ -7,9 +7,7 @@
  * The third (§2a, surveyNotBuilt dead code) no longer applies in the shape it
  * was fixed in — Task D's rebuild gives a seat row a REAL entry point (Part
  * 6) instead of a "not built" feedback path, so `notBuiltForSeat` and its
- * test are retired rather than kept alive as dead code. `DESTINATIONS` is
- * checked instead for the same class of defect (a stale "owned elsewhere"
- * label for something this surface now actually builds).
+ * test are retired rather than kept alive as dead code.
  */
 import { describe, it, expect } from 'vitest';
 import {
@@ -17,7 +15,6 @@ import {
   PROGRESS_PIP_COUNT,
   pipsOnFor,
   replacementCost,
-  DESTINATIONS,
   type PortalView,
 } from './portalModel';
 
@@ -50,14 +47,6 @@ describe('§2b — progress indicator has no unreachable pips', () => {
     expect(maxSeen).toBe(PROGRESS_PIP_COUNT);
     expect(PORTAL_VIEWS.some((v) => pipsOnFor(v as PortalView) === 1)).toBe(true);
     expect(PORTAL_VIEWS.some((v) => pipsOnFor(v as PortalView) === 2)).toBe(true);
-  });
-});
-
-describe('DESTINATIONS names only what is genuinely still owned elsewhere', () => {
-  it('lists the surveys (a different UI) and nothing this surface now builds itself', () => {
-    expect(DESTINATIONS).toHaveProperty('survey');
-    expect(DESTINATIONS).not.toHaveProperty('team');
-    expect(DESTINATIONS).not.toHaveProperty('results');
   });
 });
 

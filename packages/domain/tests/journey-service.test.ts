@@ -25,12 +25,7 @@ import {
   getResponsesForRespondent,
   getRespondentById,
 } from '@cis/db';
-import {
-  buildJourneySequence,
-  firmContextAt,
-  type SurveyItem,
-  type AnswerValue,
-} from '@cis/survey';
+import { buildJourneySequence, firmContextAt } from '@cis/survey';
 import {
   seedReferenceData,
   startJourney,
@@ -45,6 +40,7 @@ import {
   ReviewGapError,
 } from '../src';
 import { getTestPool, runMigrations, truncateAllTables, closeTestPool } from '../../db/tests/setup';
+import { answerAll, validAnswerFor } from './helpers/answers';
 
 let pool: Pool;
 let editionId: string;
@@ -76,62 +72,6 @@ async function activeFirm(slug: string) {
   return org;
 }
 
-/** A minimal valid answer for an item of any kind (satisfies isAnswered). */
-function validAnswerFor(item: SurveyItem): AnswerValue {
-  const opts = item.options ?? [];
-  switch (item.kind) {
-    case 'scale':
-      return { a: item.scaleMin ?? 1 };
-    case 'single':
-      return { a: opts[0] ?? 'x' };
-    case 'multi':
-      return { a: [opts[0] ?? 'x'] };
-    case 'select':
-      if (item.selectThenGreatest) {
-        return { a: { picked: [opts[0] ?? 'x'], greatest: opts[0] ?? 'x' } };
-      }
-      return { a: [opts[0] ?? 'x'] };
-    case 'rank':
-      return { a: opts.slice(0, item.rankExactlyN ?? 3) };
-    case 'yesno': {
-      // Pick a value that does not require conditional detail.
-      const v = opts.find((o) => o !== item.conditionalDetailOn) ?? opts[0] ?? 'No';
-      return { a: { v } };
-    }
-    case 'grid': {
-      const cols = item.gridDimensions ? Object.keys(item.gridDimensions) : ['Rating'];
-      const grid: Record<string, Record<string, string>> = {};
-      for (const row of item.gridRows ?? []) {
-        grid[row] = {};
-        for (const c of cols) {
-          const dimOpts = item.gridDimensions?.[c] ?? [];
-          grid[row]![c] = dimOpts[0] ?? String(item.gridScale?.min ?? 1);
-        }
-      }
-      return { a: grid };
-    }
-    case 'open':
-    default:
-      return { a: 'A written answer.' };
-  }
-}
-
-/** Autosave every step of a journey with a valid answer. */
-async function answerAll(respondentId: string, items: SurveyItem[], ratedFirmIds: string[]) {
-  const sequence = buildJourneySequence(items, ratedFirmIds);
-  let step = 0;
-  for (const s of sequence) {
-    await saveDraftAnswer(pool, respondentId, {
-      questionId: s.item.id,
-      ratedFirmId: s.ratedFirmId,
-      answer: validAnswerFor(s.item),
-      step,
-    });
-    step += 1;
-  }
-  return sequence;
-}
-
 describe('S4 multi-firm journey → immutable responses', () => {
   it('freezes shared items once and firm-specific items once per rated firm', async () => {
     const b = await activeFirm('firm-b');
@@ -140,7 +80,7 @@ describe('S4 multi-firm journey → immutable responses', () => {
     await setRatedFirms(pool, r.id, [b.id, c.id]);
 
     const items = await getInstrumentItems(pool, 'S4');
-    await answerAll(r.id, items, [b.id, c.id]);
+    await answerAll(pool, r.id, items, [b.id, c.id]);
     const written = await submitJourney(pool, r.id);
 
     const shared = items.filter((i) => i.scope === 'shared');
@@ -206,7 +146,7 @@ describe('Consent gate (server-side, PAT-011)', () => {
   it('submit refuses a consent-required instrument until consent is accepted', async () => {
     const r = await startJourney(pool, { editionId, instrumentCode: 'S5a' });
     const items = await getInstrumentItems(pool, 'S5a');
-    await answerAll(r.id, items, []);
+    await answerAll(pool, r.id, items, []);
     await expect(submitJourney(pool, r.id)).rejects.toBeInstanceOf(ConsentRequiredError);
 
     await registerContact(pool, r.id, { consentAccepted: true, channel: 'none' });
@@ -257,7 +197,7 @@ describe('Visibility boundary (firm sees status, never answers)', () => {
     });
     await setRatedFirms(pool, r.id, [b.id]);
     const items = await getInstrumentItems(pool, 'S4');
-    await answerAll(r.id, items, [b.id]);
+    await answerAll(pool, r.id, items, [b.id]);
     await submitJourney(pool, r.id);
 
     const statuses = await getFirmRespondentStatuses(pool, editionId, recruiter.id);

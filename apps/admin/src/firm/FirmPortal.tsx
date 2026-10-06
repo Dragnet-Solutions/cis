@@ -6,7 +6,6 @@ import {
   SEAT_STATE_LABEL,
   SEGMENTS,
   SEGMENT_ORDER,
-  DESTINATIONS,
   type PortalView,
   type SeatState,
   type Segment,
@@ -771,8 +770,7 @@ function RequestedView(): JSX.Element {
         </div>
       </div>
       <p className="owner">
-        No timeframe is promised, because none is within design’s control. Turnaround is owned by
-        UX-OPS-002.
+        We can’t promise a timeframe — the call comes once the check is complete.
       </p>
     </>
   );
@@ -1112,8 +1110,8 @@ function PortalLanding({
       </div>
 
       <p className="owner">
-        The three surveys themselves are answered in a separate, respondent-facing surface (
-        {DESTINATIONS.survey}) — never inside this portal.
+        The three surveys themselves are answered through each seat’s own survey link — never inside
+        this portal.
       </p>
     </>
   );

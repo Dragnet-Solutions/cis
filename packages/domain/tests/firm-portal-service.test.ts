@@ -28,6 +28,7 @@ import {
 } from '@cis/db';
 import {
   seedReferenceData,
+  getInvitationRequests,
   claimSpace,
   requestInvitation,
   recordFollowUpConsent,
@@ -135,6 +136,29 @@ describe('Consent gating', () => {
     });
     expect(res.accepted).toBe(true);
     expect(res.domainNote).toBe(true); // recorded as a note, request still accepted
+  });
+
+  // Regression (E2E, 2026-09-30): the request used to be validated and
+  // acknowledged but never saved, so operators never saw it.
+  it('saves the request into the operators’ queue, flagged for a personal address', async () => {
+    await requestInvitation(pool, {
+      firmName: 'Some Firm',
+      name: 'A Person',
+      designation: 'Head of Ops',
+      email: 'person@gmail.com',
+      phone: '+2348000000000',
+      privacyConsent: true,
+    });
+    const queue = await getInvitationRequests(pool, editionId);
+    expect(queue).toHaveLength(1);
+    expect(queue[0]).toMatchObject({
+      firmName: 'Some Firm',
+      requesterName: 'A Person',
+      email: 'person@gmail.com',
+      organizationId: null,
+    });
+    expect(queue[0]!.flag).toMatch(/Personal email/);
+    expect(queue[0]!.flag).toMatch(/not matched to the register/);
   });
 
   it('follow-up consent gates nothing — the firm claims either way', async () => {

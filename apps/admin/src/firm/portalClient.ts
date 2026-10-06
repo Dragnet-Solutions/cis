@@ -1,4 +1,4 @@
-import { ApiError } from '../api/types';
+import { ApiError, type FirmReportContent } from '../api/types';
 
 /**
  * The firm-portal API client — entirely separate from the operator
@@ -247,6 +247,13 @@ export const portalClient = {
   // Outreach
   getOutreach: (token: string) =>
     request<{ links: OutreachLink[] }>('/portal/outreach', { token }).then((r) => r.links),
+
+  // The firm's own report — only once CIS has released it.
+  getReport: (token: string, editionId: string) =>
+    request<{ released: boolean; report: FirmReportContent | null }>(
+      `/portal/editions/${editionId}/report`,
+      { token },
+    ),
 
   // Results — reuses the existing, unchanged coordinator-access-code route
   // (apps/api/src/routes/firm-results.ts); the coordinator's own accessCode,

@@ -6,6 +6,8 @@ import {
   countCompletedBySegmentSince,
   countDistinctInstitutions,
   countDistinctInstitutionsSince,
+  countFirmsFirstCompletedSince,
+  getFirmSeatCompletionCounts,
   countAttributable,
   listInstitutionEngagement,
   getFirmFunnelRows,
@@ -835,6 +837,13 @@ export async function buildBoardContext(
 
   const completedBySeg = await countCompletedBySegment(pool, editionId);
   const completedSince = await countCompletedBySegmentSince(pool, editionId, windowStart);
+  // The participating-firms floor counts FIRMS with ≥1 seat complete (the same
+  // rule as eligibility-service), never seat responses — three seats from one
+  // firm are one participating firm.
+  const firmCurrent = (await getFirmSeatCompletionCounts(pool, editionId)).filter(
+    (c) => c.complete >= 1,
+  ).length;
+  const firmWindow = await countFirmsFirstCompletedSince(pool, editionId, windowStart);
   const localCurrent = await countDistinctInstitutions(pool, editionId, 'local_institution');
   const foreignCurrent = await countDistinctInstitutions(pool, editionId, 'foreign_institution');
   const localWindow = await countDistinctInstitutionsSince(
@@ -851,13 +860,13 @@ export async function buildBoardContext(
   );
 
   const currentOf: Record<MissionSegment, number> = {
-    firm: completedBySeg['firm'] ?? 0,
+    firm: firmCurrent,
     retail: completedBySeg['retail'] ?? 0,
     local_institution: localCurrent,
     foreign_institution: foreignCurrent,
   };
   const windowOf: Record<MissionSegment, number> = {
-    firm: completedSince['firm'] ?? 0,
+    firm: firmWindow,
     retail: completedSince['retail'] ?? 0,
     local_institution: localWindow,
     foreign_institution: foreignWindow,

@@ -290,9 +290,8 @@ function ApproverBar({
       <div className="warnbox">
         <b>Nobody can sign in to study operations.</b>
         <p style={{ margin: '6px 0 0' }}>
-          The study cannot be run at all. Restoring access is not something this surface can do — it
-          needs an administrator outside the study team, and that route is an engineering concern
-          rather than a screen.
+          The study cannot be run at all. Access can’t be restored from this screen — contact the
+          platform administrator to have an account reinstated.
         </p>
       </div>
     );

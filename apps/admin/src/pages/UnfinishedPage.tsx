@@ -284,8 +284,8 @@ export function UnfinishedPage({
           </div>
 
           <p className="owner">
-            The message itself is UX-RET-007, approved. This surface owns when it is sent and how
-            often; that surface owns what it says.
+            The reminder wording is approved separately. This screen sets only when it is sent and
+            how often.
           </p>
         </div>
       )}

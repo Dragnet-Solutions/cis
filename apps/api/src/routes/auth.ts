@@ -1,7 +1,13 @@
 import type { FastifyReply } from 'fastify';
 import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { getPool, getUserByEmail, updateLastLogin, getDirectPermissionCodes } from '@cis/db';
+import {
+  getPool,
+  getUserByEmail,
+  getUserById,
+  updateLastLogin,
+  getDirectPermissionCodes,
+} from '@cis/db';
 import { verifyPassword } from '@cis/auth';
 import { writeAudit } from '@cis/audit';
 
@@ -87,4 +93,24 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
       });
     },
   );
+
+  // Sliding session: an active operator swaps a still-valid token for a fresh
+  // one, so a working session is not cut off at a fixed 8h from sign-in. The
+  // user is re-read, so a deactivated account cannot keep itself alive.
+  app.post('/auth/refresh', { preHandler: [app.authenticate] }, async (request, reply) => {
+    const user = await getUserById(getPool(), request.session.sub);
+    if (!user) {
+      return (reply as FastifyReply)
+        .status(401)
+        .send({ error: 'Unauthorized', message: 'Invalid session', statusCode: 401 });
+    }
+    const token = await reply.jwtSign({
+      sub: user.id,
+      email: user.email,
+      displayName: user.displayName,
+      org: user.organization,
+      kind: 'operator',
+    });
+    return reply.send({ token });
+  });
 };

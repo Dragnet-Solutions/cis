@@ -303,7 +303,7 @@ function describePopulation(
   matrix: Array<{ organizationId: string; completeSeats: string[] }>,
 ): { label: string; count: number | null; gap: boolean } {
   if (!predicate) {
-    return { label: 'Population predicate not configured', count: null, gap: true };
+    return { label: 'Population not configured', count: null, gap: true };
   }
   if (predicate.kind === 'firm_seats_complete' && Array.isArray(predicate.seats)) {
     const seats = predicate.seats;
@@ -315,11 +315,13 @@ function describePopulation(
     return { label, count, gap: false };
   }
   // investor_responses / matched_pairs / anything else: an unresolved gap.
-  return {
-    label: predicate.note ?? 'Investor-side population (pending methodology)',
-    count: null,
-    gap: true,
-  };
+  // The stored `note` is internal methodology commentary, so it is never the
+  // on-screen label — the label is fixed per kind.
+  const label =
+    predicate.kind === 'matched_pairs'
+      ? 'Matched firm–investor pairs (definition pending methodology sign-off)'
+      : 'Investor responses (definition pending methodology sign-off)';
+  return { label, count: null, gap: true };
 }
 
 /** Aggregate a run's per-firm values for a metric into a display score (mean of

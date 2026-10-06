@@ -16,6 +16,9 @@ import {
   getOutreachLinkByToken,
   incrementOutreach,
   getEditionById,
+  listEditions,
+  listOrganizations,
+  insertInvitationRequest,
 } from '@cis/db';
 import type {
   SeatAssignment,
@@ -206,7 +209,7 @@ export interface InvitationRequest {
  * operations action owned by UX-OPS-002.
  */
 export async function requestInvitation(
-  _pool: Pool,
+  pool: Pool,
   input: InvitationRequest,
 ): Promise<{ accepted: true; domainNote: boolean }> {
   if (!input.privacyConsent) throw new PrivacyConsentRequiredError();
@@ -221,8 +224,35 @@ export async function requestInvitation(
   if (!/^\+?[0-9][0-9\s()-]{7,}$/.test(input.phone.trim())) {
     throw new FirmPortalError('Enter a phone number we can reach you on', 'PHONE_REQUIRED');
   }
+  // Persist into the operators' request queue (Invitations → Requests). This
+  // used to validate and return `accepted` without saving anything, so every
+  // request was silently dropped while the requester was told it was sent.
+  const editions = await listEditions(pool);
+  const edition = editions.find((e) => e.status === 'open') ?? editions[0];
+  if (!edition) throw new FirmPortalError('The study is not running yet', 'NO_EDITION');
+  const typed = input.firmName.trim().toLowerCase();
+  const firm = (await listOrganizations(pool)).find(
+    (o) => o.orgType === 'firm' && o.displayName.trim().toLowerCase() === typed,
+  );
   // A personal domain is a note for operations, never a gate.
-  return { accepted: true, domainNote: isPersonalDomain(input.email) };
+  const domainNote = isPersonalDomain(input.email);
+  const notes = [
+    domainNote
+      ? 'Personal email address — confirm with CIS that this person speaks for the firm.'
+      : null,
+    firm ? null : 'Firm name not matched to the register.',
+  ].filter((n): n is string => n !== null);
+  await insertInvitationRequest(pool, {
+    editionId: edition.id,
+    organizationId: firm?.id ?? null,
+    firmName: input.firmName.trim(),
+    requesterName: input.name.trim(),
+    role: input.designation.trim(),
+    email: input.email.trim(),
+    phone: input.phone.trim(),
+    flag: notes.length > 0 ? notes.join(' ') : null,
+  });
+  return { accepted: true, domainNote };
 }
 
 // ─── Seats ──────────────────────────────────────────────────────────────────
@@ -463,8 +493,11 @@ export async function getSeatEntryContext(
 }
 
 /**
- * Start this seat's survey: only from 'invited' (a fresh seat with nobody
- * partway through). Reuses the same generic `startJourney` every other entry
+ * Start this seat's survey from 'invited', or pick it back up from 'started'.
+ * The link is the seat's own credential (retired on every reassignment), so
+ * its holder resuming their unfinished response is the same trust model as
+ * starting it — without this, closing the browser mid-survey locked the
+ * seat holder out until the coordinator reassigned the seat. Reuses the same generic `startJourney` every other entry
  * point calls — a firm seat is not a special case at the journey layer, only
  * the recruitingFirmId attribution differs (the firm claiming its own seat).
  */
@@ -474,6 +507,9 @@ export async function startSeatEntry(
 ): Promise<{ respondentId: string; editionId: string; seatCode: 'S1' | 'S2' | 'S3' }> {
   const seat = await getSeatByLinkToken(pool, linkToken);
   if (!seat) throw new SeatLinkNotFoundError();
+  if (seat.state === 'started' && seat.respondentId) {
+    return { respondentId: seat.respondentId, editionId: seat.editionId, seatCode: seat.seatCode };
+  }
   if (seat.state !== 'invited') {
     throw new FirmPortalError(`This seat is already ${seat.state}`, 'SEAT_NOT_INVITED');
   }

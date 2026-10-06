@@ -7,6 +7,8 @@ import {
   type NationalReport,
   type NationalReportSection,
 } from '../api/types';
+import { isViewer, operatorName } from '../shared/operatorName';
+import { IndustryReport } from '../reports/IndustryReport';
 
 /**
  * UX-ADM-005 — National report review & approval, live-wired to the real
@@ -49,16 +51,21 @@ export function NationalReportPage({
   const [report, setReport] = useState<NationalReport | null>(null);
   const [sections, setSections] = useState<NationalReportSection[]>([]);
   const [pre, setPre] = useState<NationalApprovalPreconditions | null>(null);
+  const [names, setNames] = useState<Record<string, string>>({});
   const [authoritativeRunId, setAuthoritativeRunId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Starts NOT meeting until the live counts arrive — a default of "meets"
+  // would let a click-through generate a below-floor segment as reportable.
   const [segInputs, setSegInputs] = useState<Record<string, SegmentInput>>({
-    retail: { meets: true, thin: false },
-    local_institution: { meets: true, thin: false },
-    foreign_institution: { meets: true, thin: false },
+    retail: { meets: false, thin: false },
+    local_institution: { meets: false, thin: false },
+    foreign_institution: { meets: false, thin: false },
   });
+  const [counted, setCounted] = useState<Record<string, { counted: number; floor: number }>>({});
   const [regulatorsEngaged, setRegulatorsEngaged] = useState(0);
   const [approveReason, setApproveReason] = useState('');
+  const [viewing, setViewing] = useState(false);
 
   const load = useCallback(async () => {
     setError(null);
@@ -77,6 +84,7 @@ export function NationalReportPage({
       setReport(detail.report);
       setSections(detail.sections);
       setPre(detail.preconditions);
+      setNames(detail.operatorNames ?? {});
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not load the national report');
     }
@@ -85,6 +93,25 @@ export function NationalReportPage({
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    client
+      .getSufficiency(editionId)
+      .then(({ sufficiency }) => {
+        setCounted(sufficiency);
+        setSegInputs((prev) => {
+          const next = { ...prev };
+          for (const seg of Object.keys(prev)) {
+            const s = sufficiency[seg];
+            if (s) next[seg] = { ...prev[seg]!, meets: s.meets };
+          }
+          return next;
+        });
+      })
+      .catch(() => {
+        /* non-fatal — the boxes stay at "not met" and can be set by hand */
+      });
+  }, [client, editionId]);
 
   useEffect(() => {
     client
@@ -116,6 +143,12 @@ export function NationalReportPage({
     [load],
   );
 
+  if (viewing) {
+    return (
+      <IndustryReport client={client} editionId={editionId} onBack={() => setViewing(false)} />
+    );
+  }
+
   if (reportId === undefined) {
     return <main>{error ? <div className="err">{error}</div> : <p>Loading…</p>}</main>;
   }
@@ -139,13 +172,19 @@ export function NationalReportPage({
           <div className="note">
             <h3>No report has been generated for this edition yet</h3>
             <p>
-              Generation evaluates each of the ten fixed sections against the current segment
-              sufficiency state. Nothing in this system yet computes that state automatically —
-              confirm it below before generating.
+              Generation evaluates each of the ten fixed sections against each segment’s
+              sufficiency. The boxes below start from the current counts against each floor — mark a
+              segment thin if it clears its floor but only just.
             </p>
             {(['retail', 'local_institution', 'foreign_institution'] as const).map((seg) => (
               <div key={seg} style={{ margin: '10px 0' }}>
                 <b>{SEGMENT_LABEL[seg]}</b>
+                {counted[seg] && (
+                  <span className="muted">
+                    {' '}
+                    · {counted[seg]!.counted} of {counted[seg]!.floor} needed
+                  </span>
+                )}
                 <div>
                   <label style={{ marginRight: 16 }}>
                     <input
@@ -217,10 +256,15 @@ export function NationalReportPage({
         <h1 tabIndex={-1}>National report approved</h1>
         <div className="note">
           <p>
-            Approved by {report.approvedBy} on{' '}
+            Approved by {operatorName(names, report.approvedBy)} on{' '}
             {report.approvedAt ? new Date(report.approvedAt).toLocaleString() : '—'}. Firm reports
-            may now be released (UX-ADM-006).
+            may now be released.
           </p>
+        </div>
+        <div className="actions">
+          <button type="button" className="btn" onClick={() => setViewing(true)}>
+            Open the industry report
+          </button>
         </div>
       </main>
     );
@@ -237,6 +281,11 @@ export function NationalReportPage({
         Ten sections. Approving without seeing which are suppressed and why is approving blind, so
         the sufficiency view is the surface.
       </p>
+      <div className="actions">
+        <button type="button" className="btn-2" onClick={() => setViewing(true)}>
+          Open the industry report
+        </button>
+      </div>
 
       {error && <div className="err">{error}</div>}
 
@@ -268,7 +317,7 @@ export function NationalReportPage({
             {sections.map((s) => (
               <tr key={s.id}>
                 <td>
-                  {s.sectionId}
+                  {s.name ?? s.sectionId}
                   {s.reason ? (
                     <span style={{ display: 'block', fontSize: 12, color: '#6a6a6a' }}>
                       {s.reason}
@@ -304,13 +353,11 @@ export function NationalReportPage({
         </div>
         <div className="stagebody">
           <div className="warnbox">
-            <b>Sentence-level review has no content source yet.</b>
+            <b>Sentence-level review is not available yet.</b>
             <p style={{ margin: '6px 0 0' }}>
-              The adversarial checker (@cis/domain national-report-service: `runChecker`,
-              `runAdversaryHealth`) is real and tested, but nothing in this system yet generates
-              draft report sentences from real data to check — that is a genuine open item, not
-              built here. Until it exists, the checker-health approval precondition below cannot be
-              satisfied for a real report.
+              Draft report sentences are not yet generated from the study data, so there is nothing
+              for the adversarial checker to review. Until they are, the checker-health condition
+              below cannot be met for this report.
             </p>
           </div>
         </div>
@@ -349,10 +396,12 @@ export function NationalReportPage({
         <div className="stagebody">
           {suppressed.length > 0 && (
             <div className="warnbox">
-              <b>{suppressed.length} sections will not appear.</b>
+              <b>
+                {suppressed.length} section{suppressed.length === 1 ? '' : 's'} will not appear.
+              </b>
               <ul style={{ margin: '8px 0 0', paddingLeft: 20 }}>
                 {suppressed.map((s) => (
-                  <li key={s.id}>{s.sectionId}</li>
+                  <li key={s.id}>{s.name ?? s.sectionId}</li>
                 ))}
               </ul>
             </div>
@@ -364,7 +413,7 @@ export function NationalReportPage({
               </p>
             ))}
           {report.requestedBy ? (
-            report.requestedBy === viewer.email ? (
+            isViewer(report.requestedBy, viewer) ? (
               <p className="muted">
                 You requested approval on{' '}
                 {report.requestedAt ? new Date(report.requestedAt).toLocaleString() : '—'}. A maker
@@ -376,7 +425,7 @@ export function NationalReportPage({
                   type="button"
                   className="btn"
                   disabled={busy || !pre?.ok}
-                  onClick={() => doRun(() => client.approveNationalReport(report.id, viewer.email))}
+                  onClick={() => doRun(() => client.approveNationalReport(report.id))}
                 >
                   Approve for release
                 </button>
@@ -398,9 +447,7 @@ export function NationalReportPage({
                   className="btn"
                   disabled={busy || !pre?.ok || approveReason.trim().length < 10}
                   onClick={() =>
-                    doRun(() =>
-                      client.requestNationalApproval(report.id, viewer.email, approveReason.trim()),
-                    )
+                    doRun(() => client.requestNationalApproval(report.id, approveReason.trim()))
                   }
                 >
                   Request approval

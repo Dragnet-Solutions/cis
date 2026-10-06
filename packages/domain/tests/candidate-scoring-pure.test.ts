@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest';
 import type { MissionSegment, SegmentForecast } from '@cis/shared-types';
 import {
   scoreItem,
+  scoreS3Q4Composite,
   pooledHeadline,
   canCompareHeadlinesDirectly,
   computeLikeForLike,
@@ -446,5 +447,29 @@ describe('Phase 22 §7/§8 relationship-level investor scores (pure)', () => {
       6,
     );
     expect(foreignIciFirmSpecificObservation({ q4: '9' })).toBeCloseTo(n1(9), 6);
+  });
+});
+
+// Regression (2026-10-06): two scoring inputs never matched a real answer.
+describe('Scoring inputs match the register as answered', () => {
+  it('N4 scores the register’s own band labels ("0 to 10%"), not only "0-10%"', () => {
+    expect(scoreItem('S3-Q2', '0 to 10%')).toBe(95);
+    expect(scoreItem('S3-Q2', '11 to 25%')).toBe(82);
+    expect(scoreItem('S2-Q3', '76 to 90%')).toBe(17);
+    expect(scoreItem('S3-Q2', 'More than 90%')).toBe(5);
+    expect(scoreItem('S3-Q2', "Don't know")).toBeNull();
+  });
+
+  it('S3-Q4’s stored grid scores through its Performance (N5) and Risk (N6) bindings', () => {
+    // Good → 75, Low risk → 75; Excellent → 100, Very low risk → 100.
+    expect(
+      scoreS3Q4Composite({
+        'New client onboarding': { Performance: 'Good', Risk: 'Low' },
+        Reconciliation: { Performance: 'Excellent', Risk: 'Very low' },
+      }),
+    ).toBe(87.5);
+    expect(scoreS3Q4Composite({ 'Share transfers': { Performance: 'Poor' } })).toBe(0);
+    expect(scoreS3Q4Composite(null)).toBeNull();
+    expect(scoreS3Q4Composite({})).toBeNull();
   });
 });

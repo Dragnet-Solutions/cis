@@ -21,6 +21,7 @@ import {
   approveCriticalActionWithRbac,
   rejectCriticalActionWithRbac,
   MakerCheckerViolationError,
+  PermissionDeniedError,
 } from '../src';
 import { getTestPool, runMigrations, truncateAllTables, closeTestPool } from '../../db/tests/setup';
 
@@ -186,7 +187,7 @@ describe('Maker-checker workflow', () => {
 
     await expect(
       requestCriticalAction(pool, rbac, { actionType: 'edition:lock', payload: {} }),
-    ).rejects.toThrow(/does not have permission/);
+    ).rejects.toThrow(/do not have permission/);
   });
 
   it('user without can_approve permission cannot approve', async () => {
@@ -206,7 +207,19 @@ describe('Maker-checker workflow', () => {
     });
 
     await expect(approveCriticalActionWithRbac(pool, noPermsRbac, action.id)).rejects.toThrow(
-      /does not have permission/,
+      /do not have permission/,
     );
+  });
+});
+
+// Regression (E2E, 2026-09-30): refusals reached the screen as
+// "User <uuid> does not have permission: access:regs".
+describe('Permission refusals read as plain language', () => {
+  it('names the right, never the user id or the permission code', () => {
+    const err = new PermissionDeniedError('0bdc2eca-4bcc-4554-a472-e17c454ccb73', 'access:regs');
+    expect(err.message).toContain('Manage regulator engagement');
+    expect(err.message).not.toMatch(/0bdc2eca|access:regs/);
+    expect(err.userId).toBe('0bdc2eca-4bcc-4554-a472-e17c454ccb73');
+    expect(err.requiredPermission).toBe('access:regs');
   });
 });

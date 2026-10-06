@@ -1,0 +1,673 @@
+import { Pool } from 'pg';
+import {
+  getEditionById,
+  getConfig,
+  getLatestNationalReportForEdition,
+  listFirmReports,
+  listOrganizations,
+  listSubmittedAnswers,
+  getTransform,
+  type ReportAnswerRow,
+} from '@cis/db';
+import { DomainError } from './errors';
+import { currentSegmentSufficiency } from './eligibility-service';
+import { getSections, NATIONAL_SECTIONS } from './national-report-service';
+import { listRegulators } from './regulator-engagement-service';
+import { applyTransform, isSubstantive } from './scoring-transforms';
+import { SUPPRESS_BELOW } from './sufficiency-service';
+
+/**
+ * The CONTENT of the two report documents — the public Industry report and each
+ * firm's private report — computed from submitted responses.
+ *
+ * Deliberately DESCRIPTIVE only: shares of respondents citing something, and
+ * average ratings. Every 1–10 rating is put on 0–100 with the methodology's own
+ * N1 transform ((x−1)/9·100), so the report and the scoring engine share one
+ * scale. Nothing here weights, combines or indexes — the five indices (and
+ * anything built on them, such as maturity tiers) need an APPROVED methodology,
+ * so they are reported as pending rather than invented.
+ *
+ * A share or average over fewer than SUPPRESS_BELOW (10) responses is withheld,
+ * not shown — the same small-number floor the rest of the study uses.
+ */
+
+export class ReportContentError extends DomainError {
+  constructor(message: string, code = 'REPORT_CONTENT') {
+    super(message, code);
+  }
+}
+
+// ─── Shapes ────────────────────────────────────────────────────────────────────
+
+/** A share of respondents citing something (0–100, rounded) and its base. */
+export interface Share {
+  label: string;
+  pct: number;
+  /** How many cited it. */
+  count: number;
+}
+
+/** An average rating on 0–100, or null when there are too few ratings to show. */
+export interface Rating {
+  value: number | null;
+  n: number;
+}
+
+export interface Pending {
+  state: 'pending_methodology';
+  note: string;
+}
+
+const INDICES_PENDING: Pending = {
+  state: 'pending_methodology',
+  note:
+    'The five indices are computed only from a methodology approved by the methodology ' +
+    'partner. Until it is approved, index scores — and anything built on them, such as ' +
+    'maturity tiers — are not reported.',
+};
+
+export interface ReportSectionState {
+  id: string;
+  name: string;
+  disposition: 'publishable' | 'caveated' | 'suppressed';
+  reason: string | null;
+}
+
+export interface IndustryReportContent {
+  edition: { id: string; label: string; status: string };
+  generatedAt: string;
+  /** The generated national report's section states; null if none generated yet. */
+  sections: ReportSectionState[] | null;
+  participation: Array<{
+    segment: string;
+    label: string;
+    target: number;
+    achieved: number;
+    meets: boolean;
+  }>;
+  indices: Pending;
+  frictions: { base: number; items: Share[] } | null;
+  frustrations: { base: number; items: Share[] } | null;
+  participationImpact: { base: number; items: Share[] } | null;
+  confidenceLevers: { base: number; items: Share[] } | null;
+  localVsForeign: {
+    localN: number;
+    foreignN: number;
+    rows: Array<{ label: string; local: Rating; foreign: Rating }>;
+  };
+  comparators: {
+    base: number;
+    rows: Array<{
+      comparator: string;
+      better: number;
+      same: number;
+      worse: number;
+      n: number;
+    }>;
+  } | null;
+  selfVsInvestors: { firmSelfBelief: Rating; investorExperience: Rating };
+  institutional: Array<{
+    role: string;
+    familyCode: string;
+    responses: number;
+    topIssues: Share[];
+    capability: string | null;
+  }>;
+}
+
+export interface InvestorDimension {
+  key: 'ease' | 'responsiveness' | 'transparency' | 'trust';
+  label: string;
+  firm: Rating;
+  industry: Rating;
+  /** Which questions feed this dimension, for the report's footnote. */
+  sources: string;
+}
+
+export interface AgendaItem {
+  title: string;
+  detail: string;
+  priority: 'high' | 'medium' | 'sustain';
+}
+
+export interface FirmReportContent {
+  edition: { id: string; label: string; status: string };
+  generatedAt: string;
+  firm: { id: string; name: string };
+  report: {
+    retailN: number;
+    cutState: 'none' | 'directional' | 'unlocked';
+    approvalState: string;
+    releaseState: string;
+  };
+  margin: number;
+  indices: Pending;
+  dimensions: InvestorDimension[];
+  selfVsInvestors: {
+    firmSelfBelief: Rating;
+    investorExperience: Rating;
+    industrySelfBelief: Rating;
+    industryInvestorExperience: Rating;
+  };
+  retailCut: {
+    state: 'none' | 'directional' | 'unlocked';
+    n: number;
+    dimensions: Array<{ label: string; firm: Rating; industry: Rating }>;
+  };
+  agenda: AgendaItem[];
+}
+
+// ─── Pure helpers (exported for tests) ─────────────────────────────────────────
+
+/** A 1–10 answer on 0–100 via the methodology's N1 transform; null if not one. */
+export function onHundredScale(raw: unknown): number | null {
+  const n1 = getTransform('N1');
+  if (!n1 || !isSubstantive(raw)) return null;
+  return applyTransform(n1, raw);
+}
+
+/** Mean of the values that exist, rounded, withheld below the small-number floor. */
+export function rating(values: Array<number | null>): Rating {
+  const valid = values.filter((v): v is number => v !== null && Number.isFinite(v));
+  if (valid.length < SUPPRESS_BELOW) return { value: null, n: valid.length };
+  return { value: Math.round(valid.reduce((a, b) => a + b, 0) / valid.length), n: valid.length };
+}
+
+/** The options a select / multi / rank answer names (a select-then-greatest keeps `picked`). */
+export function pickedOptions(answer: unknown): string[] {
+  if (Array.isArray(answer)) return answer.filter((x): x is string => typeof x === 'string');
+  if (
+    answer &&
+    typeof answer === 'object' &&
+    Array.isArray((answer as { picked?: unknown }).picked)
+  ) {
+    return ((answer as { picked: unknown[] }).picked ?? []).filter(
+      (x): x is string => typeof x === 'string',
+    );
+  }
+  return [];
+}
+
+/**
+ * Share of RESPONDENTS citing each option at least once (one respondent who rated
+ * three firms and named the same frustration three times counts once), ranked.
+ * Null when fewer than SUPPRESS_BELOW respondents answered.
+ */
+export function shareCiting(
+  rows: Array<{ respondentId: string; options: string[] }>,
+  top = 5,
+  exclude: string[] = ['Other'],
+): { base: number; items: Share[] } | null {
+  const byRespondent = new Map<string, Set<string>>();
+  for (const r of rows) {
+    const set = byRespondent.get(r.respondentId) ?? new Set<string>();
+    for (const o of r.options) set.add(o);
+    byRespondent.set(r.respondentId, set);
+  }
+  const base = byRespondent.size;
+  if (base < SUPPRESS_BELOW) return null;
+  const counts = new Map<string, number>();
+  for (const set of byRespondent.values()) {
+    for (const o of set) if (!exclude.includes(o)) counts.set(o, (counts.get(o) ?? 0) + 1);
+  }
+  const items = [...counts.entries()]
+    .map(([label, count]) => ({ label, count, pct: Math.round((count / base) * 100) }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+    .slice(0, top);
+  return { base, items };
+}
+
+function yesNoValue(answer: unknown): string | null {
+  if (typeof answer === 'string') return answer;
+  if (answer && typeof answer === 'object' && 'v' in answer) {
+    const v = (answer as { v?: unknown }).v;
+    return typeof v === 'string' ? v : null;
+  }
+  return null;
+}
+
+/** Share of respondents answering "Yes" for at least one firm, per question. */
+export function shareYes(
+  rows: ReportAnswerRow[],
+  questions: Array<{ id: string; label: string }>,
+): { base: number; items: Share[] } | null {
+  const base = new Set(rows.map((r) => r.respondentId)).size;
+  if (base < SUPPRESS_BELOW) return null;
+  const items = questions.map((q) => {
+    const yes = new Set(
+      rows
+        .filter((r) => r.questionId === q.id && yesNoValue(r.answer) === 'Yes')
+        .map((r) => r.respondentId),
+    );
+    return { label: q.label, count: yes.size, pct: Math.round((yes.size / base) * 100) };
+  });
+  return { base, items };
+}
+
+const BETTER = new Set(['Significantly better', 'Somewhat better']);
+const WORSE = new Set(['Significantly worse', 'Somewhat worse']);
+
+/** A grid cell's value — `{ [row]: { [col]: v } }` or `{ [row]: v }`. */
+function gridCell(answer: unknown, row: string): unknown {
+  if (!answer || typeof answer !== 'object') return null;
+  const cell = (answer as Record<string, unknown>)[row];
+  if (cell && typeof cell === 'object') return Object.values(cell as Record<string, unknown>)[0];
+  return cell ?? null;
+}
+
+/** S4-Q8: for each comparator row, the share rating their stockbroker better / same / worse. */
+export function comparatorShares(rows: ReportAnswerRow[]): IndustryReportContent['comparators'] {
+  const tallies = new Map<string, { better: number; same: number; worse: number; n: number }>();
+  const respondents = new Set<string>();
+  for (const r of rows) {
+    if (!r.answer || typeof r.answer !== 'object') continue;
+    for (const comparator of Object.keys(r.answer as Record<string, unknown>)) {
+      const v = gridCell(r.answer, comparator);
+      if (typeof v !== 'string') continue;
+      const t = tallies.get(comparator) ?? { better: 0, same: 0, worse: 0, n: 0 };
+      if (BETTER.has(v)) t.better++;
+      else if (WORSE.has(v)) t.worse++;
+      else if (v === 'About the same') t.same++;
+      else continue; // "Unable to compare" is no view either way
+      t.n++;
+      tallies.set(comparator, t);
+      respondents.add(r.respondentId);
+    }
+  }
+  if (respondents.size < SUPPRESS_BELOW) return null;
+  const pct = (x: number, n: number) => (n ? Math.round((x / n) * 100) : 0);
+  return {
+    base: respondents.size,
+    rows: [...tallies.entries()].map(([comparator, t]) => ({
+      comparator,
+      better: pct(t.better, t.n),
+      same: pct(t.same, t.n),
+      worse: pct(t.worse, t.n),
+      n: t.n,
+    })),
+  };
+}
+
+/**
+ * How each investor-experience dimension is read across the three investor
+ * instruments. Every source is a 1–10 rating of the firm itself; a dimension
+ * pools whichever instruments ask it.
+ */
+const DIMENSIONS: Array<{
+  key: InvestorDimension['key'];
+  label: string;
+  sources: string;
+  read: (r: ReportAnswerRow) => unknown;
+}> = [
+  {
+    key: 'ease',
+    label: 'Ease of dealing',
+    sources: 'S4-Q1; S5a-Q1 service quality',
+    read: (r) =>
+      r.questionId === 'S4-Q1'
+        ? r.answer
+        : r.questionId === 'S5a-Q1'
+          ? gridCell(r.answer, 'Service quality')
+          : undefined,
+  },
+  {
+    key: 'responsiveness',
+    label: 'Responsiveness',
+    sources: 'S4-Q2; S5a-Q1 responsiveness',
+    read: (r) =>
+      r.questionId === 'S4-Q2'
+        ? r.answer
+        : r.questionId === 'S5a-Q1'
+          ? gridCell(r.answer, 'Responsiveness')
+          : undefined,
+  },
+  {
+    key: 'transparency',
+    label: 'Transparency & reporting',
+    sources: 'S4-Q3; S5a-Q1 reporting quality; S5b-Q3',
+    read: (r) =>
+      r.questionId === 'S4-Q3' || r.questionId === 'S5b-Q3'
+        ? r.answer
+        : r.questionId === 'S5a-Q1'
+          ? gridCell(r.answer, 'Reporting quality')
+          : undefined,
+  },
+  {
+    key: 'trust',
+    label: 'Trust in records',
+    sources: 'S4-Q4; S5a-Q5; S5b-Q4',
+    read: (r) =>
+      r.questionId === 'S4-Q4' || r.questionId === 'S5a-Q5' || r.questionId === 'S5b-Q4'
+        ? r.answer
+        : undefined,
+  },
+];
+
+/** The dimension's 0–100 ratings from the given answers (one per answer that asks it). */
+function dimensionValues(rows: ReportAnswerRow[], key: InvestorDimension['key']): number[] {
+  const d = DIMENSIONS.find((x) => x.key === key)!;
+  const out: number[] = [];
+  for (const r of rows) {
+    const raw = d.read(r);
+    if (raw === undefined) continue;
+    const v = onHundredScale(raw);
+    if (v !== null) out.push(v);
+  }
+  return out;
+}
+
+/** Overall investor experience: every ease / responsiveness / transparency rating pooled. */
+function experienceValues(rows: ReportAnswerRow[]): number[] {
+  return [
+    ...dimensionValues(rows, 'ease'),
+    ...dimensionValues(rows, 'responsiveness'),
+    ...dimensionValues(rows, 'transparency'),
+  ];
+}
+
+/**
+ * The firm's 90-day agenda, read only from its own gaps. A difference within the
+ * comparison margin makes no claim either way (the study's own rule), so an item
+ * appears only where the evidence actually separates the firm.
+ */
+export function buildAgenda(
+  dimensions: Array<{ label: string; firm: Rating; industry: Rating }>,
+  selfGap: { firm: number | null; industry: number | null },
+  margin: number,
+): AgendaItem[] {
+  const gaps = dimensions
+    .filter((d) => d.firm.value !== null && d.industry.value !== null)
+    .map((d) => ({ ...d, gap: (d.firm.value as number) - (d.industry.value as number) }));
+  const agenda: AgendaItem[] = [];
+
+  const weakest = [...gaps].sort((a, b) => a.gap - b.gap)[0];
+  if (weakest && weakest.gap <= -margin) {
+    agenda.push({
+      priority: 'high',
+      title: `Close the ${weakest.label.toLowerCase()} gap`,
+      detail:
+        `Your investors rate you ${weakest.firm.value} on ${weakest.label.toLowerCase()}, ` +
+        `against an industry ${weakest.industry.value} — your widest shortfall, and the most ` +
+        'direct lever on how clients experience you.',
+    });
+  }
+
+  if (
+    selfGap.firm !== null &&
+    selfGap.industry !== null &&
+    selfGap.firm - selfGap.industry >= margin
+  ) {
+    agenda.push({
+      priority: 'medium',
+      title: 'Narrow the distance between your view and your clients’',
+      detail:
+        `Your leadership’s self-view runs ${selfGap.firm - selfGap.industry} points further ` +
+        'ahead of your investors’ experience than the industry’s does. The gap, not the score, ' +
+        'is the thing to work on.',
+    });
+  }
+
+  const strongest = [...gaps].sort((a, b) => b.gap - a.gap)[0];
+  if (strongest && strongest.gap >= margin) {
+    agenda.push({
+      priority: 'sustain',
+      title: `Protect your ${strongest.label.toLowerCase()} strength`,
+      detail:
+        `You rate ${strongest.firm.value} against an industry ${strongest.industry.value}. ` +
+        'Hold it while you address the gaps above.',
+    });
+  }
+
+  if (agenda.length === 0) {
+    agenda.push({
+      priority: 'sustain',
+      title: 'Hold your position',
+      detail:
+        `Your investors rate you within ${margin} points of the industry on every dimension ` +
+        'measured — no difference the data can separate. Keep it there.',
+    });
+  }
+  return agenda;
+}
+
+// ─── Builders ──────────────────────────────────────────────────────────────────
+
+const INVESTOR_CODES = ['S4', 'S5a', 'S5b'];
+const SEGMENT_LABEL: Record<string, string> = {
+  firm: 'Stockbroking firms',
+  retail: 'Retail investors',
+  local_institution: 'Local institutional investors',
+  foreign_institution: 'Foreign institutional investors',
+};
+const INSTITUTIONAL: Record<string, { code: string; issues: string; capability: string }> = {
+  A: { code: 'I-SEC', issues: 'I-SEC-Q1', capability: 'I-SEC-Q5' },
+  B: { code: 'I-NGX', issues: 'I-NGX-Q1', capability: 'I-NGX-Q5' },
+  C: { code: 'I-CSCS', issues: 'I-CSCS-Q1', capability: 'I-CSCS-Q5' },
+  D: { code: 'I-DEP', issues: 'D-Q1', capability: 'D-Q5' },
+};
+
+async function editionOf(pool: Pool, editionId: string) {
+  const edition = await getEditionById(pool, editionId);
+  if (!edition) throw new ReportContentError('Edition not found', 'NOT_FOUND');
+  return { id: edition.id, label: edition.label, status: edition.status };
+}
+
+const ratingsOf = (rows: ReportAnswerRow[], read: (r: ReportAnswerRow) => unknown): Rating =>
+  rating(rows.map((r) => onHundredScale(read(r))));
+
+export async function buildIndustryReportContent(
+  pool: Pool,
+  editionId: string,
+): Promise<IndustryReportContent> {
+  const edition = await editionOf(pool, editionId);
+  const report = await getLatestNationalReportForEdition(pool, editionId);
+  const nameOf = new Map(NATIONAL_SECTIONS.map((s) => [s.id, s.name]));
+  const sections = report
+    ? (await getSections(pool, report.id)).map((s) => ({
+        id: s.sectionId,
+        name: nameOf.get(s.sectionId) ?? s.sectionId,
+        disposition: s.disposition,
+        reason: s.reason,
+      }))
+    : null;
+
+  const sufficiency = await currentSegmentSufficiency(pool, editionId);
+  const participation = Object.entries(SEGMENT_LABEL).map(([segment, label]) => ({
+    segment,
+    label,
+    target: sufficiency[segment]?.floor ?? 0,
+    achieved: sufficiency[segment]?.counted ?? 0,
+    meets: !!sufficiency[segment]?.meets,
+  }));
+
+  const answers = await listSubmittedAnswers(pool, editionId, [
+    'S1',
+    'S3',
+    ...INVESTOR_CODES,
+    ...Object.values(INSTITUTIONAL).map((i) => i.code),
+  ]);
+  const of = (code: string, q?: string) =>
+    answers.filter((a) => a.instrumentCode === code && (!q || a.questionId === q));
+  const cited = (rows: ReportAnswerRow[]) =>
+    rows.map((r) => ({ respondentId: r.respondentId, options: pickedOptions(r.answer) }));
+
+  const local = of('S5a');
+  const foreign = of('S5b');
+  const q = (rows: ReportAnswerRow[], id: string) => rows.filter((r) => r.questionId === id);
+
+  const roles = await listRegulators(pool, editionId);
+  const institutional = roles
+    .filter((r) => r.state === 'confirmed')
+    .map((r) => {
+      const inst = INSTITUTIONAL[r.familyCode]!;
+      const rows = of(inst.code).filter((a) => a.institutionName === r.name);
+      const issues = new Map<string, number>();
+      for (const a of q(rows, inst.issues)) {
+        for (const o of pickedOptions(a.answer)) {
+          if (o !== 'Other') issues.set(o, (issues.get(o) ?? 0) + 1);
+        }
+      }
+      const capability = q(rows, inst.capability)[0]?.answer;
+      return {
+        role: r.name,
+        familyCode: r.familyCode,
+        responses: new Set(rows.map((a) => a.respondentId)).size,
+        // Qualitative by design: a handful of institutions, so the reading is the
+        // issues they name — never a percentage over a base of one or two.
+        topIssues: [...issues.entries()]
+          .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+          .slice(0, 3)
+          .map(([label, count]) => ({ label, count, pct: 0 })),
+        capability: typeof capability === 'string' ? capability : null,
+      };
+    });
+
+  const investorRows = answers.filter((a) => INVESTOR_CODES.includes(a.instrumentCode));
+
+  return {
+    edition,
+    generatedAt: new Date().toISOString(),
+    sections,
+    participation,
+    indices: INDICES_PENDING,
+    frictions: shareCiting(cited(of('S3', 'S3-Q1'))),
+    frustrations: shareCiting(cited(of('S4', 'S4-Q9'))),
+    participationImpact: shareYes(of('S4'), [
+      { id: 'S4-Q6', label: 'Delayed or abandoned a transaction' },
+      { id: 'S4-Q5', label: 'Reduced willingness to invest' },
+      { id: 'S4-Q7', label: 'Moved assets or accounts elsewhere' },
+    ]),
+    confidenceLevers: shareCiting(cited(of('S5a', 'S5a-Q9')), 3),
+    localVsForeign: {
+      localN: new Set(local.map((r) => r.respondentId)).size,
+      foreignN: new Set(foreign.map((r) => r.respondentId)).size,
+      rows: [
+        {
+          label: 'Responsiveness / operational support',
+          local: ratingsOf(q(local, 'S5a-Q1'), (r) => gridCell(r.answer, 'Responsiveness')),
+          foreign: ratingsOf(q(foreign, 'S5b-Q2'), (r) => r.answer),
+        },
+        {
+          label: 'Reporting quality',
+          local: ratingsOf(q(local, 'S5a-Q1'), (r) => gridCell(r.answer, 'Reporting quality')),
+          foreign: ratingsOf(q(foreign, 'S5b-Q3'), (r) => r.answer),
+        },
+        {
+          label: 'Confidence in records',
+          local: ratingsOf(q(local, 'S5a-Q5'), (r) => r.answer),
+          foreign: ratingsOf(q(foreign, 'S5b-Q4'), (r) => r.answer),
+        },
+      ],
+    },
+    comparators: comparatorShares(of('S4', 'S4-Q8')),
+    selfVsInvestors: {
+      firmSelfBelief: ratingsOf(of('S1', 'S1-Q11'), (r) => r.answer),
+      investorExperience: rating(experienceValues(investorRows)),
+    },
+    institutional,
+  };
+}
+
+export async function buildFirmReportContent(
+  pool: Pool,
+  editionId: string,
+  firmId: string,
+): Promise<FirmReportContent> {
+  const edition = await editionOf(pool, editionId);
+  const firmReport = (await listFirmReports(pool, editionId)).find(
+    (r) => r.organizationId === firmId,
+  );
+  if (!firmReport) {
+    throw new ReportContentError(
+      'No report has been generated for this firm in this edition',
+      'FIRM_REPORT_NOT_GENERATED',
+    );
+  }
+  const org = (await listOrganizations(pool)).find((o) => o.id === firmId);
+  const margin = (await getConfig<number>(pool, 'reporting.comparison_margin')) ?? 3;
+
+  const answers = await listSubmittedAnswers(pool, editionId, ['S1', ...INVESTOR_CODES]);
+  const investorRows = answers.filter((a) => INVESTOR_CODES.includes(a.instrumentCode));
+  const aboutFirm = investorRows.filter((a) => a.ratedFirmId === firmId);
+
+  const dimensions: InvestorDimension[] = DIMENSIONS.map((d) => ({
+    key: d.key,
+    label: d.label,
+    sources: d.sources,
+    firm: rating(dimensionValues(aboutFirm, d.key)),
+    industry: rating(dimensionValues(investorRows, d.key)),
+  }));
+
+  const selfRows = answers.filter((a) => a.instrumentCode === 'S1' && a.questionId === 'S1-Q11');
+  // One S1 seat per firm, so the firm's self-belief is its leadership's single
+  // answer — its own view, not a sample, so it is shown rather than floored.
+  const ownSelf = selfRows.find((a) => a.recruitingFirmId === firmId);
+  const ownSelfValue = ownSelf ? onHundredScale(ownSelf.answer) : null;
+  const selfVsInvestors = {
+    firmSelfBelief: {
+      value: ownSelfValue === null ? null : Math.round(ownSelfValue),
+      n: ownSelfValue === null ? 0 : 1,
+    },
+    investorExperience: rating(experienceValues(aboutFirm)),
+    industrySelfBelief: ratingsOf(selfRows, (r) => r.answer),
+    industryInvestorExperience: rating(experienceValues(investorRows)),
+  };
+
+  // Retail cut — S4 only, shown only where the firm's own retail volume allows it.
+  const retailAbout = aboutFirm.filter((a) => a.instrumentCode === 'S4');
+  const retailAll = investorRows.filter((a) => a.instrumentCode === 'S4');
+  const retailDims = (
+    [
+      ['Retail · Ease', 'S4-Q1'],
+      ['Retail · Responsiveness', 'S4-Q2'],
+      ['Retail · Trust in records', 'S4-Q4'],
+    ] as const
+  ).map(([label, id]) => ({
+    label,
+    firm: ratingsOf(
+      retailAbout.filter((r) => r.questionId === id),
+      (r) => r.answer,
+    ),
+    industry: ratingsOf(
+      retailAll.filter((r) => r.questionId === id),
+      (r) => r.answer,
+    ),
+  }));
+  const cutState = firmReport.cutState;
+
+  const gapOf = (a: Rating, b: Rating) =>
+    a.value === null || b.value === null ? null : a.value - b.value;
+
+  return {
+    edition,
+    generatedAt: new Date().toISOString(),
+    firm: { id: firmId, name: org?.displayName ?? 'Your firm' },
+    report: {
+      retailN: firmReport.retailN,
+      cutState,
+      approvalState: firmReport.approvalState,
+      releaseState: firmReport.releaseState,
+    },
+    margin,
+    indices: INDICES_PENDING,
+    dimensions,
+    selfVsInvestors,
+    retailCut: {
+      state: cutState,
+      n: firmReport.retailN,
+      // Below the threshold nothing is shown at this level — not even the numbers.
+      dimensions: cutState === 'none' ? [] : retailDims,
+    },
+    agenda: buildAgenda(
+      [...dimensions, ...(cutState === 'unlocked' ? retailDims : [])],
+      {
+        firm: gapOf(selfVsInvestors.firmSelfBelief, selfVsInvestors.investorExperience),
+        industry: gapOf(
+          selfVsInvestors.industrySelfBelief,
+          selfVsInvestors.industryInvestorExperience,
+        ),
+      },
+      margin,
+    ),
+  };
+}

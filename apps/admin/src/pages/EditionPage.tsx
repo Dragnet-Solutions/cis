@@ -44,10 +44,14 @@ export function EditionPage({
   client,
   editionId,
   viewer,
+  onLoaded,
 }: {
   client: AdminClient;
   editionId: string;
   viewer: AuthUser;
+  /** Called with every fresh load, so the shell can re-gate its nav when a
+   *  lock/open/close changes the edition's phase. */
+  onLoaded?: (detail: EditionDetail) => void;
 }): JSX.Element {
   const [edition, setEdition] = useState<EditionDetail | null>(null);
   const [view, setView] = useState<View>('main');
@@ -62,13 +66,14 @@ export function EditionPage({
     try {
       const detail = await client.getEdition(editionId);
       setEdition(detail);
+      onLoaded?.(detail);
       setDraftFloors(Object.fromEntries(detail.floors.map((f) => [f.category, f.floorValue])));
       setDraftClose(detail.surveyCloseAt ? detail.surveyCloseAt.slice(0, 10) : '');
       setDraftOpen(detail.plannedOpenAt ? detail.plannedOpenAt.slice(0, 10) : '');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not load the edition');
     }
-  }, [client, editionId]);
+  }, [client, editionId, onLoaded]);
 
   useEffect(() => {
     void load();

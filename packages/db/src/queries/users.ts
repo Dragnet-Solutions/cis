@@ -104,6 +104,32 @@ export async function getUserById(pool: Pool, id: string): Promise<User | null> 
   return row ? mapUser(row) : null;
 }
 
+/**
+ * Display names for operator identifiers recorded on sign-off rows. Those
+ * columns are TEXT and normally hold the operator's email, but older rows may
+ * hold a user id, so both are matched. Deactivated users are included — a
+ * historical approval still names who gave it. Unmatched identifiers are
+ * simply absent from the result.
+ */
+export async function getDisplayNamesByIdentifier(
+  pool: Pool,
+  identifiers: string[],
+): Promise<Record<string, string>> {
+  const wanted = [...new Set(identifiers.filter((i) => i.length > 0))];
+  if (wanted.length === 0) return {};
+  const result = await query<{ id: string; email: string; display_name: string }>(
+    pool,
+    'SELECT id::text AS id, email, display_name FROM users WHERE email = ANY($1) OR id::text = ANY($1)',
+    [wanted],
+  );
+  const names: Record<string, string> = {};
+  for (const row of result.rows) {
+    if (wanted.includes(row.email)) names[row.email] = row.display_name;
+    if (wanted.includes(row.id)) names[row.id] = row.display_name;
+  }
+  return names;
+}
+
 export async function updateLastLogin(pool: Pool, userId: string): Promise<void> {
   await query(pool, 'UPDATE users SET last_login_at = NOW() WHERE id = $1', [userId]);
 }

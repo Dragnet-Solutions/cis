@@ -3,7 +3,14 @@ import { login } from '../api/client';
 import { ApiError } from '../api/types';
 import type { Session } from '../auth/useSession';
 
-export function LoginPage({ onSignIn }: { onSignIn: (session: Session) => void }): JSX.Element {
+export function LoginPage({
+  onSignIn,
+  notice = null,
+}: {
+  onSignIn: (session: Session) => void;
+  /** Why the operator is back at sign-in, e.g. an ended session. */
+  notice?: string | null;
+}): JSX.Element {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -28,6 +35,11 @@ export function LoginPage({ onSignIn }: { onSignIn: (session: Session) => void }
       <p className="eyebrow">CIS × Dragnet Benchmark</p>
       <h1 tabIndex={-1}>Study operations</h1>
       <p className="lede">Sign in to manage the current edition and its surveys.</p>
+      {notice && (
+        <p className="note" role="status">
+          {notice}
+        </p>
+      )}
 
       <form onSubmit={submit}>
         <div className="field">

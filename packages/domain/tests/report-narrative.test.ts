@@ -1,0 +1,406 @@
+/**
+ * The report documents' computed content and their AI-drafted narrative.
+ *
+ * The model is a fake here — these tests pin the guarantees around the model,
+ * not the model: every sentence must rest on facts it cites, may quote only the
+ * numbers those facts carry, never claims cause, never quotes a BANDED figure,
+ * and a held-back sentence is stored with its reason but never rendered.
+ */
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { Pool } from 'pg';
+import {
+  seedReferenceData,
+  generateIndustryNarrative,
+  getIndustryNarrative,
+  ensureIndustryNarrative,
+  narrativeDue,
+  checkNarrativeSentence,
+  parseModelSections,
+  firmFacts,
+  type NarrativeModel,
+} from '../src';
+import {
+  shareCiting,
+  rating,
+  comparatorShares,
+  buildAgenda,
+  pickedOptions,
+} from '../src/report-content-service';
+import type { FirmReportContent } from '../src/report-content-service';
+import type { NarrativeFact } from '@cis/db';
+import { getTestPool, runMigrations, truncateAllTables, closeTestPool } from '../../db/tests/setup';
+
+let pool: Pool;
+let editionId: string;
+
+beforeAll(async () => {
+  pool = getTestPool();
+  await runMigrations();
+});
+beforeEach(async () => {
+  await truncateAllTables(pool);
+  editionId = (await seedReferenceData(pool)).editionId;
+});
+afterAll(async () => {
+  await closeTestPool();
+});
+
+const FACTS = new Map<string, NarrativeFact>([
+  [
+    'FRUSTRATION.1',
+    {
+      id: 'FRUSTRATION.1',
+      state: 'REPORTABLE',
+      statement: '47% of retail investors (42 of 90) cite slow responses.',
+      numbers: [47, 42, 90, 1],
+    },
+  ],
+  [
+    'RETAIL.1',
+    {
+      id: 'RETAIL.1',
+      state: 'BANDED',
+      statement: 'Retail ease 61/100 against industry 58/100.',
+      numbers: [61, 58, 3, 100],
+    },
+  ],
+]);
+
+describe('The narrative checker', () => {
+  it('passes a sentence whose every number its cited fact carries', () => {
+    expect(
+      checkNarrativeSentence(
+        {
+          text: 'Slow responses are cited by 47% of retail investors.',
+          factIds: ['FRUSTRATION.1'],
+        },
+        FACTS,
+      ),
+    ).toBeNull();
+  });
+
+  it('holds back a sentence that cites nothing', () => {
+    expect(
+      checkNarrativeSentence({ text: 'Service is improving.', factIds: [] }, FACTS)?.kind,
+    ).toBe('NO SUPPORTING FACT IDS');
+  });
+
+  it('holds back a number its cited facts do not carry', () => {
+    const finding = checkNarrativeSentence(
+      { text: 'Slow responses are cited by 52% of retail investors.', factIds: ['FRUSTRATION.1'] },
+      FACTS,
+    );
+    expect(finding?.kind).toBe('NUMBER NOT IN CITED FACTS');
+    expect(finding?.why).toContain('52');
+  });
+
+  it('holds back a causal claim the study cannot make', () => {
+    expect(
+      checkNarrativeSentence(
+        { text: 'Investors leave because responses are slow.', factIds: ['FRUSTRATION.1'] },
+        FACTS,
+      )?.kind,
+    ).toBe('UNSUPPORTED CAUSAL CLAIM');
+  });
+
+  it('holds back a BANDED figure quoted as a point value', () => {
+    expect(
+      checkNarrativeSentence(
+        { text: 'Retail investors rate ease at 61% of the maximum.', factIds: ['RETAIL.1'] },
+        FACTS,
+      )?.kind,
+    ).toBe('BANDED FACT REPORTED AS A POINT VALUE');
+  });
+
+  it('holds back a fact id it was never given', () => {
+    expect(
+      checkNarrativeSentence({ text: 'Firms agree.', factIds: ['MADE.UP'] }, FACTS)?.kind,
+    ).toBe('UNKNOWN FACT ID');
+  });
+
+  it('holds back a figure written in words, which the digit check cannot see', () => {
+    const finding = checkNarrativeSentence(
+      { text: 'A third of retail investors cite slow responses.', factIds: ['FRUSTRATION.1'] },
+      FACTS,
+    );
+    expect(finding?.kind).toBe('FIGURE WRITTEN IN WORDS');
+    expect(finding?.why).toContain('third');
+  });
+
+  it('allows number words its cited fact itself uses', () => {
+    const facts = new Map(FACTS);
+    facts.set('TOP.1', {
+      id: 'TOP.1',
+      state: 'REPORTABLE',
+      statement: '47% cite slow responses among their top three frustrations.',
+      numbers: [47],
+    });
+    expect(
+      checkNarrativeSentence(
+        { text: 'Slow responses lead the top three frustrations at 47%.', factIds: ['TOP.1'] },
+        facts,
+      ),
+    ).toBeNull();
+  });
+
+  it('holds back speculative or consequential wording', () => {
+    expect(
+      checkNarrativeSentence(
+        { text: 'Slow responses are eroding investor participation.', factIds: ['FRUSTRATION.1'] },
+        FACTS,
+      )?.kind,
+    ).toBe('UNSUPPORTED CAUSAL CLAIM');
+    expect(
+      checkNarrativeSentence(
+        { text: 'Faster responses could restore confidence.', factIds: ['FRUSTRATION.1'] },
+        FACTS,
+      )?.kind,
+    ).toBe('UNSUPPORTED CAUSAL CLAIM');
+  });
+
+  it('holds back a gap quoted without the direction its fact states', () => {
+    const facts = new Map(FACTS);
+    facts.set('SELF.1', {
+      id: 'SELF.1',
+      state: 'REPORTABLE',
+      statement: 'Firms 54/100, investors 58/100 — a gap of 4 points, firms lower.',
+      numbers: [54, 58, 4, 100],
+    });
+    expect(
+      checkNarrativeSentence({ text: 'The industry gap is 4.', factIds: ['SELF.1'] }, facts)?.kind,
+    ).toBe('GAP WITHOUT DIRECTION');
+    expect(
+      checkNarrativeSentence(
+        {
+          text: 'Firms rate themselves 4 points lower than investors, a gap of 4.',
+          factIds: ['SELF.1'],
+        },
+        facts,
+      ),
+    ).toBeNull();
+  });
+
+  it('allows the edition year without a fact', () => {
+    expect(
+      checkNarrativeSentence(
+        { text: 'In 2026, slow responses led the list.', factIds: ['FRUSTRATION.1'] },
+        FACTS,
+        [2026],
+      ),
+    ).toBeNull();
+  });
+});
+
+describe('The facts the model is given', () => {
+  it('says which way each Service Excellence gap runs, never just its size', () => {
+    const r = (value: number) => ({ value, n: 20 });
+    const content = {
+      dimensions: [],
+      selfVsInvestors: {
+        firmSelfBelief: r(89),
+        investorExperience: r(72),
+        industrySelfBelief: r(54),
+        industryInvestorExperience: r(58),
+      },
+      retailCut: { state: 'none', n: 4, dimensions: [] },
+      agenda: [],
+    } as unknown as FirmReportContent;
+    const self = firmFacts(content).find((f) => f.id === 'SELF.1')!;
+    // A firm 17 above its investors, an industry 4 below: the size alone would
+    // let the narrative call both gaps the same kind of gap.
+    expect(self.statement).toContain('a gap of 17 points, leadership higher');
+    expect(self.statement).toContain('the gap is 4 points, firms lower than their investors');
+  });
+});
+
+describe('Reading the model’s answer', () => {
+  it('ignores a reasoning preamble and a fenced block around the JSON', () => {
+    const parsed = parseModelSections(
+      '<think>let me draft</think>\n```json\n{"sections":{"EXEC":[{"text":"A.","factIds":["X"]}]}}\n```',
+    );
+    expect(parsed).toEqual({ EXEC: [{ text: 'A.', factIds: ['X'] }] });
+  });
+
+  it('refuses an answer with no JSON in it', () => {
+    expect(() => parseModelSections('I cannot help with that.')).toThrow(/JSON/);
+  });
+});
+
+describe('Report content helpers', () => {
+  it('counts a respondent once however many firms they cited it for', () => {
+    const rows = Array.from({ length: 10 }, (_, i) => ({
+      respondentId: `r${i}`,
+      options: i < 4 ? ['Slow responses', 'Slow responses'] : ['Errors in records'],
+    }));
+    rows.push({ respondentId: 'r0', options: ['Slow responses'] }); // same person, another firm
+    const shares = shareCiting(rows)!;
+    expect(shares.base).toBe(10);
+    expect(shares.items.find((i) => i.label === 'Slow responses')).toMatchObject({
+      count: 4,
+      pct: 40,
+    });
+  });
+
+  it('withholds shares and ratings below ten responses', () => {
+    expect(shareCiting([{ respondentId: 'a', options: ['x'] }])).toBeNull();
+    expect(rating([50, 60, 70])).toEqual({ value: null, n: 3 });
+    expect(rating(Array.from({ length: 10 }, () => 50)).value).toBe(50);
+  });
+
+  it('reads a select-then-greatest answer by its picked options', () => {
+    expect(pickedOptions({ picked: ['A', 'B'], greatest: 'A' })).toEqual(['A', 'B']);
+  });
+
+  it('excludes "Unable to compare" from the bank / fintech comparison', () => {
+    const answer = {
+      'Your primary bank': { Rating: 'Somewhat worse' },
+      'Fintech or digital investment apps': { Rating: 'Unable to compare' },
+    };
+    const rows = Array.from({ length: 10 }, (_, i) => ({
+      respondentId: `r${i}`,
+      instrumentCode: 'S4',
+      questionId: 'S4-Q8',
+      ratedFirmId: null,
+      recruitingFirmId: null,
+      institutionName: null,
+      answer,
+    }));
+    expect(comparatorShares(rows)!.rows).toEqual([
+      { comparator: 'Your primary bank', better: 0, same: 0, worse: 100, n: 10 },
+    ]);
+  });
+
+  it('builds an agenda only from gaps larger than the margin', () => {
+    const r = (value: number) => ({ value, n: 20 });
+    const none = { firm: null, industry: null };
+    const agenda = buildAgenda(
+      [
+        { label: 'Responsiveness', firm: r(50), industry: r(60) },
+        { label: 'Trust in records', firm: r(70), industry: r(62) },
+        { label: 'Ease of dealing', firm: r(61), industry: r(60) },
+      ],
+      none,
+      3,
+    );
+    expect(agenda.map((a) => [a.priority, a.title])).toEqual([
+      ['high', 'Close the responsiveness gap'],
+      ['sustain', 'Protect your trust in records strength'],
+    ]);
+    expect(buildAgenda([{ label: 'Ease', firm: r(61), industry: r(60) }], none, 3)[0]?.title).toBe(
+      'Hold your position',
+    );
+  });
+});
+
+describe('Generating the industry narrative', () => {
+  it('stores every sentence, holding back the ones the checker rejects', async () => {
+    let seenPrompt = '';
+    const fake: NarrativeModel = {
+      name: 'fake-model',
+      async complete(system, user) {
+        seenPrompt = system + user;
+        return JSON.stringify({
+          sections: {
+            EXEC: [
+              {
+                text: 'The study was designed around 80 participating firms.',
+                factIds: ['PART.firm'],
+              },
+              { text: 'Exactly 999 firms took part.', factIds: ['PART.firm'] },
+              { text: 'Firms joined because the study matters.', factIds: ['PART.firm'] },
+            ],
+            NOT_A_SECTION: [{ text: 'Stray.', factIds: ['PART.firm'] }],
+          },
+        });
+      },
+    };
+
+    const narrative = await generateIndustryNarrative(pool, editionId, fake, 'op@cis.example');
+
+    // The model saw the computed facts and the rules.
+    expect(seenPrompt).toContain('[PART.firm]');
+    expect(seenPrompt).toContain('Never use');
+
+    const byText = new Map(narrative.sentences.map((s) => [s.text, s.finding?.kind ?? null]));
+    expect(byText.get('The study was designed around 80 participating firms.')).toBeNull();
+    expect(byText.get('Exactly 999 firms took part.')).toBe('NUMBER NOT IN CITED FACTS');
+    expect(byText.get('Firms joined because the study matters.')).toBe('UNSUPPORTED CAUSAL CLAIM');
+    expect(byText.get('Stray.')).toBe('UNKNOWN SECTION');
+    expect(narrative.model).toBe('fake-model');
+    expect(narrative.createdBy).toBe('op@cis.example');
+
+    expect((await getIndustryNarrative(pool, editionId))?.id).toBe(narrative.id);
+  });
+
+  it('a regeneration replaces the narrative in force but keeps the earlier one', async () => {
+    const once = (text: string): NarrativeModel => ({
+      name: 'fake-model',
+      complete: async () =>
+        JSON.stringify({ sections: { EXEC: [{ text, factIds: ['PART.firm'] }] } }),
+    });
+    await generateIndustryNarrative(pool, editionId, once('First draft.'), 'op@cis.example');
+    await generateIndustryNarrative(pool, editionId, once('Second draft.'), 'op@cis.example');
+    expect((await getIndustryNarrative(pool, editionId))?.sentences[0]?.text).toBe('Second draft.');
+    const { rows } = await pool.query<{ n: number }>(
+      'SELECT count(*)::int AS n FROM report_narratives',
+    );
+    expect(rows[0]!.n).toBe(2);
+  });
+});
+
+describe('Drafting the narrative by default', () => {
+  const counting = () => {
+    const model = {
+      calls: 0,
+      name: 'fake-model',
+      async complete() {
+        model.calls += 1;
+        return JSON.stringify({
+          sections: { EXEC: [{ text: 'Drafted.', factIds: ['PART.firm'] }] },
+        });
+      },
+    };
+    return model;
+  };
+
+  it('drafts a missing narrative once, however many ask at the same moment', async () => {
+    const model = counting();
+    const [a, b] = await Promise.all([
+      ensureIndustryNarrative(pool, editionId, () => model, 'op@cis.example'),
+      ensureIndustryNarrative(pool, editionId, () => model, 'op@cis.example'),
+    ]);
+    expect(model.calls).toBe(1);
+    expect(a?.id).toBe(b?.id);
+    expect(a?.sentences[0]?.text).toBe('Drafted.');
+  });
+
+  it('leaves a narrative written from the current figures alone', async () => {
+    const model = counting();
+    const first = await ensureIndustryNarrative(pool, editionId, () => model, 'op@cis.example');
+    const again = await ensureIndustryNarrative(
+      pool,
+      editionId,
+      () => {
+        throw new Error('the model must not be needed');
+      },
+      'op@cis.example',
+    );
+    expect(model.calls).toBe(1);
+    expect(again?.id).toBe(first?.id);
+  });
+
+  it('redrafts when the figures it was written from have changed', () => {
+    const fact = (statement: string): NarrativeFact => ({
+      id: 'A',
+      state: 'REPORTABLE',
+      statement,
+      numbers: [1],
+    });
+    const stored = { facts: [fact('Old figure.')] } as Parameters<typeof narrativeDue>[1];
+    expect(narrativeDue([fact('Old figure.')], stored)).toBe(false);
+    expect(narrativeDue([fact('New figure.')], stored)).toBe(true);
+    expect(narrativeDue([fact('Old figure.')], null)).toBe(true);
+    // Nothing to write about yet: never drafted.
+    expect(narrativeDue([], null)).toBe(false);
+  });
+});

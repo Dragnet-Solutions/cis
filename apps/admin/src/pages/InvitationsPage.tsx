@@ -101,7 +101,16 @@ export function InvitationsPage({
   }, [load]);
 
   const waiting = requests.filter((r) => !r.resolved).length;
-  const totalFirmsWrittenTo = Object.values(batchReports).reduce((s, r) => s + r.firms, 0);
+  // Distinct firms, not a sum over messages — a firm sent two templates is still
+  // one firm written to. The server's own audience counts give it directly.
+  const firmAudience = (id: string): number | null =>
+    audiences?.find((c) => c.key === 'firms')?.audiences.find((a) => a.id === id)?.count ?? null;
+  const allFirms = firmAudience('all');
+  const neverWritten = firmAudience('newaddr2');
+  const totalFirmsWrittenTo =
+    allFirms !== null && neverWritten !== null
+      ? allFirms - neverWritten
+      : Object.values(batchReports).reduce((s, r) => s + r.firms, 0);
   const totalBounced = Object.values(batchReports).reduce((s, r) => s + r.bounced, 0);
 
   if (audiences === null) {
@@ -180,6 +189,7 @@ export function InvitationsPage({
           editionId={editionId}
           templates={templates}
           audiences={audiences}
+          onSent={() => void load()}
           onDone={() => {
             setMsgView('list');
             void load();
@@ -391,12 +401,14 @@ function NewMessageWizard({
   editionId,
   templates,
   audiences,
+  onSent,
   onDone,
 }: {
   client: AdminClient;
   editionId: string;
   templates: MessageTemplate[];
   audiences: AudienceCategory[];
+  onSent: () => void;
   onDone: () => void;
 }): JSX.Element {
   const [step, setStep] = useState(1);
@@ -470,6 +482,8 @@ function NewMessageWizard({
           : {}),
       });
       setResult(r);
+      // Refresh the page header's counts now, not only when "Done" is pressed.
+      onSent();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not send the message');
     } finally {
@@ -928,7 +942,8 @@ function RequestsView({
     <>
       <h2>Firms asking for an invitation</h2>
       <p className="lede">
-        The operational other half of the firm-side request-an-invitation flow.
+        Firms that asked for an invitation code through the firm portal. Issue a code, or close the
+        request without one.
       </p>
       {error && <div className="err">{error}</div>}
       {requests.every((r) => r.resolved) && <p>Nothing waiting.</p>}

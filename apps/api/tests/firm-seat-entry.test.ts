@@ -85,6 +85,39 @@ describe('The seat entry point, over HTTP', () => {
     expect(finalCtxRes.json<{ state: string }>().state).toBe('complete');
   });
 
+  // Regression (E2E, 2026-09-30): a seat holder who closed the browser
+  // mid-survey was locked out — the link refused a started seat.
+  it('lets the seat link resume a started, unfinished survey', async () => {
+    const seed = await seedReferenceData(getPool());
+    const org = await createOrganization(getPool(), {
+      slug: 'resume-seat-firm',
+      displayName: 'Resume Seat Firm',
+      orgType: 'firm',
+    });
+    await getSeats(getPool(), seed.editionId, org.id);
+    const seat = await assignSeat(getPool(), {
+      editionId: seed.editionId,
+      organizationId: org.id,
+      seatCode: 'S3',
+      assignedName: 'Ops Lead',
+      assignedEmail: 'ops@resume-seat-firm.example',
+    });
+
+    const first = await app.inject({ method: 'POST', url: `/firm-seats/${seat.linkToken}/start` });
+    const again = await app.inject({ method: 'POST', url: `/firm-seats/${seat.linkToken}/start` });
+    expect(again.statusCode).toBe(201);
+    expect(again.json<{ respondentId: string }>().respondentId).toBe(
+      first.json<{ respondentId: string }>().respondentId,
+    );
+
+    await app.inject({ method: 'POST', url: `/firm-seats/${seat.linkToken}/complete` });
+    const afterComplete = await app.inject({
+      method: 'POST',
+      url: `/firm-seats/${seat.linkToken}/start`,
+    });
+    expect(afterComplete.statusCode).toBe(400);
+  });
+
   it('returns 404 for an unknown link token', async () => {
     const res = await app.inject({
       method: 'GET',

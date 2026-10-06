@@ -56,12 +56,12 @@ const INDEX_POPULATION: Record<(typeof INDEX_CODES)[number], IndexPopulationPred
   IEI: {
     kind: 'investor_responses',
     gap: true,
-    note: 'Investor-side population predicate not specified by UX-ADM-004 — pending methodology (flagged, not invented).',
+    note: 'Investor-side population predicate not yet specified by the scoring design — pending methodology.',
   },
   ICI: {
     kind: 'investor_responses',
     gap: true,
-    note: 'Investor-side population predicate not specified by UX-ADM-004 — pending methodology (flagged, not invented).',
+    note: 'Investor-side population predicate not yet specified by the scoring design — pending methodology.',
   },
   SEI: {
     kind: 'matched_pairs',

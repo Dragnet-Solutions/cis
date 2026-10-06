@@ -153,7 +153,7 @@ export function WordingPage({ client }: { client: AdminClient }): JSX.Element {
 
   return (
     <main>
-      <p className="eyebrow">Setup · UX-ADM-CNT-001</p>
+      <p className="eyebrow">Setup · Wording</p>
       <h1 tabIndex={-1}>Managed wording</h1>
       <p className="lede">
         Edit operational and public-facing wording without a software release. Instrument questions

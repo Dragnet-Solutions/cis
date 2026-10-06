@@ -12,6 +12,7 @@ import {
   hasApprovedNationalReport,
   hasSignedOffRun,
   countRetailRespondentsRatingFirm,
+  insertReportPublication,
 } from '@cis/db';
 import type { FirmReport, FirmReportCutState } from '@cis/shared-types';
 import { DomainError } from './errors';
@@ -181,8 +182,23 @@ export interface ReleaseResult {
  * history records which released, which were held, and why. A held report does
  * not block any other firm. An already-released report is left untouched
  * (releasing is not repeated — the DB also forbids editing a released row).
+ *
+ * With `prepare`, a report goes out only with its written analysis: `prepare`
+ * returns the narrative to freeze into it (drafting it if due), and a report
+ * whose analysis cannot be prepared is HELD with the reason, like any other
+ * report that is not ready. Preparation runs a few reports at a time.
  */
-export async function releaseFirmReports(pool: Pool, editionId: string): Promise<ReleaseResult> {
+export interface ReleaseOptions {
+  prepare: (report: FirmReport) => Promise<{ narrativeId: string }>;
+  releasedBy: string;
+  concurrency?: number;
+}
+
+export async function releaseFirmReports(
+  pool: Pool,
+  editionId: string,
+  options?: ReleaseOptions,
+): Promise<ReleaseResult> {
   if (!(await hasApprovedNationalReport(pool, editionId))) {
     throw new FirmReportError(
       'Firm reports cannot be released until the national report is approved',
@@ -200,15 +216,46 @@ export async function releaseFirmReports(pool: Pool, editionId: string): Promise
   const gatedRuns = new Set<string>();
   for (const r of reports) {
     if (r.releaseState === 'released' || gatedRuns.has(r.scoringRunId)) continue;
-    await assertRunOfficialUsable(pool, r.scoringRunId, 'firm report release (UX-ADM-006)');
+    await assertRunOfficialUsable(pool, r.scoringRunId, 'firm report release');
     gatedRuns.add(r.scoringRunId);
+  }
+
+  const isReady = (r: FirmReport) =>
+    r.releaseState !== 'released' &&
+    r.generationState === 'generated' &&
+    r.approvalState === 'approved';
+  const prepared = new Map<string, { narrativeId: string } | { failed: string }>();
+  if (options) {
+    const queue = reports.filter(isReady);
+    const worker = async () => {
+      for (let r = queue.shift(); r; r = queue.shift()) {
+        try {
+          prepared.set(r.id, await options.prepare(r));
+        } catch (err) {
+          prepared.set(r.id, { failed: err instanceof Error ? err.message : String(err) });
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: options.concurrency ?? 4 }, worker));
   }
 
   for (const r of reports) {
     if (r.releaseState === 'released') continue; // never recalled, never re-released
-    const ready = r.generationState === 'generated' && r.approvalState === 'approved';
+    const prep = prepared.get(r.id);
+    const unprepared = prep && 'failed' in prep ? prep.failed : null;
+    const ready = isReady(r) && unprepared === null;
     if (ready) {
       const updated = await setReleaseState(pool, r.id, 'released');
+      if (prep && 'narrativeId' in prep && options) {
+        await insertReportPublication(pool, {
+          editionId,
+          kind: 'firm',
+          subjectId: r.organizationId,
+          firmReportId: r.id,
+          narrativeId: prep.narrativeId,
+          publishedBy: options.releasedBy,
+        });
+      }
       await insertReleaseHistory(pool, {
         firmReportId: r.id,
         editionId,
@@ -218,11 +265,13 @@ export async function releaseFirmReports(pool: Pool, editionId: string): Promise
       released.push(updated);
     } else {
       const reason =
-        r.generationState === 'failed'
-          ? 'Report failed to generate — held for regeneration, not excluded.'
-          : r.generationState !== 'generated'
-            ? 'Report has not finished generating.'
-            : 'Report has not been approved.';
+        unprepared !== null
+          ? `The written analysis could not be prepared — held until it can: ${unprepared}`
+          : r.generationState === 'failed'
+            ? 'Report failed to generate — held for regeneration, not excluded.'
+            : r.generationState !== 'generated'
+              ? 'Report has not finished generating.'
+              : 'Report has not been approved.';
       const updated = await setReleaseState(pool, r.id, 'held', reason);
       await insertReleaseHistory(pool, {
         firmReportId: r.id,

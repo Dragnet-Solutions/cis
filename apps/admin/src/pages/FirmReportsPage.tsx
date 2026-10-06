@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { FirmReport as FirmReportDocument } from '../reports/FirmReport';
 import type { AdminClient } from '../api/client';
 import { ApiError, type FirmReport, type FirmSummary } from '../api/types';
 
@@ -40,6 +41,7 @@ export function FirmReportsPage({
     held: { organizationId: string; reason: string }[];
   } | null>(null);
   const [generationAttempted, setGenerationAttempted] = useState(false);
+  const [viewingFirm, setViewingFirm] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -83,6 +85,17 @@ export function FirmReportsPage({
     },
     [load],
   );
+
+  if (viewingFirm) {
+    return (
+      <FirmReportDocument
+        client={client}
+        editionId={editionId}
+        firmId={viewingFirm}
+        onBack={() => setViewingFirm(null)}
+      />
+    );
+  }
 
   if (reports === null) {
     return <main>{error ? <div className="err">{error}</div> : <p>Loading…</p>}</main>;
@@ -196,6 +209,7 @@ export function FirmReportsPage({
                   <th>Retail category cut</th>
                   <th>Approved</th>
                   <th>Released</th>
+                  <th>Report</th>
                 </tr>
               </thead>
               <tbody>
@@ -237,6 +251,16 @@ export function FirmReportsPage({
                             ? 'Held'
                             : 'Not released'}
                       </span>
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        className="btn-2 small"
+                        disabled={r.generationState !== 'generated'}
+                        onClick={() => setViewingFirm(r.organizationId)}
+                      >
+                        View report
+                      </button>
                     </td>
                   </tr>
                 ))}

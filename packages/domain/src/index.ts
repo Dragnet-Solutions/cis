@@ -245,7 +245,13 @@ export {
 export type { BoardContext, RemediationCohort } from './mission-board-service';
 
 // ── Phase 11: Candidate scoring methodology (CIS-SCORE-2026 v0.15) ────────────
-export { isSubstantive, applyTransform, scoreItem, transformFor } from './scoring-transforms';
+export {
+  isSubstantive,
+  applyTransform,
+  scoreItem,
+  scoreS3Q4Composite,
+  transformFor,
+} from './scoring-transforms';
 export {
   assertRunOfficialUsable,
   dmiCompleteFirmIds,
@@ -448,3 +454,35 @@ export {
   ParticipationClosedError,
 } from './shared-error-service';
 export type { ErrorStateKind, ErrorStateCopy } from './shared-error-service';
+export {
+  buildIndustryReportContent,
+  buildFirmReportContent,
+  ReportContentError,
+  type IndustryReportContent,
+  type FirmReportContent,
+} from './report-content-service';
+export {
+  generateIndustryNarrative,
+  generateFirmNarrative,
+  getIndustryNarrative,
+  getFirmNarrative,
+  ensureIndustryNarrative,
+  ensureFirmNarrative,
+  narrativeDue,
+  industryFacts,
+  firmFacts,
+  checkNarrativeSentence,
+  parseModelSections,
+  buildNarrativePrompt,
+  ReportNarrativeError,
+  ReportPublicationError,
+  type NarrativeModel,
+} from './report-narrative-service';
+export {
+  publishIndustryReport,
+  getPublishedIndustryReport,
+  getReleasedFirmReport,
+  queueReleaseNotices,
+  publicNarrative,
+  type PublicNarrative,
+} from './report-publication-service';

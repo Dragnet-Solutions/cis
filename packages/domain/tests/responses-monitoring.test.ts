@@ -203,3 +203,29 @@ describe('Card rendering (§B6) — grey bar, red marker, forecast, velocity, st
     expect(retail).not.toHaveProperty('recommendedAction');
   });
 });
+
+// Regression (E2E, 2026-09-30): the participating-firms card counted completed
+// SEAT surveys against a floor measured in FIRMS — three seats from one firm
+// read as three firms ("9 of 3" with three firms fully complete).
+describe('Participating firms are counted as firms, not seat responses', () => {
+  it('two firms with two completed seats each count as 2, not 4', async () => {
+    const asOf = await openWindow();
+    for (const slug of ['count-firm-a', 'count-firm-b']) {
+      const firmId = await dmiCompleteFirm(slug);
+      for (let seat = 0; seat < 2; seat++) {
+        await emitFunnelEvent(pool, {
+          eventType: 'completed',
+          editionId,
+          segment: 'firm',
+          firmId,
+          channel: 'portal',
+          source: 'direct',
+        });
+      }
+    }
+
+    const monitor = await getResponsesMonitor(pool, editionId, asOf);
+    const firmCard = monitor.cards.find((c) => c.segment === 'firm')!;
+    expect(firmCard.current).toBe(2);
+  });
+});

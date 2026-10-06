@@ -20,9 +20,14 @@ import type { EditionPhase } from '../editionPhase';
  *   - Rail is phase-aware: not-yet-relevant sections are disabled, not hidden.
  */
 
+/** The shell tab each rail shortcut opens — every value is a real nav tab. */
+export type RailTarget =
+  'invitations' | 'regulators' | 'responses' | 'scoring' | 'dragnet' | 'edition';
+
 interface RailSection {
   key: string;
   label: string;
+  target: RailTarget;
   built: boolean;
   phases: EditionPhase[];
 }
@@ -43,31 +48,36 @@ export const RAIL: RailSection[] = [
   {
     key: 'invitations',
     label: 'Invitations',
+    target: 'invitations',
     built: true,
     phases: ['before_launch', 'collection_open', 'closing_week'],
   },
   {
     key: 'regulators',
     label: 'Regulators',
+    target: 'regulators',
     built: true,
     phases: ['before_launch', 'collection_open', 'closing_week'],
   },
   {
     key: 'monitoring',
     label: 'Monitoring',
+    target: 'responses',
     built: true,
     phases: ['collection_open', 'closing_week'],
   },
-  { key: 'results', label: 'Results', built: true, phases: ['closed'] },
+  { key: 'results', label: 'Results', target: 'scoring', built: true, phases: ['closed'] },
   {
     key: 'dragnet',
     label: 'Dragnet analysis',
+    target: 'dragnet',
     built: true,
     phases: ['closed'],
   },
   {
     key: 'setup',
     label: 'Setup',
+    target: 'edition',
     built: true,
     phases: ['before_launch', 'collection_open', 'closing_week', 'closed'],
   },
@@ -76,9 +86,11 @@ export const RAIL: RailSection[] = [
 export function MissionBoardPage({
   client,
   editionId,
+  onNavigate,
 }: {
   client: AdminClient;
   editionId: string;
+  onNavigate: (target: RailTarget) => void;
 }): JSX.Element {
   const [cards, setCards] = useState<MissionCard[] | null>(null);
   const [phase, setPhase] = useState<EditionPhase>('before_launch');
@@ -184,6 +196,7 @@ export function MissionBoardPage({
                 type="button"
                 className="btn-2"
                 disabled={!relevant}
+                onClick={() => onNavigate(s.target)}
                 title={
                   !s.built
                     ? 'Not available yet'

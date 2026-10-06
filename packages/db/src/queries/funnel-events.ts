@@ -123,6 +123,29 @@ export async function countCompletedBySegmentSince(
   return out;
 }
 
+/** Firms whose FIRST completed seat falls on or after a cutoff — the velocity
+ *  numerator for the participating-firms floor, which counts firms (≥1 seat
+ *  complete), not seat responses. A firm finishing its second seat in the
+ *  window is not a new participating firm. */
+export async function countFirmsFirstCompletedSince(
+  pool: Pool,
+  editionId: string,
+  since: Date,
+): Promise<number> {
+  const result = await query<{ n: string }>(
+    pool,
+    `SELECT COUNT(*)::text AS n FROM (
+       SELECT firm_id FROM funnel_event
+        WHERE edition_id = $1 AND event_type = 'completed'
+          AND segment = 'firm' AND firm_id IS NOT NULL
+        GROUP BY firm_id
+       HAVING MIN(occurred_at) >= $2
+     ) f`,
+    [editionId, since],
+  );
+  return parseInt(result.rows[0]?.n ?? '0', 10);
+}
+
 /** Distinct institutions per institution segment since a cutoff — the velocity
  *  numerator for institutional segments (velocity runs on the DISTINCT count). */
 export async function countDistinctInstitutionsSince(

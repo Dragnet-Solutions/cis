@@ -1524,11 +1524,12 @@ treatment on its hardcoded `org_code` CHECK, without otherwise changing its beha
 deliberately NOT deep-rewired to source live from the new model in this phase (out of the tested
 DoD scope; `org_code` stays a free-text label for backward compatibility).
 
-**Deliberate scope decision — `RegulatorsPage.tsx` stays a local-state mockup.** Like every other
-"illustrative Study Operations surface" in this codebase, it is not wired to the live per-role
-API in this phase. Its `SEED` array now demonstrates the family model (a fourth institution,
-FMDQ Depository Limited, and CSCS appearing twice — once per role) so the shape is visible, but
-progressing it does not call any endpoint.
+**Superseded (2026-09-30) — `RegulatorsPage.tsx` is now live-wired.** It was left here as a
+local-state mockup (a `SEED` array; nothing it recorded reached the database). An end-to-end run
+found that every engagement was lost on reload and that Institutional Perspectives could therefore
+never be generated. The page now reads and writes every role through `routes/regulators.ts`, and
+submitting through an issued link confirms the role automatically
+(`confirmEngagementForSubmittedRespondent`, inside the submission transaction).
 
 ### Item 2 — The edition-opening trigger
 

@@ -10,8 +10,8 @@
  *  - `DESTINATIONS.team` / `DESTINATIONS.results` — both are now built INTO
  *    this surface, so a "not built, owned elsewhere" label for either would
  *    be a stale claim (the exact defect class fixed once before, in Mission
- *    Board). Only `survey` remains: the three firm surveys themselves are a
- *    genuinely different UI (the shared respondent journey shell).
+ *    Board). The last entry, `survey`, was a raw design ID rendered as copy,
+ *    so the constant is gone; the portal names the seat link in plain words.
  *
  * `PORTAL_VIEWS` now covers only the unauthenticated claim/sign-in flow —
  * the authenticated portal's own navigation is a separate, simpler type,
@@ -132,11 +132,3 @@ export const SEGMENT_ORDER: Segment[] = [
   'local_institutional',
   'foreign_institutional',
 ];
-
-/** The one real destination this surface still routes to, owned elsewhere:
- *  the three firm surveys themselves, answered inside the shared respondent
- *  journey shell (Part 6), a genuinely different UI. Team management and
- *  results are now built into this surface, not listed here. */
-export const DESTINATIONS = {
-  survey: 'UX-FRM-004/005/006',
-} as const;

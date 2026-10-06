@@ -1,6 +1,6 @@
 import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { getPool } from '@cis/db';
+import { getPool, getDisplayNamesByIdentifier } from '@cis/db';
 import {
   triggerScoringRun,
   listScoringRuns,
@@ -39,7 +39,11 @@ export const scoringRoutes: FastifyPluginAsyncZod = async (app) => {
       const runs = await listScoringRuns(pool, request.params.id);
       const signoffs = await listSignoffs(pool, request.params.id);
       const authoritative = await getAuthoritativeSignoff(pool, request.params.id);
-      return reply.send({ runs, signoffs, authoritative });
+      const operatorNames = await getDisplayNamesByIdentifier(
+        pool,
+        signoffs.flatMap((s) => [s.requestedBy, s.approvedBy ?? '', s.rejectedBy ?? '']),
+      );
+      return reply.send({ runs, signoffs, authoritative, operatorNames });
     },
   );
 
@@ -57,6 +61,8 @@ export const scoringRoutes: FastifyPluginAsyncZod = async (app) => {
   );
 
   // Request sign-off — the STRUCTURED checked-account, not a bare reason.
+  // Who is acting is always the signed-in operator, never a body field: a
+  // client-supplied identity would let one person play both maker and checker.
   app.post(
     '/editions/:id/scoring-runs/:runId/signoff/request',
     {
@@ -64,7 +70,6 @@ export const scoringRoutes: FastifyPluginAsyncZod = async (app) => {
       schema: {
         params: z.object({ id: z.string().uuid(), runId: z.string().uuid() }),
         body: z.object({
-          requestedBy: z.string().min(1),
           checkedAccount: z.object({
             populationCountsReviewed: z.boolean(),
             floorStatusReviewed: z.boolean(),
@@ -78,7 +83,7 @@ export const scoringRoutes: FastifyPluginAsyncZod = async (app) => {
       const signoff = await requestSignoff(getPool(), {
         editionId: request.params.id,
         calculationRunId: request.params.runId,
-        requestedBy: request.body.requestedBy,
+        requestedBy: request.session.email,
         checkedAccount: request.body.checkedAccount,
       });
       return reply.status(201).send({ signoff });
@@ -92,13 +97,13 @@ export const scoringRoutes: FastifyPluginAsyncZod = async (app) => {
       preHandler: [app.authenticate],
       schema: {
         params: z.object({ signoffId: z.string().uuid() }),
-        body: z.object({ approvedBy: z.string().min(1) }),
+        body: z.object({}).optional(),
       },
     },
     async (request, reply) => {
       const signoff = await approveSignoff(getPool(), {
         signoffId: request.params.signoffId,
-        approvedBy: request.body.approvedBy,
+        approvedBy: request.session.email,
       });
       return reply.send({ signoff });
     },
@@ -111,13 +116,13 @@ export const scoringRoutes: FastifyPluginAsyncZod = async (app) => {
       preHandler: [app.authenticate],
       schema: {
         params: z.object({ signoffId: z.string().uuid() }),
-        body: z.object({ rejectedBy: z.string().min(1), reason: z.string().min(1) }),
+        body: z.object({ reason: z.string().min(1) }),
       },
     },
     async (request, reply) => {
       const signoff = await rejectSignoff(getPool(), {
         signoffId: request.params.signoffId,
-        rejectedBy: request.body.rejectedBy,
+        rejectedBy: request.session.email,
         reason: request.body.reason,
       });
       return reply.send({ signoff });

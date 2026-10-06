@@ -141,6 +141,8 @@ export interface ScoringRunsResponse {
   runs: CalculationRun[];
   signoffs: ScoringSignoff[];
   authoritative: ScoringSignoff | null;
+  /** Display name per operator identifier on the sign-off rows. */
+  operatorNames: Record<string, string>;
 }
 
 // ─── Invitations (UX-OPS-002) ───────────────────────────────────────────────
@@ -278,6 +280,8 @@ export interface NationalReportSection {
   sectionId: NationalReportSectionId;
   disposition: SectionSufficiencyDisposition;
   reason: string | null;
+  /** Human name of the section, e.g. "The five headline scores". */
+  name?: string;
 }
 
 export interface NationalApprovalPreconditions {
@@ -293,6 +297,8 @@ export interface NationalReportDetailResponse {
   report: NationalReport;
   sections: NationalReportSection[];
   preconditions: NationalApprovalPreconditions;
+  /** Display name per operator identifier on the report. */
+  operatorNames: Record<string, string>;
 }
 
 // ─── Firm reports (UX-ADM-006) ──────────────────────────────────────────────
@@ -317,6 +323,8 @@ export interface FirmReport {
 }
 
 export interface ReleaseFirmReportsResult {
+  /** How the release notices to the firms' coordinators went. */
+  notified: { sent: number; logged: number; failed: number };
   released: string[];
   held: { organizationId: string; reason: string }[];
 }
@@ -463,4 +471,152 @@ export interface UnfinishedResponse {
   dropoff: DropoffBucket[];
   schedule: ReminderSchedule;
   cap: number;
+}
+
+// ─── Regulators (UX-OPS-007) ────────────────────────────────────────────────
+
+export type RegulatorFamilyCode = 'A' | 'B' | 'C' | 'D';
+
+export interface RegulatorContact {
+  who: string;
+  role: string;
+  email: string;
+  phone: string;
+  /** "How we got to them" — a note for whoever picks the relationship up next. */
+  how: string;
+}
+
+export type RegulatorSurveyState =
+  'no_contact' | 'contact_added' | 'invited' | 'confirmed' | 'declined';
+
+/** One (institution, family) role — CSCS holding two roles is two of these. */
+export interface RegulatorView {
+  institutionId: string;
+  familyCode: RegulatorFamilyCode;
+  name: string;
+  mandate: string;
+  status: 'not_started' | 'invited' | 'in_progress' | 'confirmed' | 'declined';
+  state: RegulatorSurveyState;
+  contact: RegulatorContact | null;
+  /** The API resume path, `/journeys/resume/<token>` — not a respondent URL. */
+  surveyLink: string | null;
+  targetBy: string | null;
+  overdue: boolean;
+  nextStep: string;
+  /** Newest first. */
+  history: Array<{ id: string; entry: string; createdAt: string }>;
+}
+
+// ─── Report documents (Industry report, private Firm report) ────────────────
+
+/** A share of respondents citing something (0–100) and how many cited it. */
+export interface ReportShare {
+  label: string;
+  pct: number;
+  count: number;
+}
+
+/** An average rating on 0–100; null when there are too few ratings to show (n < 10). */
+export interface ReportRating {
+  value: number | null;
+  n: number;
+}
+
+export interface ReportPending {
+  state: 'pending_methodology';
+  note: string;
+}
+
+/** The AI-drafted narrative in force for a report document. */
+export interface ReportNarrativeView {
+  model: string;
+  createdAt: string;
+  /** Operator views only — never sent with a released or published report. */
+  createdBy?: string;
+  sentences: Array<{
+    section: string;
+    text: string;
+    factIds: string[];
+    /** Set when the checker held the sentence back — never rendered in the report. */
+    finding: { kind: string; why: string } | null;
+  }>;
+}
+
+export interface IndustryReportContent {
+  edition: { id: string; label: string; status: string };
+  generatedAt: string;
+  sections: Array<{
+    id: string;
+    name: string;
+    disposition: 'publishable' | 'caveated' | 'suppressed';
+    reason: string | null;
+  }> | null;
+  participation: Array<{
+    segment: string;
+    label: string;
+    target: number;
+    achieved: number;
+    meets: boolean;
+  }>;
+  indices: ReportPending;
+  frictions: { base: number; items: ReportShare[] } | null;
+  frustrations: { base: number; items: ReportShare[] } | null;
+  participationImpact: { base: number; items: ReportShare[] } | null;
+  confidenceLevers: { base: number; items: ReportShare[] } | null;
+  localVsForeign: {
+    localN: number;
+    foreignN: number;
+    rows: Array<{ label: string; local: ReportRating; foreign: ReportRating }>;
+  };
+  comparators: {
+    base: number;
+    rows: Array<{ comparator: string; better: number; same: number; worse: number; n: number }>;
+  } | null;
+  selfVsInvestors: { firmSelfBelief: ReportRating; investorExperience: ReportRating };
+  institutional: Array<{
+    role: string;
+    familyCode: string;
+    responses: number;
+    topIssues: ReportShare[];
+    capability: string | null;
+  }>;
+  narrative: ReportNarrativeView | null;
+  /** When the document left CIS (released to its firm / published); then final. */
+  publishedAt?: string | null;
+}
+
+export interface FirmReportContent {
+  edition: { id: string; label: string; status: string };
+  generatedAt: string;
+  firm: { id: string; name: string };
+  report: {
+    retailN: number;
+    cutState: 'none' | 'directional' | 'unlocked';
+    approvalState: string;
+    releaseState: string;
+  };
+  margin: number;
+  indices: ReportPending;
+  dimensions: Array<{
+    key: 'ease' | 'responsiveness' | 'transparency' | 'trust';
+    label: string;
+    firm: ReportRating;
+    industry: ReportRating;
+    sources: string;
+  }>;
+  selfVsInvestors: {
+    firmSelfBelief: ReportRating;
+    investorExperience: ReportRating;
+    industrySelfBelief: ReportRating;
+    industryInvestorExperience: ReportRating;
+  };
+  retailCut: {
+    state: 'none' | 'directional' | 'unlocked';
+    n: number;
+    dimensions: Array<{ label: string; firm: ReportRating; industry: ReportRating }>;
+  };
+  agenda: Array<{ title: string; detail: string; priority: 'high' | 'medium' | 'sustain' }>;
+  narrative: ReportNarrativeView | null;
+  /** When the document left CIS (released to its firm / published); then final. */
+  publishedAt?: string | null;
 }

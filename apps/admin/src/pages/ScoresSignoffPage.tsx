@@ -7,6 +7,7 @@ import {
   type IndexScoreView,
   type ScoringSignoff,
 } from '../api/types';
+import { isViewer, operatorName } from '../shared/operatorName';
 
 /**
  * UX-ADM-004 — Setup: Results, Scores (sign-off). The maker-checker gate on
@@ -46,6 +47,7 @@ export function ScoresSignoffPage({
 }): JSX.Element {
   const [runs, setRuns] = useState<CalculationRun[] | null>(null);
   const [signoffs, setSignoffs] = useState<ScoringSignoff[]>([]);
+  const [names, setNames] = useState<Record<string, string>>({});
   const [scores, setScores] = useState<IndexScoreView[] | null>(null);
   const [view, setView] = useState<View>('main');
   const [busy, setBusy] = useState(false);
@@ -60,6 +62,7 @@ export function ScoresSignoffPage({
       const data = await client.getScoringRuns(editionId);
       setRuns(data.runs);
       setSignoffs(data.signoffs);
+      setNames(data.operatorNames ?? {});
       const current = data.runs[0];
       if (current) {
         const sv = await client.getScoreView(editionId, current.id);
@@ -116,9 +119,9 @@ export function ScoresSignoffPage({
   const allChecked = CHECKLIST.every((c) => checked[c.key]);
   const flagged = (scores ?? []).filter((s) => s.subFloor);
   const isOwnRequest =
-    liveSignoff?.state === 'requested' && liveSignoff.requestedBy === viewer.email;
+    liveSignoff?.state === 'requested' && isViewer(liveSignoff.requestedBy, viewer);
   const isReviewable =
-    liveSignoff?.state === 'requested' && liveSignoff.requestedBy !== viewer.email;
+    liveSignoff?.state === 'requested' && !isViewer(liveSignoff.requestedBy, viewer);
 
   return (
     <main>
@@ -212,7 +215,7 @@ export function ScoresSignoffPage({
                   {flagged.length > 1 ? 's' : ''}.
                 </b>{' '}
                 The score exists and is shown — it is flagged, not hidden. What is ultimately
-                reportable is decided at the national-report stage (UX-ADM-005), not here.
+                reportable is decided when the national report is prepared, not here.
               </p>
             </div>
           )}
@@ -288,7 +291,7 @@ export function ScoresSignoffPage({
                   <div className="warnbox" style={{ marginBottom: 12 }}>
                     <b>The last request was rejected.</b>
                     <p style={{ margin: '6px 0 0' }}>
-                      By {lastRejected.rejectedBy} on{' '}
+                      By {operatorName(names, lastRejected.rejectedBy)} on{' '}
                       {lastRejected.rejectedAt
                         ? new Date(lastRejected.rejectedAt).toLocaleString()
                         : '—'}
@@ -338,7 +341,7 @@ export function ScoresSignoffPage({
                     disabled={!allChecked || busy}
                     onClick={() =>
                       doRun(() =>
-                        client.requestSignoff(editionId, currentRun.id, viewer.email, {
+                        client.requestSignoff(editionId, currentRun.id, {
                           populationCountsReviewed: true,
                           floorStatusReviewed: true,
                           dataQualityFlagsReviewed: true,
@@ -384,7 +387,7 @@ export function ScoresSignoffPage({
               </div>
               <div className="stagebody">
                 <p>
-                  Requested by {liveSignoff!.requestedBy} on{' '}
+                  Requested by {operatorName(names, liveSignoff!.requestedBy)} on{' '}
                   {new Date(liveSignoff!.requestedAt).toLocaleString()}.
                 </p>
                 <div className="note">
@@ -401,9 +404,7 @@ export function ScoresSignoffPage({
                       type="button"
                       className="btn"
                       disabled={busy}
-                      onClick={() =>
-                        doRun(() => client.approveSignoff(liveSignoff!.id, viewer.email))
-                      }
+                      onClick={() => doRun(() => client.approveSignoff(liveSignoff!.id))}
                     >
                       Approve and sign off
                     </button>
@@ -436,13 +437,7 @@ export function ScoresSignoffPage({
                         className="btn"
                         disabled={busy || !rejectReason.trim()}
                         onClick={() =>
-                          doRun(() =>
-                            client.rejectSignoff(
-                              liveSignoff!.id,
-                              viewer.email,
-                              rejectReason.trim(),
-                            ),
-                          )
+                          doRun(() => client.rejectSignoff(liveSignoff!.id, rejectReason.trim()))
                         }
                       >
                         Confirm rejection
@@ -475,7 +470,7 @@ export function ScoresSignoffPage({
               <div className="stagebody">
                 <p>
                   This run is the one every national and firm report is generated from, approved by{' '}
-                  {liveSignoff.approvedBy} on{' '}
+                  {operatorName(names, liveSignoff.approvedBy)} on{' '}
                   {liveSignoff.approvedAt ? new Date(liveSignoff.approvedAt).toLocaleString() : '—'}
                   .
                 </p>

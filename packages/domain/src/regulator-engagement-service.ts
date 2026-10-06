@@ -64,17 +64,23 @@ export class RegulatorEngagementError extends DomainError {
  *  phase inherits; a ninth institution (or any of the other five seeded here)
  *  falls back to its family's generic relationship description — no code
  *  change is required to add one. */
-const MANDATE_BY_INSTITUTION_NAME: Record<string, string> = {
-  'Securities and Exchange Commission': 'Supervision of licensed stockbroking firms',
-  'Nigerian Exchange Limited': 'Trading, membership and listing support',
-  'Central Securities Clearing System': 'Clearing, settlement and custody',
-};
+const MANDATE_BY_INSTITUTION_NAME: Record<string, { family: InstrumentFamilyCode; text: string }> =
+  {
+    'Securities and Exchange Commission': {
+      family: 'A',
+      text: 'Supervision of licensed stockbroking firms',
+    },
+    'Nigerian Exchange Limited': { family: 'B', text: 'Trading, membership and listing support' },
+    'Central Securities Clearing System': { family: 'C', text: 'Clearing, settlement and custody' },
+  };
 
+/** A tagline describes one role, so it applies only to that family — CSCS's
+ *  depository role (Family D) must not read "Clearing, settlement and custody". */
 function mandateFor(institutionName: string, familyCode: InstrumentFamilyCode): string {
-  return (
-    MANDATE_BY_INSTITUTION_NAME[institutionName] ??
-    FAMILY_META[familyCode].label + ' — ' + FAMILY_META[familyCode].relationship
-  );
+  const tagline = MANDATE_BY_INSTITUTION_NAME[institutionName];
+  return tagline && tagline.family === familyCode
+    ? tagline.text
+    : FAMILY_META[familyCode].label + ' — ' + FAMILY_META[familyCode].relationship;
 }
 
 // ─── Contact validation (exact rules from the artefact) ────────────────────────

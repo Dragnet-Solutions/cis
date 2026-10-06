@@ -12,6 +12,7 @@ import {
   markRespondentSubmitted,
   getInstrumentItems,
   getActiveEditionParticipants,
+  confirmEngagementForSubmittedRespondent,
   withTransaction,
 } from '@cis/db';
 import {
@@ -252,6 +253,9 @@ export async function submitJourney(pool: Pool, respondentId: string): Promise<R
     // One completed funnel event per response, in the same transaction so the
     // event stream can never drift from the finalized response.
     await emitCompletedForRespondent(client as unknown as Pool, respondent, { source: 'direct' });
+    // A regulator answering through the link issued from the Regulators screen
+    // confirms that role — nobody has to remember to record it by hand.
+    await confirmEngagementForSubmittedRespondent(client as unknown as Pool, respondentId);
     return written;
   });
 }

@@ -115,3 +115,47 @@ describe('POST /scoring-signoffs/:signoffId/reject', () => {
     expect(res.statusCode).toBe(400);
   });
 });
+
+// The acting operator comes from the session, never the request body — a body
+// field would let one person claim to be the second person and approve their
+// own request (QA F13 follow-up).
+describe('sign-off identity is taken from the session', () => {
+  it('refuses a maker approving their own request while claiming to be someone else', async () => {
+    const { signoffId } = await requestedSignoff();
+    const token = await login(MAKER_EMAIL);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/scoring-signoffs/${signoffId}/approve`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { approvedBy: CHECKER_EMAIL },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json<{ message: string }>().message).toMatch(/never approve their own/);
+  });
+
+  it('records the signed-in checker and returns display names, not identifiers', async () => {
+    const { editionId, signoffId } = await requestedSignoff();
+    const token = await login(CHECKER_EMAIL);
+
+    const approve = await app.inject({
+      method: 'POST',
+      url: `/scoring-signoffs/${signoffId}/approve`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: {},
+    });
+    expect(approve.statusCode).toBe(200);
+    expect(approve.json<{ signoff: { approvedBy: string } }>().signoff.approvedBy).toBe(
+      CHECKER_EMAIL,
+    );
+
+    const runs = await app.inject({
+      method: 'GET',
+      url: `/editions/${editionId}/scoring-runs`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const { operatorNames } = runs.json<{ operatorNames: Record<string, string> }>();
+    expect(operatorNames[MAKER_EMAIL]).toBe('Adaeze Okoro');
+    expect(operatorNames[CHECKER_EMAIL]).toBe('Segun Oyegbesan');
+  });
+});

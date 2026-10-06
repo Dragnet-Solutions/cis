@@ -33,7 +33,12 @@ export function RetailEntry({
   const [channel, setChannel] = useState<Channel>('none');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
-  const [picked, setPicked] = useState<string[]>([]);
+  // Institutional investors (S5a/S5b) are counted by distinct institution, so
+  // the institution's name is needed — for grouping only, never published.
+  const isInstitutional = instrumentCode === 'S5a' || instrumentCode === 'S5b';
+  const [institutionName, setInstitutionName] = useState('');
+  // Arriving through a firm's own link pre-selects that firm (still removable).
+  const [picked, setPicked] = useState<string[]>(recruitingFirmId ? [recruitingFirmId] : []);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -48,6 +53,8 @@ export function RetailEntry({
         if (cancelled) return;
         setConsent(cc.consent);
         setFirms(fs);
+        // Drop a pre-selection that is not a participating firm this edition.
+        setPicked((prev) => prev.filter((id) => fs.some((f) => f.id === id)));
       } catch (err) {
         if (!cancelled) setError(err instanceof ApiError ? err.message : 'Could not load the page');
       }
@@ -67,6 +74,10 @@ export function RetailEntry({
       setError('Please read and accept how your information is handled to continue.');
       return;
     }
+    if (isInstitutional && !institutionName.trim()) {
+      setError('Please enter your institution’s name.');
+      return;
+    }
     if (picked.length === 0) {
       setError('Choose at least one firm to tell us about.');
       return;
@@ -77,6 +88,7 @@ export function RetailEntry({
         editionId,
         instrumentCode,
         recruitingFirmId,
+        institutionName: isInstitutional ? institutionName.trim() : null,
       });
       await journeyApi.contact(respondentId, {
         consentAccepted: accepted,
@@ -171,6 +183,21 @@ export function RetailEntry({
         </>
       ) : (
         <p className="lede">Loading…</p>
+      )}
+
+      {isInstitutional && (
+        <div className="field">
+          <label htmlFor="retail-entry-institution">Your institution’s name</label>
+          <input
+            id="retail-entry-institution"
+            value={institutionName}
+            onChange={(e) => setInstitutionName(e.target.value)}
+          />
+          <p className="hint">
+            Used only to group responses from the same institution — it is never published, and your
+            answers are not linked to any colleague’s.
+          </p>
+        </div>
       )}
 
       {/* firm picker from real active participating firms */}

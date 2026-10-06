@@ -285,7 +285,10 @@ function GridControl({ item, a, onAnswer }: ControlProps): JSX.Element {
     onAnswer(next);
   }
 
-  function Select({ row, col }: { row: string; col: string }): JSX.Element {
+  // A plain render function, not a nested component: a component declared in
+  // here is a new type on every render, so React would remount every select
+  // after each answer and drop keyboard focus to the page body.
+  function renderSelect(row: string, col: string): JSX.Element {
     return (
       <select
         aria-label={`${row} — ${col}`}
@@ -311,7 +314,7 @@ function GridControl({ item, a, onAnswer }: ControlProps): JSX.Element {
             {cols.map((c) => (
               <div key={c} className="ctl-gridfield">
                 {(item.gridDimensions || cols.length > 1) && <label>{c}</label>}
-                <Select row={row} col={c} />
+                {renderSelect(row, c)}
               </div>
             ))}
           </div>
@@ -338,9 +341,7 @@ function GridControl({ item, a, onAnswer }: ControlProps): JSX.Element {
             <tr key={row}>
               <th scope="row">{row}</th>
               {cols.map((c) => (
-                <td key={c}>
-                  <Select row={row} col={c} />
-                </td>
+                <td key={c}>{renderSelect(row, c)}</td>
               ))}
             </tr>
           ))}

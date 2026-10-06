@@ -1,52 +1,30 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import type { AdminClient } from '../api/client';
+import {
+  ApiError,
+  type RegulatorContact,
+  type RegulatorFamilyCode,
+  type RegulatorView,
+} from '../api/types';
 
 /**
- * UX-OPS-007 — Regulators. A faithful port of the approved functional artefact
- * (v2.5), extended for Phase 19's institutional instrument family model. One
- * page per (institution, family) role, two sections in fixed order (contact,
- * then survey) plus an append-only free-text history. The authoritative
- * behaviour — contact-before-link ordering, cancel-and-restart referral,
- * terminal declined (reversible via access:regs-gated reopen), lead time →
- * Phase 10's institution_engagement.target_by, a real per-role survey token —
- * lives in the domain service (@cis/domain) and its API routes; this surface
- * mirrors that flow. Local state stands in for the live edition here, exactly
- * as the other Study Operations surfaces do — a DELIBERATE scope decision
- * (documented in the README), not yet wired to the live per-role API.
+ * UX-OPS-007 — Regulators, live-wired to the regulator-engagement service
+ * (`@cis/domain`, via `apps/api/src/routes/regulators.ts`). One page per
+ * (institution, family) role — CSCS holding both Family C and Family D is two
+ * independent rows — with two sections in fixed order (contact, then survey)
+ * plus an append-only free-text history.
  *
- * `id` is a generic string (an institution id in the live model), not a fixed
- * enum — the SEED below demonstrates a 4th institution (FMDQ Depository,
- * Family D) and the multi-role case (CSCS holding both Family C and Family D
- * independently) to show the shape survives beyond the original three.
+ * Every rule lives server-side and this screen only reflects it: a contact
+ * before a link, cancel-and-restart when the contact changes after a link went
+ * out, declined as terminal (reopen is `access:regs`-gated), and a lead time
+ * the study team chooses — never a default. A role moves to confirmed on its
+ * own when the regulator submits through the link.
+ *
+ * Previously this page ran on a hard-coded SEED in local state: nothing it
+ * showed or recorded reached the database, so every engagement was lost on
+ * reload and Institutional Perspectives could never be generated.
  */
 
-type SurveyState = 'none' | 'sent' | 'done' | 'declined';
-type FamilyCode = 'A' | 'B' | 'C' | 'D';
-
-interface Contact {
-  who: string;
-  role: string;
-  email: string;
-  phone: string;
-  how: string;
-}
-interface HistEntry {
-  when: string;
-  what: string;
-}
-interface Reg {
-  id: string;
-  familyCode: FamilyCode;
-  name: string;
-  mandate: string;
-  contact: Contact | null;
-  by: string | null;
-  invited: boolean;
-  survey: SurveyState;
-  link: string;
-  hist: HistEntry[];
-}
-
-const TODAY = '2026-08-20';
 const MONTHS = [
   'January',
   'February',
@@ -62,188 +40,196 @@ const MONTHS = [
   'December',
 ];
 
-function fmt(d: string | null): string {
+/** A calendar date ('YYYY-MM-DD') as "17 August". */
+function fmtDate(d: string | null): string {
   if (!d) return '—';
-  const p = d.split('-');
+  const p = d.slice(0, 10).split('-');
   return `${parseInt(p[2]!, 10)} ${MONTHS[parseInt(p[1]!, 10) - 1]}`;
 }
 
-const SEED: Reg[] = [
-  {
-    id: 'CSCS',
-    familyCode: 'C',
-    name: 'Central Securities Clearing System',
-    mandate: 'Clearing, settlement and custody',
-    contact: null,
-    by: null,
-    invited: false,
-    survey: 'none',
-    link: '/journeys/resume/cscs-pending',
-    hist: [],
-  },
-  {
-    // CSCS holds a SECOND, independent role (Family D) alongside Family C
-    // above — the multi-role case the institutional-family model exists to
-    // handle. Same institution id, different family, its own state.
-    id: 'CSCS',
-    familyCode: 'D',
-    name: 'Central Securities Clearing System',
-    mandate: 'Depository and securities-account infrastructure',
-    contact: null,
-    by: null,
-    invited: false,
-    survey: 'none',
-    link: '/journeys/resume/cscs-dep-pending',
-    hist: [],
-  },
-  {
-    id: 'SEC',
-    familyCode: 'A',
-    name: 'Securities and Exchange Commission',
-    mandate: 'Supervision of licensed stockbroking firms',
-    contact: {
-      who: 'Hauwa Ibrahim',
-      role: 'Director, Market Supervision',
-      email: 'h.ibrahim@sec.gov.ng',
-      phone: '+234 803 221 4470',
-      how: 'Introduced by the Registrar',
-    },
-    by: '2026-08-17',
-    invited: true,
-    survey: 'sent',
-    link: '/journeys/resume/sec-4k2p',
-    hist: [
-      {
-        when: '10 Aug',
-        what: 'Hauwa Ibrahim, Director, Market Supervision. Introduced by the Registrar.',
-      },
-      { when: '12 Aug', what: 'Survey link sent by email and text. Expected back by 17 August.' },
-      { when: '18 Aug', what: 'Reminder sent by text. No answer on the desk line.' },
-    ],
-  },
-  {
-    id: 'NGX',
-    familyCode: 'B',
-    name: 'Nigerian Exchange Limited',
-    mandate: 'Trading, membership and listing support',
-    contact: {
-      who: 'Chidi Okonkwo',
-      role: 'Head, Member Regulation',
-      email: 'c.okonkwo@ngxgroup.com',
-      phone: '+234 807 664 1192',
-      how: 'Referred on by the Divisional Head',
-    },
-    by: '2026-08-22',
-    invited: true,
-    survey: 'done',
-    link: '/journeys/resume/ngx-9m3t',
-    hist: [
-      { when: '9 Aug', what: 'Divisional Head referred us on to Member Regulation.' },
-      { when: '11 Aug', what: 'Survey link issued to Chidi Okonkwo.' },
-      { when: '19 Aug', what: 'Submitted. Trading and membership both contributed.' },
-    ],
-  },
-  {
-    // A fourth institution — demonstrates the model beyond the original
-    // three without any code change (just another SEED entry, matching how
-    // the live schema needs only a new institutions/institution_roles row).
-    id: 'FMDQ-DEP',
-    familyCode: 'D',
-    name: 'FMDQ Depository Limited',
-    mandate: 'Depository and securities-account infrastructure',
-    contact: null,
-    by: null,
-    invited: false,
-    survey: 'none',
-    link: '/journeys/resume/fmdq-dep-pending',
-    hist: [],
-  },
-];
+/** A history timestamp as "30 Sep". */
+function fmtWhen(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getDate()} ${MONTHS[d.getMonth()]!.slice(0, 3)}`;
+}
 
-function overdue(r: Reg): boolean {
-  return !!r.by && r.survey !== 'done' && TODAY > r.by;
+/** The server stores the API resume path; the person needs the survey URL. */
+export function respondentLink(surveyLink: string | null, origin: string): string | null {
+  const token = surveyLink?.match(/\/journeys\/resume\/([^/?#]+)/)?.[1];
+  return token ? `${origin}/survey?resume=${token}` : null;
 }
-function nextStep(r: Reg): { t: string; p: string; l: string } {
-  if (r.survey === 'done') return { t: 'Nothing further needed', p: 'confirmed', l: 'Confirmed' };
-  if (r.survey === 'declined')
-    return { t: 'Section must be replanned', p: 'declined', l: 'Declined' };
-  if (!r.contact) return { t: 'Add a contact', p: 'nocontact', l: 'No contact' };
-  if (!r.invited) return { t: 'Issue the survey link', p: 'ready', l: 'Contact added' };
-  return { t: 'Waiting on their response', p: 'progress', l: 'Invited' };
-}
+
+const PILL: Record<RegulatorView['state'], { cls: string; label: string }> = {
+  confirmed: { cls: 'confirmed', label: 'Confirmed' },
+  declined: { cls: 'declined', label: 'Declined' },
+  no_contact: { cls: 'nocontact', label: 'No contact' },
+  contact_added: { cls: 'ready', label: 'Contact added' },
+  invited: { cls: 'progress', label: 'Invited' },
+};
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 function phoneDigits(v: string): number {
   return v.replace(/[^0-9]/g, '').length;
 }
 
-interface ContactDraft extends Contact {}
-const EMPTY_DRAFT: ContactDraft = { who: '', role: '', email: '', phone: '', how: '' };
+const EMPTY_DRAFT: RegulatorContact = { who: '', role: '', email: '', phone: '', how: '' };
 
-export function RegulatorsPage(): JSX.Element {
-  const [regs, setRegs] = useState<Reg[]>(() => SEED.map((r) => ({ ...r, hist: [...r.hist] })));
-  const [openIdx, setOpenIdx] = useState<number | null>(null);
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<ContactDraft>(EMPTY_DRAFT);
+type Key = { institutionId: string; familyCode: RegulatorFamilyCode };
 
-  const update = (idx: number, mut: (r: Reg) => Reg): void => {
-    setRegs((prev) => prev.map((r, i) => (i === idx ? mut({ ...r, hist: [...r.hist] }) : r)));
-  };
+export function RegulatorsPage({
+  client,
+  editionId,
+}: {
+  client: AdminClient;
+  editionId: string;
+}): JSX.Element {
+  const [regs, setRegs] = useState<RegulatorView[] | null>(null);
+  const [open, setOpen] = useState<Key | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  if (openIdx === null) {
+  const loadList = useCallback(async () => {
+    setError(null);
+    try {
+      setRegs((await client.getRegulators(editionId)).regulators);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not load the regulators');
+    }
+  }, [client, editionId]);
+
+  useEffect(() => {
+    if (!open) void loadList();
+  }, [open, loadList]);
+
+  if (open) {
     return (
-      <main>
-        <h1 tabIndex={-1}>Regulators</h1>
-        <p className="lede">
-          Each institutional role contributes the Institutional Perspectives section and is
-          approached separately, answering once — including an institution holding more than one
-          role (CSCS: clearing/settlement and depository), which appears once per role below.
-        </p>
+      <RegulatorDetail
+        client={client}
+        editionId={editionId}
+        which={open}
+        onBack={() => setOpen(null)}
+      />
+    );
+  }
+
+  if (regs === null) {
+    return <main>{error ? <div className="err">{error}</div> : <p>Loading…</p>}</main>;
+  }
+
+  return (
+    <main>
+      <h1 tabIndex={-1}>Regulators</h1>
+      <p className="lede">
+        Each institutional role contributes the Institutional Perspectives section and is approached
+        separately, answering once — including an institution holding more than one role, which
+        appears once per role below.
+      </p>
+      {error && <div className="err">{error}</div>}
+      {regs.length === 0 ? (
+        <p>No institutional roles are set up for this edition.</p>
+      ) : (
         <div>
-          {regs.map((r, i) => {
-            const n = nextStep(r);
-            const late = overdue(r);
+          {regs.map((r) => {
+            const pill = PILL[r.state];
             return (
               <button
-                key={`${r.id}-${r.familyCode}`}
+                key={`${r.institutionId}-${r.familyCode}`}
                 type="button"
-                className={`regrow${late ? ' late' : ''}`}
-                onClick={() => {
-                  setOpenIdx(i);
-                  setEditing(false);
-                }}
+                className={`regrow${r.overdue ? ' late' : ''}`}
+                onClick={() =>
+                  setOpen({ institutionId: r.institutionId, familyCode: r.familyCode })
+                }
               >
                 <span className="who">
                   <b>{r.name}</b>
                   <span>{r.mandate}</span>
                 </span>
-                <span className="next">{late ? `Overdue since ${fmt(r.by)}` : n.t}</span>
-                <span className={`pill ${n.p}`}>{n.l}</span>
+                <span className="next">
+                  {r.overdue ? `Overdue since ${fmtDate(r.targetBy)}` : r.nextStep}
+                </span>
+                <span className={`pill ${pill.cls}`}>{pill.label}</span>
               </button>
             );
           })}
         </div>
-        <p className="owner">
-          The section cannot be written without every role above, so each is a single point of
-          failure for a promised output. That is why each holds its own lead time rather than a
-          shared deadline.
-        </p>
+      )}
+      <p className="owner">
+        The section cannot be written without every role above, so each is a single point of failure
+        for a promised output. That is why each holds its own lead time rather than a shared
+        deadline.
+      </p>
+    </main>
+  );
+}
+
+function RegulatorDetail({
+  client,
+  editionId,
+  which,
+  onBack,
+}: {
+  client: AdminClient;
+  editionId: string;
+  which: Key;
+  onBack: () => void;
+}): JSX.Element {
+  const { institutionId, familyCode } = which;
+  const [r, setR] = useState<RegulatorView | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<RegulatorContact>(EMPTY_DRAFT);
+
+  useEffect(() => {
+    let cancelled = false;
+    client
+      .getRegulator(editionId, institutionId, familyCode)
+      .then((res) => {
+        if (!cancelled) setR(res.regulator);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setError(err instanceof ApiError ? err.message : 'Could not load this regulator');
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, editionId, institutionId, familyCode]);
+
+  // Every action returns the fresh record, history included — the screen shows
+  // exactly what the server now holds, never an optimistic guess.
+  const act = useCallback(
+    async (fn: () => Promise<{ regulator: RegulatorView }>): Promise<boolean> => {
+      setBusy(true);
+      setError(null);
+      try {
+        setR((await fn()).regulator);
+        return true;
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : 'Something went wrong');
+        return false;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [],
+  );
+
+  if (!r) {
+    return (
+      <main>
+        <button type="button" className="back" onClick={onBack}>
+          ← All regulators
+        </button>
+        {error ? <div className="err">{error}</div> : <p>Loading…</p>}
       </main>
     );
   }
 
-  const idx = openIdx;
-  const r = regs[idx]!;
-  const late = overdue(r);
-
-  const startEdit = (): void => {
-    setDraft(r.contact ? { ...r.contact } : EMPTY_DRAFT);
-    setEditing(true);
-  };
-
   const okMail = EMAIL_RE.test(draft.email.trim());
   const okPhone = phoneDigits(draft.phone) >= 10;
-  const draftValid = draft.who.trim() && draft.role.trim() && okMail && okPhone && draft.how.trim();
+  const draftValid =
+    !!draft.who.trim() && !!draft.role.trim() && okMail && okPhone && !!draft.how.trim();
   const draftError =
     draft.email.length && !okMail
       ? 'That is not a working email address.'
@@ -251,128 +237,94 @@ export function RegulatorsPage(): JSX.Element {
         ? 'That number is too short to send a text to.'
         : '';
 
-  const saveContact = (): void => {
-    const wasInvited = r.invited;
-    const prev = r.contact?.who ?? null;
-    const c: Contact = {
-      who: draft.who.trim(),
-      role: draft.role.trim(),
-      email: draft.email.trim(),
-      phone: draft.phone.trim(),
-      how: draft.how.trim(),
-    };
-    update(idx, (rr) => {
-      rr.contact = c;
-      if (wasInvited) {
-        // Cancel and start again — the earlier link dies, the survey resets.
-        rr.invited = false;
-        rr.survey = 'none';
-        rr.by = null;
-        rr.hist.push({
-          when: 'Today',
-          what: `Started again with ${c.who} in place of ${prev}. The earlier link no longer works, and anything the previous contact had started is lost. ${c.how}.`,
-        });
-      } else if (prev) {
-        rr.hist.push({
-          when: 'Today',
-          what: `Contact changed from ${prev} to ${c.who}. ${c.how}.`,
-        });
-      } else {
-        rr.hist.push({ when: 'Today', what: `${c.who}, ${c.role}. ${c.how}.` });
-      }
-      return rr;
-    });
-    setEditing(false);
-  };
-
-  const issueLink = (): void => {
-    update(idx, (rr) => {
-      rr.invited = true;
-      rr.survey = 'sent';
-      rr.by = '2026-08-27';
-      rr.hist.push({
-        when: 'Today',
-        what: `Survey link issued to ${rr.contact?.who ?? ''} by email and text. Expected back by 27 August.`,
-      });
-      return rr;
-    });
-  };
-  const remind = (text: boolean): void => {
-    update(idx, (rr) => {
-      rr.hist.push({
-        when: 'Today',
-        what: text
-          ? `Reminder sent by text to ${rr.contact?.phone ?? ''}.`
-          : `Reminder sent by email and text to ${rr.contact?.who ?? ''}.`,
-      });
-      return rr;
-    });
-  };
-  const decline = (): void => {
-    update(idx, (rr) => {
-      rr.survey = 'declined';
-      rr.hist.push({ when: 'Today', what: 'Declined to take part.' });
-      return rr;
-    });
-  };
-
   return (
     <main>
-      <button type="button" className="back" onClick={() => setOpenIdx(null)}>
-        ← All three
+      <button type="button" className="back" onClick={onBack}>
+        ← All regulators
       </button>
       <p className="eyebrow">{r.mandate}</p>
       <h1 tabIndex={-1}>{r.name}</h1>
-      {late && (
+      {r.overdue && (
         <div className="lateline">
-          Expected back by {fmt(r.by)}. Overdue, and raising a card on the operations board.
+          Expected back by {fmtDate(r.targetBy)}. Overdue, and raising a card on the operations
+          board.
+        </div>
+      )}
+      {error && (
+        <div className="err" role="alert">
+          {error}
         </div>
       )}
 
       {/* 1. the contact */}
       <ContactSection
         r={r}
+        busy={busy}
         editing={editing}
         draft={draft}
         setDraft={setDraft}
-        startEdit={startEdit}
+        startEdit={() => {
+          setDraft(r.contact ? { ...r.contact } : EMPTY_DRAFT);
+          setEditing(true);
+        }}
         cancelEdit={() => setEditing(false)}
-        save={saveContact}
-        valid={!!draftValid}
-        error={draftError}
+        save={async () => {
+          const ok = await act(() =>
+            client.saveRegulatorContact(editionId, institutionId, familyCode, draft),
+          );
+          if (ok) setEditing(false);
+        }}
+        valid={draftValid}
+        validationError={draftError}
       />
 
       {/* 2. the survey */}
-      <SurveySection r={r} issueLink={issueLink} remind={remind} decline={decline} />
+      <SurveySection
+        r={r}
+        busy={busy}
+        issueLink={(targetBy) =>
+          act(() => client.issueRegulatorLink(editionId, institutionId, familyCode, targetBy))
+        }
+        remind={(textOnly) =>
+          act(() => client.remindRegulator(editionId, institutionId, familyCode, textOnly))
+        }
+        decline={() => act(() => client.declineRegulator(editionId, institutionId, familyCode))}
+        reopen={() => act(() => client.reopenRegulator(editionId, institutionId, familyCode))}
+      />
 
       {/* 3. what has happened */}
       <HistorySection
         r={r}
-        onAdd={(entry) => update(idx, (rr) => (rr.hist.push({ when: 'Today', what: entry }), rr))}
+        busy={busy}
+        onAdd={(entry) =>
+          act(() => client.addRegulatorHistory(editionId, institutionId, familyCode, entry))
+        }
       />
     </main>
   );
 }
 
 function ContactSection(props: {
-  r: Reg;
+  r: RegulatorView;
+  busy: boolean;
   editing: boolean;
-  draft: ContactDraft;
-  setDraft: (d: ContactDraft) => void;
+  draft: RegulatorContact;
+  setDraft: (d: RegulatorContact) => void;
   startEdit: () => void;
   cancelEdit: () => void;
   save: () => void;
   valid: boolean;
-  error: string;
+  validationError: string;
 }): JSX.Element {
   const { r, editing, draft, setDraft } = props;
-  const field = (key: keyof ContactDraft, label: string, hint?: string): JSX.Element => (
+  const invited = r.state === 'invited';
+  const field = (key: keyof RegulatorContact, label: string, hint?: string): JSX.Element => (
     <div className="field">
       <label htmlFor={`f-${key}`}>{label}</label>
       {hint ? <p className="hint">{hint}</p> : null}
       <input
         id={`f-${key}`}
-        type="text"
+        type={key === 'email' ? 'email' : key === 'phone' ? 'tel' : 'text'}
         value={draft[key]}
         onChange={(e) => setDraft({ ...draft, [key]: e.target.value })}
       />
@@ -380,7 +332,7 @@ function ContactSection(props: {
   );
 
   return (
-    <section className={`stage${!r.contact && !editing ? ' now' : editing ? ' now' : ' done'}`}>
+    <section className={`stage${!r.contact || editing ? ' now' : ' done'}`}>
       <div className="stagehead">
         <h2>Their contact</h2>
         <span className={`pill ${r.contact ? 'confirmed' : 'nocontact'}`}>
@@ -390,7 +342,7 @@ function ContactSection(props: {
       <div className="stagebody">
         {editing ? (
           <>
-            {r.contact && r.invited && (
+            {invited && (
               <div className="warnbox">
                 <b>The link already sent stops working.</b> Anything they had started is lost, and a
                 fresh link goes to whoever you name below.
@@ -405,14 +357,19 @@ function ContactSection(props: {
               {field('phone', 'Mobile')}
             </div>
             {field('how', 'How we got to them', 'A note for whoever picks this up next.')}
-            {props.error ? (
+            {props.validationError ? (
               <div className="err" role="alert">
-                {props.error}
+                {props.validationError}
               </div>
             ) : null}
             <div className="actions">
-              <button type="button" className="btn" disabled={!props.valid} onClick={props.save}>
-                Save the contact
+              <button
+                type="button"
+                className="btn"
+                disabled={!props.valid || props.busy}
+                onClick={props.save}
+              >
+                {props.busy ? 'Saving…' : 'Save the contact'}
               </button>
               <button type="button" className="btn-2" onClick={props.cancelEdit}>
                 Cancel
@@ -433,9 +390,9 @@ function ContactSection(props: {
               <dt>How reached</dt>
               <dd>{r.contact.how}</dd>
             </dl>
-            {r.survey !== 'declined' && (
+            {r.state !== 'declined' && r.state !== 'confirmed' && (
               <button type="button" className="textlink" onClick={props.startEdit}>
-                {r.invited ? 'Cancel and start again with someone else' : 'Change this contact'}
+                {invited ? 'Cancel and start again with someone else' : 'Change this contact'}
               </button>
             )}
           </>
@@ -455,21 +412,22 @@ function ContactSection(props: {
 }
 
 function SurveySection(props: {
-  r: Reg;
-  issueLink: () => void;
-  remind: (text: boolean) => void;
-  decline: () => void;
+  r: RegulatorView;
+  busy: boolean;
+  issueLink: (targetBy: string) => Promise<boolean>;
+  remind: (textOnly: boolean) => Promise<boolean>;
+  decline: () => Promise<boolean>;
+  reopen: () => Promise<boolean>;
 }): JSX.Element {
-  const { r } = props;
+  const { r, busy } = props;
+  // The lead time is the study team's decision — never computed or defaulted.
+  const [targetBy, setTargetBy] = useState('');
 
   let body: JSX.Element;
   let pill: { cls: string; text: string };
   let stageCls = 'stage';
 
-  if (!r.contact) {
-    pill = { cls: 'nocontact', text: 'Not yet' };
-    body = <p>Nothing can be sent until there is someone to send it to.</p>;
-  } else if (r.survey === 'done') {
+  if (r.state === 'confirmed') {
     stageCls = 'stage done';
     pill = { cls: 'confirmed', text: 'Submitted' };
     body = (
@@ -478,15 +436,38 @@ function SurveySection(props: {
         Perspectives section.
       </p>
     );
-  } else if (r.survey === 'declined') {
+  } else if (r.state === 'declined') {
     pill = { cls: 'declined', text: 'Declined' };
     body = (
-      <p>
-        Declined to take part. The Institutional Perspectives section must be replanned rather than
-        chased.
-      </p>
+      <>
+        <p>
+          Declined to take part. The Institutional Perspectives section must be replanned rather
+          than chased.
+        </p>
+        <div className="actions">
+          <button
+            type="button"
+            className="btn-2"
+            disabled={busy}
+            onClick={() => {
+              if (
+                window.confirm(
+                  'Reopen this role? Use this only if the decline was recorded by mistake.',
+                )
+              ) {
+                void props.reopen();
+              }
+            }}
+          >
+            Reopen — this was recorded by mistake
+          </button>
+        </div>
+      </>
     );
-  } else if (!r.invited) {
+  } else if (!r.contact) {
+    pill = { cls: 'nocontact', text: 'Not yet' };
+    body = <p>Nothing can be sent until there is someone to send it to.</p>;
+  } else if (r.state === 'contact_added') {
     stageCls = 'stage now';
     pill = { cls: 'ready', text: 'Ready to send' };
     body = (
@@ -498,19 +479,37 @@ function SurveySection(props: {
         <p className="chan">
           Goes by email and text: {r.contact.email} · {r.contact.phone}
         </p>
+        <div className="field">
+          <label htmlFor="targetBy">Expected back by</label>
+          <p className="hint">
+            This role’s own lead time. Past it, the operations board raises a card.
+          </p>
+          <input
+            id="targetBy"
+            type="date"
+            value={targetBy}
+            onChange={(e) => setTargetBy(e.target.value)}
+          />
+        </div>
         <div className="actions">
-          <button type="button" className="btn" onClick={props.issueLink}>
+          <button
+            type="button"
+            className="btn"
+            disabled={busy || !targetBy}
+            onClick={() => void props.issueLink(targetBy)}
+          >
             Issue the link to {r.contact.who}
           </button>
         </div>
       </>
     );
   } else {
+    const link = respondentLink(r.surveyLink, window.location.origin);
     stageCls = 'stage now';
     pill = { cls: 'progress', text: 'Sent, awaiting response' };
     body = (
       <>
-        <p className="linkline">{r.link}</p>
+        {link && <p className="linkline">{link}</p>}
         <dl className="kv">
           <dt>Sent to</dt>
           <dd>{r.contact.who}</dd>
@@ -519,22 +518,42 @@ function SurveySection(props: {
             {r.contact.email} and text to {r.contact.phone}
           </dd>
           <dt>Expected by</dt>
-          <dd>{fmt(r.by)}</dd>
+          <dd>{fmtDate(r.targetBy)}</dd>
         </dl>
         <div className="actions">
-          <button type="button" className="btn-2" onClick={() => props.remind(false)}>
+          <button
+            type="button"
+            className="btn-2"
+            disabled={busy}
+            onClick={() => void props.remind(false)}
+          >
             Send a reminder
           </button>
-          <button type="button" className="btn-2" onClick={() => props.remind(true)}>
+          <button
+            type="button"
+            className="btn-2"
+            disabled={busy}
+            onClick={() => void props.remind(true)}
+          >
             Text only
           </button>
-          <button type="button" className="btn-2" onClick={props.decline}>
+          <button
+            type="button"
+            className="btn-2"
+            disabled={busy}
+            onClick={() => {
+              if (window.confirm(`Record that ${r.name} declined for this edition?`)) {
+                void props.decline();
+              }
+            }}
+          >
             They declined
           </button>
         </div>
         <p className="owner">
           Reminders go by email and text. Text only is there for the case where the inbox has
-          clearly not been read. Anything said on a call goes in the history below.
+          clearly not been read. Anything said on a call goes in the history below. When they submit
+          through the link, this role is confirmed on its own.
         </p>
       </>
     );
@@ -551,9 +570,12 @@ function SurveySection(props: {
   );
 }
 
-function HistorySection(props: { r: Reg; onAdd: (entry: string) => void }): JSX.Element {
+function HistorySection(props: {
+  r: RegulatorView;
+  busy: boolean;
+  onAdd: (entry: string) => Promise<boolean>;
+}): JSX.Element {
   const [text, setText] = useState('');
-  const entries = useMemo(() => props.r.hist.slice().reverse(), [props.r.hist]);
   return (
     <section className="stage">
       <div className="stagehead">
@@ -561,13 +583,13 @@ function HistorySection(props: { r: Reg; onAdd: (entry: string) => void }): JSX.
       </div>
       <div className="stagebody">
         <div>
-          {entries.length === 0 ? (
+          {props.r.history.length === 0 ? (
             <p>Nothing recorded yet.</p>
           ) : (
-            entries.map((x, i) => (
-              <div className="hitem" key={i}>
-                <span className="when">{x.when}</span>
-                <span>{x.what}</span>
+            props.r.history.map((x) => (
+              <div className="hitem" key={x.id}>
+                <span className="when">{fmtWhen(x.createdAt)}</span>
+                <span>{x.entry}</span>
               </div>
             ))
           )}
@@ -585,10 +607,9 @@ function HistorySection(props: { r: Reg; onAdd: (entry: string) => void }): JSX.
             <button
               type="button"
               className="btn-2"
-              disabled={text.trim().length < 4}
-              onClick={() => {
-                props.onAdd(text.trim());
-                setText('');
+              disabled={props.busy || text.trim().length < 4}
+              onClick={async () => {
+                if (await props.onAdd(text.trim())) setText('');
               }}
             >
               Record it

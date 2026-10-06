@@ -18,9 +18,9 @@ type Loaded = {
  * — the same `startJourney` every other entry point uses — so this mirrors
  * InstitutionalEntry.tsx's shape (a single named context, no consent gate:
  * `requiresConsent` covers only S5a/S5b, not S1/S2/S3) rather than
- * RetailEntry's, and accepts the same limitation institutional entries
- * already have: with no consent/contact step, there is no recovery token, so
- * closing the browser mid-survey cannot be resumed from this same link.
+ * RetailEntry's. Unlike an institutional entry, the seat link itself is a
+ * credential for exactly one seat, so a seat holder who closed the browser
+ * mid-survey picks up where they stopped from this same link.
  *
  * The link itself is the credential (a fresh, unguessable token minted on
  * every seat assignment and retired on every reassignment) — the same trust
@@ -55,10 +55,6 @@ export function FirmSeatEntry({
           setErrorKind('expired_link');
         } else if (ctx.state === 'complete') {
           setAlreadySubmitted(true);
-        } else if (ctx.state === 'started') {
-          // Nothing carried by this link can resume an already-started
-          // survey — the same limitation an institutional respondent has.
-          setErrorKind('no_unfinished_survey');
         } else {
           setContext(ctx);
         }
@@ -120,7 +116,11 @@ export function FirmSeatEntry({
       {startError && <div className="err">{startError}</div>}
       <div className="actions">
         <button type="button" className="btn" onClick={() => void begin()} disabled={busy}>
-          {busy ? 'Starting…' : 'Start the survey'}
+          {busy
+            ? 'Starting…'
+            : context.state === 'started'
+              ? 'Continue the survey'
+              : 'Start the survey'}
         </button>
       </div>
     </div>

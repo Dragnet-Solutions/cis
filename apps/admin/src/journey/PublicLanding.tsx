@@ -63,6 +63,9 @@ export function PublicLanding({
         <button type="button" className="textlink" onClick={onPreviousEditions}>
           Previous editions
         </button>
+        <span className="sep" aria-hidden="true">
+          ·
+        </span>
         <button type="button" className="textlink" onClick={onHelpAbout}>
           Help, privacy and about
         </button>

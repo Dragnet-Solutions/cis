@@ -26,6 +26,7 @@ import { managedContentRoutes } from './routes/managed-content';
 import { dragnetRoutes } from './routes/dragnet';
 import { firmDigestRoutes } from './routes/firm-digest';
 import { publicContentRoutes } from './routes/public-content';
+import { reportDeliveryRoutes } from './routes/report-delivery';
 
 export async function buildServer() {
   const app = Fastify({
@@ -94,6 +95,7 @@ export async function buildServer() {
   await app.register(dragnetRoutes);
   await app.register(firmDigestRoutes);
   await app.register(publicContentRoutes);
+  await app.register(reportDeliveryRoutes);
 
   return app;
 }
@@ -111,9 +113,15 @@ export async function buildServer() {
  */
 function resolveStatusCode(error: Error & { statusCode?: number }): number {
   switch (error.name) {
+    // The AI model or the PDF renderer failed — a dependency, not the caller. Not
+    // a 5xx: the handler hides 5xx messages, and these say what to fix.
+    case 'ReportNarrativeError':
+    case 'ReportPdfError':
+      return 424;
     case 'InvalidCoordinatorCredentialsError':
       return 401;
     case 'SeatLinkNotFoundError':
+    case 'ReportContentError':
     case 'OutreachLinkNotFoundError':
       return 404;
     case 'PermissionDeniedError':
@@ -151,6 +159,7 @@ function resolveStatusCode(error: Error & { statusCode?: number }): number {
     case 'ManagedContentError':
     case 'InvestorCategoriesError':
     case 'FirmDigestError':
+    case 'ReportPublicationError':
     case 'DomainError':
       return 409;
     default:

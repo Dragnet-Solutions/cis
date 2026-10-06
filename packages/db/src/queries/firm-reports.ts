@@ -220,3 +220,20 @@ export async function listReleaseHistory(
   );
   return res.rows.map(mapHistory);
 }
+
+/** Whether any version of this firm's report for the edition has been released. */
+export async function hasReleasedFirmReport(
+  pool: Pool,
+  editionId: string,
+  organizationId: string,
+): Promise<boolean> {
+  const res = await query<{ released: boolean }>(
+    pool,
+    `SELECT EXISTS (
+       SELECT 1 FROM firm_reports
+        WHERE edition_id = $1 AND organization_id = $2 AND release_state = 'released'
+     ) AS released`,
+    [editionId, organizationId],
+  );
+  return res.rows[0]?.released ?? false;
+}

@@ -140,7 +140,10 @@ export function ResponsesPage({
 
               <p style={{ margin: '0 0 4px', fontWeight: 700 }}>
                 {c.forecast === null
-                  ? 'No forecast — collection is closed'
+                  ? // Null also on day one of collection, before there is any pace.
+                    c.daysRemaining > 0
+                    ? 'No forecast yet — not enough history to estimate a pace'
+                    : 'No forecast — collection is closed'
                   : `Forecast ${c.forecast.toLocaleString()}${c.shortfall > 0 ? ` — short by ${c.shortfall.toLocaleString()}` : ' — clears'}`}
               </p>
               <p style={{ margin: '0 0 8px', color: 'var(--fg-3, #6a6a6a)', fontSize: 14 }}>

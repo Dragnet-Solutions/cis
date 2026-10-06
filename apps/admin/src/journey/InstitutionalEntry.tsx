@@ -10,7 +10,15 @@ import { ApiError } from '../api/types';
  * colleague's responses are independent and not linked to the inviter.
  */
 
-export type RegulatorVariant = 'I-SEC' | 'I-NGX' | 'I-CSCS';
+export type RegulatorVariant = 'I-SEC' | 'I-NGX' | 'I-CSCS' | 'I-DEP';
+
+/** What a respondent sees on the review selector — never the raw instrument code. */
+export const VARIANT_LABEL: Record<RegulatorVariant, string> = {
+  'I-SEC': 'SEC',
+  'I-NGX': 'NGX',
+  'I-CSCS': 'CSCS',
+  'I-DEP': 'Depository',
+};
 
 const VARIANTS: Record<RegulatorVariant, { title: string; blurb: string }> = {
   'I-SEC': {
@@ -24,6 +32,10 @@ const VARIANTS: Record<RegulatorVariant, { title: string; blurb: string }> = {
   'I-CSCS': {
     title: 'CSCS review',
     blurb: 'Your institution’s view of clearing, settlement and depository services.',
+  },
+  'I-DEP': {
+    title: 'Depository review',
+    blurb: 'Your institution’s view of depository and securities-account services.',
   },
 };
 

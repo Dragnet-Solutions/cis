@@ -51,12 +51,31 @@ export function canApproveCriticalAction(context: RbacContext, actionType: strin
   );
 }
 
+/** The names People & access shows for each right — what a refusal should say. */
+const RIGHT_LABEL: Record<string, string> = {
+  'access:view': 'See the study',
+  'access:send': 'Write to firms, regulators and participants',
+  'access:regs': 'Manage regulator engagement',
+  'edition:manage': 'Change the setup',
+  'access:dragnet': 'See the Dragnet analysis',
+};
+
+/**
+ * The message reaches the person on screen, so it names the right in the words
+ * People & access uses — never a user id or a permission code. Both stay on the
+ * error for logs.
+ */
 export class PermissionDeniedError extends Error {
   constructor(
     public readonly userId: string,
     public readonly requiredPermission: string,
   ) {
-    super(`User ${userId} does not have permission: ${requiredPermission}`);
+    const right = RIGHT_LABEL[requiredPermission];
+    super(
+      right
+        ? `You do not have permission to do this — it needs the “${right}” right. It can be granted in People and access.`
+        : 'You do not have permission to do this.',
+    );
     this.name = 'PermissionDeniedError';
   }
 }

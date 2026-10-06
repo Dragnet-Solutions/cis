@@ -121,7 +121,9 @@ describe('startSeatEntry', () => {
     expect(row?.respondentId).toBe(result.respondentId);
   });
 
-  it('refuses to start a seat that is not in "invited" state', async () => {
+  // A started seat resumes its own respondent (the link is the seat's
+  // credential); only a completed seat is refused.
+  it('resumes a started seat and refuses a completed one', async () => {
     const seat = await assignSeat(pool, {
       editionId,
       organizationId: orgId,
@@ -129,8 +131,11 @@ describe('startSeatEntry', () => {
       assignedName: 'Jane MD',
       assignedEmail: 'jane2@seat-entry-firm.example',
     });
-    await startSeatEntry(pool, seat.linkToken);
+    const first = await startSeatEntry(pool, seat.linkToken);
+    const again = await startSeatEntry(pool, seat.linkToken);
+    expect(again.respondentId).toBe(first.respondentId);
 
+    await completeSeatEntry(pool, seat.linkToken);
     await expect(startSeatEntry(pool, seat.linkToken)).rejects.toBeInstanceOf(FirmPortalError);
   });
 });

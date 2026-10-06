@@ -105,9 +105,7 @@ export function SurveysPage({
     <main>
       <p className="eyebrow">{frozen ? 'Frozen' : 'Not yet frozen'}</p>
       <h1 tabIndex={-1}>Surveys</h1>
-      <p className="lede">
-        Nine instruments. Six are scored; three are contextual and never enter an index.
-      </p>
+      <p className="lede">{instrumentSummary(instruments)}</p>
 
       {frozen && (
         <div className="warnbox">
@@ -230,4 +228,40 @@ export function SurveysPage({
       {error && <div className="err">{error}</div>}
     </main>
   );
+}
+
+const NUMBER_WORDS = [
+  'No',
+  'One',
+  'Two',
+  'Three',
+  'Four',
+  'Five',
+  'Six',
+  'Seven',
+  'Eight',
+  'Nine',
+  'Ten',
+  'Eleven',
+  'Twelve',
+];
+
+function countWord(n: number): string {
+  return NUMBER_WORDS[n] ?? String(n);
+}
+
+/** The lede counts what the edition actually holds — the register gained a
+ *  tenth instrument (I-DEP, institutional Family D) after the approved copy
+ *  was written as "Nine", so a fixed number drifted out of true. */
+export function instrumentSummary(instruments: { scored: boolean }[]): string {
+  const total = instruments.length;
+  const scored = instruments.filter((i) => i.scored).length;
+  const contextual = total - scored;
+  const head = `${countWord(total)} instrument${total === 1 ? '' : 's'}.`;
+  if (contextual === 0) return `${head} All are scored.`;
+  const ctx =
+    contextual === 1
+      ? 'one is contextual and never enters an index'
+      : `${countWord(contextual).toLowerCase()} are contextual and never enter an index`;
+  return `${head} ${countWord(scored)} ${scored === 1 ? 'is' : 'are'} scored; ${ctx}.`;
 }

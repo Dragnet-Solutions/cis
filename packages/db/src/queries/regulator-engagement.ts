@@ -262,6 +262,42 @@ export async function addRegulatorHistory(
   return { id: row.id, entry: row.entry, createdAt: row.created_at };
 }
 
+/**
+ * A regulator's survey was submitted through its link: move the role that
+ * issued that link to 'confirmed' and say so in its history. Called inside the
+ * submission transaction, so the engagement can never disagree with the
+ * survey. Only a live invitation moves — a declined or already-confirmed role,
+ * or a respondent that backs no engagement, is left alone. Returns whether a
+ * role was confirmed.
+ */
+export async function confirmEngagementForSubmittedRespondent(
+  pool: Pool,
+  respondentId: string,
+): Promise<boolean> {
+  const res = await query<{
+    edition_id: string;
+    institution_id: string;
+    family_code: InstrumentFamilyCode;
+  }>(
+    pool,
+    `UPDATE institution_engagement
+        SET status = 'confirmed', status_changed_at = NOW(), updated_at = NOW()
+      WHERE respondent_id = $1 AND status IN ('invited', 'in_progress')
+      RETURNING edition_id, institution_id, family_code`,
+    [respondentId],
+  );
+  const row = res.rows[0];
+  if (!row) return false;
+  await addRegulatorHistory(
+    pool,
+    row.edition_id,
+    row.institution_id,
+    row.family_code,
+    'Submitted through their survey link. Their answers form part of the Institutional Perspectives section.',
+  );
+  return true;
+}
+
 export async function listRegulatorHistory(
   pool: Pool,
   editionId: string,

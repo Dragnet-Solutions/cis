@@ -57,6 +57,14 @@ export function JourneyShell({
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const saveSeq = useRef(0);
+  const latest = useRef<
+    Record<
+      string,
+      { qid: string; firmId: string | null; answer: { a: unknown; c?: string }; step: number }
+    >
+  >({});
+  const queue = useRef<Record<string, Promise<void>>>({});
+  const failed = useRef<Set<string>>(new Set());
 
   if (sequence.length === 0) {
     return <p className="lede">This survey has no questions.</p>;
@@ -72,27 +80,50 @@ export function JourneyShell({
       ? firmsById[current.ratedFirmId]!.displayName
       : null;
 
-  async function persist(
+  // Autosave, made safe for flaky connections:
+  //  - saves for the same answer run one after another, and each sends the
+  //    NEWEST value when it runs, so an older save can never land last;
+  //  - a save that fails is remembered and re-sent before submitting, so the
+  //    server never holds less than the respondent sees on screen.
+  function persist(
     qid: string,
     firmId: string | null,
     next: { a: unknown; c?: string },
     atStep: number,
-  ) {
+  ): void {
+    const k = key(qid, firmId);
+    latest.current[k] = { qid, firmId, answer: next, step: atStep };
     const mine = (saveSeq.current += 1);
     setSaveState('saving');
+    const run = (queue.current[k] ?? Promise.resolve()).then(() => saveLatest(k));
+    queue.current[k] = run.catch(() => undefined);
+    run.then(
+      () => {
+        if (saveSeq.current === mine) setSaveState('saved');
+      },
+      (err: unknown) => {
+        if (saveSeq.current === mine) {
+          setSaveState('error');
+          setError(err instanceof ApiError ? err.message : 'Could not save your answer');
+        }
+      },
+    );
+  }
+
+  async function saveLatest(k: string): Promise<void> {
+    const l = latest.current[k];
+    if (!l) return;
     try {
       await journeyApi.saveAnswer(respondentId, {
-        questionId: qid,
-        ratedFirmId: firmId,
-        answer: next,
-        step: atStep,
+        questionId: l.qid,
+        ratedFirmId: l.firmId,
+        answer: l.answer,
+        step: l.step,
       });
-      if (saveSeq.current === mine) setSaveState('saved');
+      failed.current.delete(k);
     } catch (err) {
-      if (saveSeq.current === mine) {
-        setSaveState('error');
-        setError(err instanceof ApiError ? err.message : 'Could not save your answer');
-      }
+      failed.current.add(k);
+      throw err;
     }
   }
 
@@ -120,6 +151,10 @@ export function JourneyShell({
     setSubmitting(true);
     setError(null);
     try {
+      // Let in-flight saves settle, then re-send any that failed, so the
+      // server's copy matches what the review screen just showed.
+      await Promise.all(Object.values(queue.current));
+      for (const k of [...failed.current]) await saveLatest(k);
       await journeyApi.submit(respondentId);
       onSubmitted();
     } catch (err) {
@@ -195,7 +230,7 @@ export function JourneyShell({
       </div>
       {firmName && (
         <p className="eyebrow">
-          About {firmName} {fc.firmCount > 1 ? `· firm ${fc.firmIndex + 1} of ${fc.firmCount}` : ''}
+          About {firmName} {fc.firmCount > 1 ? `· firm ${fc.firmIndex} of ${fc.firmCount}` : ''}
         </p>
       )}
       <div className="qcard">

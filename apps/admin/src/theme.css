@@ -538,10 +538,40 @@ tr.soft {
   text-underline-offset: 3px;
 }
 
+/* Sign-in sits on its own page rather than inside .shell: a vertical margin on
+   the first child collapsed through the shell and pushed it down the viewport. */
+.login-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px 16px;
+}
 .login-wrap {
-  max-width: 380px;
-  margin: 12vh auto;
-  padding: 0 20px;
+  width: 100%;
+  max-width: 420px;
+  padding: 32px 32px 28px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-top: 4px solid var(--brand-red);
+  border-radius: var(--r);
+}
+.login-wrap h1 {
+  margin: 0 0 6px;
+}
+.login-wrap .lede {
+  margin: 0 0 22px;
+}
+.login-wrap .field input {
+  max-width: none;
+}
+.login-wrap .actions .btn {
+  width: 100%;
+}
+@media (max-width: 480px) {
+  .login-wrap {
+    padding: 24px 20px 20px;
+  }
 }
 
 /* ── Shared renderer controls (ported from UX-X-RENDER-001) ─────────────────── */
@@ -1015,3 +1045,16 @@ tr.soft {
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 5px 16px; margin: 0 0 12px; font-size: 14px; }
 .kv dt { font-weight: 700; color: #6a6a6a; }
 .kv dd { margin: 0; }
+
+/* Public landing footer: the links sat flush against each other with no gap. */
+.landing-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 0;
+  margin-top: 28px;
+}
+.landing-footer .sep {
+  margin: 0 10px;
+  color: #6a6a6a;
+}

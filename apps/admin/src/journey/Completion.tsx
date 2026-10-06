@@ -8,6 +8,19 @@ import { ApiError } from '../api/types';
  * starts a completely independent journey that never inherits this respondent's
  * recruiting/source firm, and never discloses whether an invitee took part.
  */
+/** The privacy reassurance matching who answered — each mirrors the promise
+ *  made on that respondent's own entry screen. A firm's staff member or an
+ *  institution did not "rate" firms, so the investor wording does not fit them. */
+function privacyLine(instrumentCode: string): string {
+  if (instrumentCode === 'firm-seat' || /^S[123]$/.test(instrumentCode)) {
+    return 'Nobody at your firm, including your coordinator, can see your answers — only that it is complete.';
+  }
+  if (instrumentCode.startsWith('I-')) {
+    return 'Your institution’s name is never published, and your answers are not linked to any colleague’s.';
+  }
+  return 'They are never shown to the firms you rated.';
+}
+
 export function Completion({
   respondentId,
   editionId,
@@ -57,8 +70,7 @@ export function Completion({
       <p className="eyebrow">All done</p>
       <h1 tabIndex={-1}>Thank you — your responses are in</h1>
       <p className="lede">
-        Your answers are now final and cannot be changed. They are never shown to the firms you
-        rated.
+        Your answers are now final and cannot be changed. {privacyLine(instrumentCode)}
       </p>
 
       <fieldset className="contact-fields">

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { PublicLanding } from './PublicLanding';
 import { RetailEntry } from './RetailEntry';
-import { InstitutionalEntry, type RegulatorVariant } from './InstitutionalEntry';
+import { InstitutionalEntry, VARIANT_LABEL, type RegulatorVariant } from './InstitutionalEntry';
 import { FirmSeatEntry } from './FirmSeatEntry';
 import { RunJourney } from './RunJourney';
 import { Completion } from './Completion';
@@ -13,8 +13,8 @@ import { ErrorState, type ErrorStateKind } from '../shared/ErrorState';
 
 type Screen =
   | { name: 'landing' }
-  | { name: 'retail-entry' }
-  | { name: 'inst-entry'; code: RegulatorVariant | 'S5b' }
+  | { name: 'retail-entry'; code: InvestorInstrument; recruitingFirmId: string | null }
+  | { name: 'inst-entry'; code: RegulatorVariant }
   | { name: 'firm-seat-entry'; linkToken: string }
   | {
       name: 'running';
@@ -31,8 +31,22 @@ type Screen =
   | { name: 'help-about' }
   | { name: 'previous-editions' };
 
-const REGULATORS: RegulatorVariant[] = ['I-SEC', 'I-NGX', 'I-CSCS'];
+const REGULATORS: RegulatorVariant[] = ['I-SEC', 'I-NGX', 'I-CSCS', 'I-DEP'];
 const RETAIL_INSTRUMENT = 'S4';
+
+/** The three investor instruments — all multi-firm, all consent-gated at
+ *  submit for S5a/S5b, so all take the consent + firm-pick entry. */
+type InvestorInstrument = 'S4' | 'S5a' | 'S5b';
+
+// A firm's outreach link names the client segment it was sent to.
+const SEGMENT_INSTRUMENT: Record<
+  'individual' | 'local_institutional' | 'foreign_institutional',
+  InvestorInstrument
+> = {
+  individual: 'S4',
+  local_institutional: 'S5a',
+  foreign_institutional: 'S5b',
+};
 
 /**
  * The respondent-facing application. Entirely separate from the operator admin
@@ -80,13 +94,15 @@ export function RespondentApp(): JSX.Element {
             if (cancelled) return;
             setOutreachToken(outreachRef);
             void journeyApi.outreachEvent(outreachRef, 'opens');
-            if (outreachCtx.segment === 'individual') {
-              setScreen({ name: 'retail-entry' });
-            } else if (outreachCtx.segment === 'foreign_institutional') {
-              setScreen({ name: 'inst-entry', code: 'S5b' });
-            } else {
-              setScreen({ name: 'inst-entry', code: 'I-SEC' });
-            }
+            // Every segment is an investor survey rating firms, attributed to
+            // the firm whose link it is. (Previously institutional segments
+            // were routed to the regulator reviews, with no consent step and
+            // no attribution — S5b could never be submitted.)
+            setScreen({
+              name: 'retail-entry',
+              code: SEGMENT_INSTRUMENT[outreachCtx.segment],
+              recruitingFirmId: outreachCtx.organizationId,
+            });
           } catch {
             // An unknown or stale outreach link is a convenience lost, never
             // a gate — fall through to the ordinary landing page.
@@ -156,7 +172,9 @@ export function RespondentApp(): JSX.Element {
             <PublicLanding
               editionLabel={editionLabel}
               resultsSectionVisible={resultsVisible}
-              onTakeRetail={() => setScreen({ name: 'retail-entry' })}
+              onTakeRetail={() =>
+                setScreen({ name: 'retail-entry', code: RETAIL_INSTRUMENT, recruitingFirmId: null })
+              }
               onTakeInstitutional={() => setScreen({ name: 'inst-entry', code: 'I-SEC' })}
               onHelpAbout={() => setScreen({ name: 'help-about' })}
               onPreviousEditions={() => setScreen({ name: 'previous-editions' })}
@@ -167,16 +185,16 @@ export function RespondentApp(): JSX.Element {
         {editionId && screen.name === 'retail-entry' && (
           <RetailEntry
             editionId={editionId}
-            instrumentCode={RETAIL_INSTRUMENT}
-            recruitingFirmId={null}
+            instrumentCode={screen.code}
+            recruitingFirmId={screen.recruitingFirmId}
             onStarted={(respondentId, firms) => {
               if (outreachToken) void journeyApi.outreachEvent(outreachToken, 'starts');
               setScreen({
                 name: 'running',
                 respondentId,
                 firms,
-                code: RETAIL_INSTRUMENT,
-                retail: true,
+                code: screen.code,
+                retail: screen.code === RETAIL_INSTRUMENT,
                 firmSeatLinkToken: null,
                 outreachToken,
               });
@@ -195,7 +213,7 @@ export function RespondentApp(): JSX.Element {
                     className={c === screen.code ? 'btn' : 'btn-2'}
                     onClick={() => setScreen({ name: 'inst-entry', code: c })}
                   >
-                    {c}
+                    {VARIANT_LABEL[c]}
                   </button>
                 ))}
               </nav>
