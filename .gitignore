@@ -11,14 +11,12 @@ coverage/
 .cache/
 *.tsbuildinfo
 
-# Environment and secrets — every .env variant, at any depth. Only the
-# documented template (.env.example) is tracked; real values never are.
+# Environment and secrets — every .env variant at any depth, including the
+# .env.example template: none of them is tracked.
 .env
 .env.*
 **/.env
 **/.env.*
-!.env.example
-!**/.env.example
 # Archives or backups of env files, and key material
 *env*.zip
 *.env.bak
