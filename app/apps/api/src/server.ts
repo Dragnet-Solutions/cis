@@ -2,6 +2,8 @@ import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { registerSecurity } from './plugins/security';
 import { registerAuth } from './plugins/auth-plugin';
+import { parseTrustProxy } from './plugins/trust-proxy';
+import { healthRoutes } from './routes/health';
 import { authRoutes } from './routes/auth';
 import { editionRoutes } from './routes/editions';
 import { instrumentRoutes } from './routes/instruments';
@@ -43,6 +45,9 @@ export async function buildServer() {
       },
     },
     disableRequestLogging: process.env['NODE_ENV'] === 'test',
+    // Behind a reverse proxy, request.ip — and so every per-IP rate limit —
+    // must come from X-Forwarded-For, or all clients share the proxy's IP.
+    trustProxy: parseTrustProxy(process.env['TRUST_PROXY']),
   });
 
   // Register Zod as the schema compiler for the entire server
@@ -71,6 +76,7 @@ export async function buildServer() {
   await registerSecurity(app);
   await registerAuth(app);
 
+  await app.register(healthRoutes);
   await app.register(authRoutes);
   await app.register(editionRoutes);
   await app.register(instrumentRoutes);
