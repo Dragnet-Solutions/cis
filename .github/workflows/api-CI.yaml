@@ -193,9 +193,15 @@ jobs:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          KEY_VAULT_NAME: ${{ vars.KEY_VAULT_NAME }}
+          KEY_NAME: ${{ vars.KEY_NAME }}
         run: |
+          # Strip stray whitespace/CR-LF (e.g. a value pasted from Windows) —
+          # it would otherwise end up inside the Key Vault URL.
+          KEY_VAULT_NAME=$(printf '%s' "$KEY_VAULT_NAME" | tr -d '[:space:]')
+          KEY_NAME=$(printf '%s' "$KEY_NAME" | tr -d '[:space:]')
           cosign sign --yes \
-            --key "azurekms://${{ vars.KEY_VAULT_NAME }}.vault.azure.net/${{ vars.KEY_NAME }}" \
+            --key "azurekms://${KEY_VAULT_NAME}.vault.azure.net/${KEY_NAME}" \
             ${IMAGE}
 
   sync-manifests:
