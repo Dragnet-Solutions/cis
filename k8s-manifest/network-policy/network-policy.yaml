@@ -188,6 +188,35 @@ spec:
           protocol: TCP
 
 ---
+# Egress from the seed job (dev only): Postgres only
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-cis-db-seed-egress
+  namespace: dev
+  labels:
+    app.kubernetes.io/part-of: cis
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: cis-db-seed
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - port: 5432
+          protocol: TCP
+
+---
 # Egress from the migration job: Postgres only
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

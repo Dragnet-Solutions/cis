@@ -7,11 +7,11 @@ for ordering, secrets from Azure Key Vault via External Secrets — never a plai
 ## Layout
 | Directory | What it deploys |
 |---|---|
-| `api/` | `cis-api` Deployment (Fastify API + headless Chromium for PDF export, non-root uid 1000), Service, HPA, PDB, ServiceAccount, and the one-shot `cis-db-migration` Job (`cis-api-migrate` image, `node-pg-migrate up`) |
+| `api/` | `cis-api` Deployment (Fastify API + headless Chromium for PDF export, non-root uid 1000), Service, HPA, PDB, ServiceAccount, the one-shot `cis-db-migration` Job (`cis-api-migrate` image, `node-pg-migrate up`) and — **dev only** — the `cis-db-seed` Job (reference data + operator passwords) |
 | `admin/` | `cis-admin` Deployment (React SPA on unprivileged nginx, uid 101), Service, HPA, PDB, ServiceAccount, and the Ingress for the whole app |
 | `redis/` | Dedicated in-cluster Redis StatefulSet (`cis-redis`, password-protected, 2Gi `managed-csi` volume) + headless and ClusterIP Services — not shared with any other app in the namespace |
 | `config/` | `cis-api-config` and `cis-admin-config` ConfigMaps (non-secret env) |
-| `eso/` | `ExternalSecret` pulling the API's secrets from Azure Key Vault into `cis-api-secrets` — the admin has no secrets |
+| `eso/` | `ExternalSecret`s pulling from Azure Key Vault: the API's secrets into `cis-api-secrets`, and — **dev only** — the seeded operators' passwords into `cis-seed-secrets` (read only by the seed Job). The admin has no secrets |
 | `network-policy/` | Ingress/egress rules scoped to this app; assumes the namespace's default-deny/DNS baseline already exists |
 
 ArgoCD's `Application` (see `../argocd`) applies this whole tree with `directory.recurse: true`.
@@ -31,7 +31,7 @@ ArgoCD's `Application` (see `../argocd`) applies this whole tree with `directory
 0. ServiceAccounts, ConfigMaps, ExternalSecret, NetworkPolicies
 1. Redis StatefulSet + Services
 2. DB migration Job (ArgoCD `Sync` hook — self-deletes and recreates every release), Services, PDBs
-3. `cis-api`, `cis-admin` Deployments
+3. `cis-api`, `cis-admin` Deployments; **dev only:** `cis-db-seed` Job (ArgoCD `Sync` hook, after the migration)
 4. HPAs, Ingress
 
 ## Before first sync (assumptions this makes)
@@ -54,6 +54,23 @@ ArgoCD's `Application` (see `../argocd`) applies this whole tree with `directory
   branch ArgoCD actually syncs from — see `../argocd/application.yaml`). Editing an `image:` line
   directly in this tree only matters as the un-pinned default on `dev`; the running cluster always
   tracks whatever SHA the pipeline last pinned on `k8s-release`.
+
+## Seeding (dev only)
+Migrations only create the schema. `api/seed-job.yaml` runs `seedReferenceData`
+(`apps/api/src/seed.ts`) on every sync — the 2026 edition, the Survey Register (9 instruments /
+90 questions), RBAC, governed config and two operators — and skips itself once the 2026 edition
+exists. It then sets both operators' passwords from Key Vault, because the seed hard-codes
+`ChangeMe!2026` and the app has no change-password feature.
+
+| Login | Key Vault secret (12+ chars) |
+|---|---|
+| `adaeze.okoro@cis.example` | `cis-dev-SEED-PASSWORD-MAKER` |
+| `segun.oyegbesan@dragnet.example` | `cis-dev-SEED-PASSWORD-CHECKER` |
+
+To rotate a password: change it in Key Vault, let ESO refresh (or annotate the ExternalSecret
+`force-sync`), then sync. **Production must not carry `api/seed-job.yaml` or
+`eso/seed-external-secret.yaml`** — real operator accounts there need a deliberate, one-off
+procedure. Never run `seed-demo.ts` against a shared database.
 
 ## Known application limits that affect scaling
 - **Rate limits and the PDF cache are in memory, per pod.** With more than one `cis-api` replica
