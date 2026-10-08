@@ -2,6 +2,7 @@ import { useCallback, useMemo } from 'react';
 import { createClient } from '../api/client';
 import { FirmReport } from './FirmReport';
 import { IndustryReport } from './IndustryReport';
+import { operatorFirmSource } from './source';
 
 /**
  * The page the API's PDF renderer prints (apps/api/src/pdf/report-pdf.ts):
@@ -57,9 +58,7 @@ export function PrintReport(): JSX.Element {
     />
   ) : (
     <FirmReport
-      client={client}
-      editionId={editionId}
-      firmId={firmId!}
+      source={operatorFirmSource(client, editionId, firmId!)}
       onBack={() => undefined}
       printMode
       onReady={ready}

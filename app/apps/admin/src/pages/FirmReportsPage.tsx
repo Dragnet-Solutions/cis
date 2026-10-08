@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { FirmReport as FirmReportDocument } from '../reports/FirmReport';
+import { operatorFirmSource as firmSource } from '../reports/source';
 import type { AdminClient } from '../api/client';
 import { ApiError, type FirmReport, type FirmSummary } from '../api/types';
 
@@ -89,9 +90,7 @@ export function FirmReportsPage({
   if (viewingFirm) {
     return (
       <FirmReportDocument
-        client={client}
-        editionId={editionId}
-        firmId={viewingFirm}
+        source={firmSource(client, editionId, viewingFirm)}
         onBack={() => setViewingFirm(null)}
       />
     );
