@@ -26,7 +26,7 @@ describe.skipIf(!TEST_REDIS_URL)('rate limits shared through Redis', () => {
     process.env['REDIS_URL'] = TEST_REDIS_URL;
     process.env['RATE_LIMIT_AUTH_MAX'] = String(AUTH_MAX);
 
-    const redis = new Redis(TEST_REDIS_URL!);
+    const redis = new Redis(TEST_REDIS_URL ?? '');
     const keys = await redis.keys('cis-ratelimit-*');
     if (keys.length) await redis.del(...keys);
     await redis.quit();

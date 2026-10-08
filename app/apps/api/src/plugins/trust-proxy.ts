@@ -12,11 +12,18 @@
  * Trusting too many hops lets a client spoof its IP via X-Forwarded-For;
  * trusting too few makes every request look like it came from the proxy.
  */
-export function parseTrustProxy(value: string | undefined): boolean | number | string[] {
+export type TrustProxy = boolean | string[] | ((address: string, hop: number) => boolean);
+
+export function parseTrustProxy(value: string | undefined): TrustProxy {
   const raw = value?.trim() ?? '';
   if (raw === '' || raw === 'false') return false;
   if (raw === 'true') return true;
-  if (/^\d+$/.test(raw)) return Number(raw);
+  if (/^\d+$/.test(raw)) {
+    // A hop count, as a function: Fastify's types don't accept a bare number.
+    // Hop 0 is the socket peer, so this trusts exactly `hops` proxies.
+    const hops = Number(raw);
+    return (_address, hop) => hop < hops;
+  }
   return raw
     .split(',')
     .map((s) => s.trim())

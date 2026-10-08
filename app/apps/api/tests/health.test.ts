@@ -54,8 +54,12 @@ describe('parseTrustProxy', () => {
 
   it('accepts true, a hop count, or an address list', () => {
     expect(parseTrustProxy('true')).toBe(true);
-    expect(parseTrustProxy('2')).toBe(2);
     expect(parseTrustProxy('10.0.0.0/8, 127.0.0.1')).toEqual(['10.0.0.0/8', '127.0.0.1']);
+
+    const twoHops = parseTrustProxy('2');
+    expect(typeof twoHops).toBe('function');
+    if (typeof twoHops !== 'function') return;
+    expect([0, 1, 2].map((hop) => twoHops('10.0.0.1', hop))).toEqual([true, true, false]);
   });
 });
 
