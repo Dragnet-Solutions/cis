@@ -34,6 +34,8 @@ jobs:
           filters: |
             workspace: &workspace
               - 'app/package.json'
+              - 'app/apps/*/package.json'
+              - 'app/packages/*/package.json'
               - 'app/pnpm-lock.yaml'
               - 'app/pnpm-workspace.yaml'
               - 'app/tsconfig.base.json'
