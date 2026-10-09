@@ -6,9 +6,14 @@ import { useEffect, useState } from 'react';
  * — a Year-1 content decision, not a code change. The firm call-to-action links
  * directly to the firm portal (`/firm`), a separate top-level surface (see
  * apps/admin/src/main.tsx) — not routed through this app's own screen state.
+ *
+ * The take-part buttons show only while the edition is collecting. Once
+ * results are locked the section says collection has closed instead (the
+ * server refuses any new start or submission either way).
  */
 export function PublicLanding({
   editionLabel,
+  editionStatus,
   resultsSectionVisible,
   onTakeRetail,
   onTakeInstitutional,
@@ -16,6 +21,7 @@ export function PublicLanding({
   onPreviousEditions,
 }: {
   editionLabel: string | null;
+  editionStatus: 'draft' | 'open' | 'locked' | 'archived' | null;
   resultsSectionVisible: boolean;
   onTakeRetail: () => void;
   onTakeInstitutional: () => void;
@@ -43,17 +49,32 @@ export function PublicLanding({
         use them.
       </p>
 
-      <section className="landing-cta">
-        <h2>Take part</h2>
-        <div className="actions">
-          <button type="button" className="btn" onClick={onTakeRetail}>
-            I invest through a broker
-          </button>
-          <button type="button" className="btn-2" onClick={onTakeInstitutional}>
-            I represent an institution
-          </button>
-        </div>
-      </section>
+      {editionStatus === 'open' ? (
+        <section className="landing-cta">
+          <h2>Take part</h2>
+          <div className="actions">
+            <button type="button" className="btn" onClick={onTakeRetail}>
+              I invest through a broker
+            </button>
+            <button type="button" className="btn-2" onClick={onTakeInstitutional}>
+              I represent an institution
+            </button>
+          </div>
+        </section>
+      ) : editionStatus === 'draft' ? (
+        <section className="landing-cta">
+          <h2>Take part</h2>
+          <p className="lede">The survey opens when the study launches. Please check back soon.</p>
+        </section>
+      ) : (
+        <section className="landing-cta landing-closed">
+          <h2>Collection has closed</h2>
+          <p className="lede">
+            The survey for {editionLabel ?? 'this edition'} is no longer taking responses. Thank you
+            to everyone who took part.
+          </p>
+        </section>
+      )}
 
       <section className="landing-firm">
         <h2>Are you a brokerage firm?</h2>
@@ -84,12 +105,14 @@ export function PublicLanding({
         </section>
       )}
 
-      {resultsSectionVisible && (
+      {/* The "will appear here" placeholder only while nothing is published yet. */}
+      {resultsSectionVisible && published.length === 0 && (
         <section className="landing-results">
           <h2>Results</h2>
           <p className="lede">
-            Published results for {editionLabel ?? 'the current edition'} will appear here once the
-            study closes and the numbers clear the sample-sufficiency floor.
+            {editionStatus === 'locked' || editionStatus === 'archived'
+              ? `The study has closed. Published results for ${editionLabel ?? 'this edition'} will appear here once they clear the sample-sufficiency floor and are approved for release.`
+              : `Published results for ${editionLabel ?? 'the current edition'} will appear here once the study closes and the numbers clear the sample-sufficiency floor.`}
           </p>
         </section>
       )}

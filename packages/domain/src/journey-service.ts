@@ -8,11 +8,13 @@ import {
   setRespondentContact,
   upsertDraft,
   listDraftsForRespondent,
-  insertResponse,
+  insertResponses,
   markRespondentSubmitted,
   getInstrumentItems,
   getActiveEditionParticipants,
   confirmEngagementForSubmittedRespondent,
+  getConfig,
+  getEditionStatus,
   withTransaction,
 } from '@cis/db';
 import {
@@ -28,6 +30,7 @@ import { DomainError } from './errors';
 import { ConsentRequiredError, ResponseScopeError } from './response-service';
 import { emitCompletedForRespondent } from './funnel-service';
 import { ParticipationClosedError } from './shared-error-service';
+import { isRegulatorInstrument } from './institution-family-service';
 
 /** A required contact-collecting surface was progressed without accepted consent. */
 export { ConsentRequiredError };
@@ -40,6 +43,45 @@ export class ReviewGapError extends DomainError {
   }
 }
 
+/** The edition's collection has ended (results locked or archived): no new
+ *  journey may start and no answer may be saved or submitted, whatever the
+ *  entry route. */
+export class CollectionClosedError extends DomainError {
+  constructor() {
+    super('This study has closed and is no longer accepting responses.', 'COLLECTION_CLOSED');
+  }
+}
+
+/** A regulator / market-infrastructure review was started without the
+ *  named-contact link issued from the Regulators screen. */
+export class RegulatorLinkRequiredError extends DomainError {
+  constructor() {
+    super(
+      'This review can only be opened from the personal link sent to your institution.',
+      'REGULATOR_LINK_REQUIRED',
+    );
+  }
+}
+
+/** Whether an edition status still accepts responses. A draft edition is left
+ *  open to journeys (pre-launch checks and pilots run against it); only a
+ *  locked or archived edition has ended collection. */
+export function acceptsResponses(status: string | null): boolean {
+  return status !== null && status !== 'locked' && status !== 'archived';
+}
+
+/** Refuse when the edition's collection has ended. With `forShare` (inside a
+ *  transaction) the edition row is share-locked, so a lock approved at the
+ *  same moment waits for this write to finish rather than racing past it. */
+export async function assertCollectionOpen(
+  pool: Pool,
+  editionId: string,
+  opts: { forShare?: boolean } = {},
+): Promise<void> {
+  const status = await getEditionStatus(pool, editionId, opts);
+  if (!acceptsResponses(status)) throw new CollectionClosedError();
+}
+
 function emailOk(v: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
 }
@@ -49,7 +91,12 @@ function phoneOk(v: string): boolean {
 
 /** Begin a journey: create the respondent record. `recruitingFirmId` is the
  *  source firm (retail firm-invite) — for referrals/colleague-invites it is left
- *  null so no source-firm attribution is inherited. */
+ *  null so no source-firm attribution is inherited.
+ *
+ *  Every self-started entry route (public, outreach link, firm seat, referral,
+ *  colleague invite) comes through here, so this is where a closed edition and
+ *  a regulator review are refused. A regulator's own journey is created when
+ *  its link is issued (`issueSurveyLink`), never here. */
 export async function startJourney(
   pool: Pool,
   data: {
@@ -60,6 +107,8 @@ export async function startJourney(
     referredByRespondentId?: string | null;
   },
 ): Promise<Respondent> {
+  if (isRegulatorInstrument(data.instrumentCode)) throw new RegulatorLinkRequiredError();
+  await assertCollectionOpen(pool, data.editionId);
   return createRespondent(pool, {
     editionId: data.editionId,
     instrumentCode: data.instrumentCode,
@@ -67,6 +116,40 @@ export async function startJourney(
     institutionName: data.institutionName ?? null,
     referredByRespondentId: data.referredByRespondentId ?? null,
   });
+}
+
+/** The consent wording a respondent sees (PAT-011). */
+export interface PublicConsentContent {
+  notice: string;
+  expansionTitle: string;
+  expansion: string;
+  checkboxLabel: string;
+}
+
+/**
+ * The governed consent copy, reduced to the four respondent-facing fields.
+ * The stored config also carries governance notes for the study team (e.g.
+ * that the wording is provisional and who owns it) — those are internal and
+ * are never sent to the public page. An allow-list, so a note added to the
+ * config later stays internal by default.
+ */
+export async function getPublicConsentContent(
+  pool: Pool,
+): Promise<{ consent: PublicConsentContent | null; recoveryTtlSeconds: number | null }> {
+  const [stored, ttl] = await Promise.all([
+    getConfig<Partial<Record<keyof PublicConsentContent, unknown>>>(pool, 'consent.pat011'),
+    getConfig<number>(pool, 'recovery.link_ttl_seconds'),
+  ]);
+  const text = (v: unknown): string => (typeof v === 'string' ? v : '');
+  const consent = stored
+    ? {
+        notice: text(stored.notice),
+        expansionTitle: text(stored.expansionTitle),
+        expansion: text(stored.expansion),
+        checkboxLabel: text(stored.checkboxLabel),
+      }
+    : null;
+  return { consent, recoveryTtlSeconds: ttl };
 }
 
 export interface ContactInput {
@@ -90,6 +173,7 @@ export async function registerContact(
 ): Promise<Respondent> {
   const respondent = await getRespondentById(pool, respondentId);
   if (!respondent) throw new DomainError('Respondent not found', 'RESPONDENT_NOT_FOUND');
+  await assertCollectionOpen(pool, respondent.editionId);
 
   // Notice → consent → field: consent must be accepted before any field is taken.
   if (!input.consentAccepted) {
@@ -129,6 +213,7 @@ export async function setRatedFirms(
 ): Promise<Respondent> {
   const respondent = await getRespondentById(pool, respondentId);
   if (!respondent) throw new DomainError('Respondent not found', 'RESPONDENT_NOT_FOUND');
+  await assertCollectionOpen(pool, respondent.editionId);
 
   const active = new Set(
     (await getActiveEditionParticipants(pool, respondent.editionId)).map((o) => o.id),
@@ -150,6 +235,7 @@ export async function saveDraftAnswer(
   const respondent = await getRespondentById(pool, respondentId);
   if (!respondent) throw new DomainError('Respondent not found', 'RESPONDENT_NOT_FOUND');
   if (respondent.withdrawnAt) throw new ParticipationClosedError();
+  await assertCollectionOpen(pool, respondent.editionId);
 
   const items = await getInstrumentItems(pool, respondent.instrumentCode);
   const item = items.find((i) => i.id === data.questionId);
@@ -213,6 +299,7 @@ export async function submitJourney(pool: Pool, respondentId: string): Promise<R
   const respondent = await getRespondentById(pool, respondentId);
   if (!respondent) throw new DomainError('Respondent not found', 'RESPONDENT_NOT_FOUND');
   if (respondent.withdrawnAt) throw new ParticipationClosedError();
+  await assertCollectionOpen(pool, respondent.editionId);
 
   if (requiresConsent(respondent.instrumentCode) && !respondent.consentAccepted) {
     throw new ConsentRequiredError(respondent.instrumentCode);
@@ -234,21 +321,26 @@ export async function submitJourney(pool: Pool, respondentId: string): Promise<R
   if (outstanding.length > 0) throw new ReviewGapError(outstanding);
 
   return withTransaction(pool, async (client) => {
-    const written: Response[] = [];
+    // Re-checked under a share lock: a results lock approved while this
+    // submission is in flight either waits for it or is seen here.
+    await assertCollectionOpen(client as unknown as Pool, respondent.editionId, {
+      forShare: true,
+    });
+    const rows = [];
     for (const step of sequence) {
       const d = draftMap.get(draftKey(step.item.id, step.ratedFirmId));
       if (!d) continue;
-      written.push(
-        await insertResponse(client as unknown as Pool, {
-          editionId: respondent.editionId,
-          respondentId,
-          questionId: step.item.id,
-          scope: step.item.scope,
-          ratedFirmId: step.ratedFirmId,
-          answer: d.answer,
-        }),
-      );
+      rows.push({
+        editionId: respondent.editionId,
+        respondentId,
+        questionId: step.item.id,
+        scope: step.item.scope,
+        ratedFirmId: step.ratedFirmId,
+        answer: d.answer,
+      });
     }
+    // One statement for every answer, not a round-trip per answer.
+    const written: Response[] = await insertResponses(client as unknown as Pool, rows);
     await markRespondentSubmitted(client as unknown as Pool, respondentId);
     // One completed funnel event per response, in the same transaction so the
     // event stream can never drift from the finalized response.
