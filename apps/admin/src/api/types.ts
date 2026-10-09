@@ -431,6 +431,8 @@ export interface DependencyRow {
   enabled: boolean;
   displayState: DependencyDisplayState;
   note: string;
+  /** Regulator-dependent outputs only: regulators that have responded, of those required. */
+  regulators?: { confirmed: number; required: number };
 }
 
 export interface ResponsesMonitor {
@@ -462,6 +464,9 @@ export interface UnfinishedStats {
 
 export interface DropoffBucket {
   questionId: string;
+  /** The question's wording, or a plain description — never the raw code. */
+  label: string;
+  surveyName: string | null;
   count: number;
   peak: boolean;
 }

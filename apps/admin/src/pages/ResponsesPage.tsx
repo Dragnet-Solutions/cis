@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { AdminClient } from '../api/client';
 import { ApiError, type DependencyDisplayState, type ResponsesMonitor } from '../api/types';
+import { outputName, segmentName } from '../shared/outputNames';
+import { plural } from '../shared/plural';
 
 /**
  * UX-OPS-003 — Responses monitoring, live-wired to the real evaluator
@@ -28,6 +30,10 @@ const DEP_PILL: Record<DependencyDisplayState, string> = {
   at_risk: 'declined',
   on_track: 'ready',
 };
+
+function capitalise(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
 
 export function ResponsesPage({
   client,
@@ -61,8 +67,8 @@ export function ResponsesPage({
       <h1 tabIndex={-1}>Responses</h1>
       <p className="lede">
         Where each segment is, and where this pace lands it. The grey bar is where the segment is;
-        the red marker is where the forecast lands. This surface reports — the mission board is
-        where the action lives.
+        the red marker is where the forecast lands. This page only reports; what to do about it is
+        on the mission board.
       </p>
 
       {error && <div className="err">{error}</div>}
@@ -150,7 +156,7 @@ export function ResponsesPage({
                 {c.velocity !== null ? `${c.velocity.toFixed(1)} a day now` : 'No pace yet'}
                 {c.requiredVelocity !== null &&
                   ` · ${c.requiredVelocity.toFixed(1)} a day needed`}{' '}
-                · {c.daysRemaining} days left
+                · {plural(c.daysRemaining, 'day')} left
               </p>
 
               {/* B3: complete-firm status as its OWN structured lines, not prose */}
@@ -217,12 +223,16 @@ export function ResponsesPage({
             {monitor.dependencies.map((d) => (
               <tr key={d.outputId} style={{ borderBottom: '1px solid var(--line, #d9d9d9)' }}>
                 <td style={{ padding: '8px 10px' }}>
-                  <b>{d.outputId}</b>
+                  <b>{outputName(d.outputId)}</b>
                   <span style={{ display: 'block', color: 'var(--fg-3, #6a6a6a)', fontSize: 13 }}>
                     {d.note}
                   </span>
                 </td>
-                <td style={{ padding: '8px 10px' }}>{d.dependsOn.join(', ')}</td>
+                <td style={{ padding: '8px 10px' }}>
+                  {d.regulators
+                    ? `The regulators (${d.regulators.confirmed} of ${d.regulators.required} responded)`
+                    : capitalise(d.dependsOn.map((s) => segmentName(s)).join(', '))}
+                </td>
                 <td style={{ padding: '8px 10px' }}>
                   {d.requiredInstruments ? d.requiredInstruments.join('+') : '—'}
                 </td>
