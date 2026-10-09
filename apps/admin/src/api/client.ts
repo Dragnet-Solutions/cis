@@ -23,6 +23,7 @@ import {
   type PersonAccess,
   type PersonInput,
   type ReleaseFirmReportsResult,
+  type NationalReview,
   type ReminderSchedule,
   type ResponsesMonitor,
   type SampleFloor,
@@ -140,6 +141,14 @@ export interface AdminClient {
   }>;
   getNationalReport(reportId: string): Promise<NationalReportDetailResponse>;
   openNationalDraft(reportId: string): Promise<{ opened: boolean }>;
+  getNationalReview(reportId: string): Promise<NationalReview>;
+  prepareNationalReview(reportId: string): Promise<NationalReview>;
+  decideNationalFinding(
+    reportId: string,
+    findingId: string,
+    disposition: 'SUPPRESS_CLAIM' | 'REJECT_WITH_REASON',
+    reason?: string,
+  ): Promise<{ decided: boolean }>;
   requestNationalApproval(reportId: string, reason: string): Promise<{ requested: boolean }>;
   approveNationalReport(reportId: string): Promise<{ status: string }>;
   // Firm reports (UX-ADM-006)
@@ -410,6 +419,15 @@ export function createClient(token: string | null, hooks: SessionHooks = {}): Ad
     getLatestNationalReport: (id) => request(`/editions/${id}/national-report`, { token }),
     getSufficiency: (id) => request(`/editions/${id}/sufficiency`, { token }),
     getNationalReport: (reportId) => request(`/national-reports/${reportId}`, { token }),
+    getNationalReview: (reportId) => request(`/national-reports/${reportId}/review`, { token }),
+    prepareNationalReview: (reportId) =>
+      request(`/national-reports/${reportId}/review`, { method: 'POST', token }),
+    decideNationalFinding: (reportId, findingId, disposition, reason) =>
+      request(`/national-reports/${reportId}/findings/${findingId}/decision`, {
+        method: 'POST',
+        body: reason ? { disposition, reason } : { disposition },
+        token,
+      }),
     openNationalDraft: (reportId) =>
       request(`/national-reports/${reportId}/open`, { method: 'POST', token }),
     requestNationalApproval: (reportId, reason) =>

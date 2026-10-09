@@ -149,7 +149,8 @@ export function FirmReport({
             This is your firm’s private report from the CIS-Dragnet Benchmark Study. Everything in
             it is about your firm: your own results, how your own active investors experience you,
             and where you sit against the anonymised industry benchmark. It is never shared with
-            CIS, with other firms, or with any third party.
+            other firms or with any third party; within the study, only the CIS and Dragnet staff
+            who check each report before it is released can open it.
           </p>
           <div className="rpt-box">
             <p className="rpt-eyebrow">Three rules that protect you, and everyone</p>
@@ -294,9 +295,12 @@ export function FirmReport({
           <Prose narrative={c.narrative} section="F3" />
           <p className="rpt-note">
             Your firm believes: your leadership’s confidence that the firm consistently meets
-            investor expectations (S1-Q11). Your investors report: every ease, responsiveness and
-            transparency rating of your firm, pooled. The instrument does not ask firms to rate
-            themselves dimension by dimension, so the gap is reported overall.
+            investor expectations (S1-Q11). It is one person’s answer — the managing director’s seat
+            — so it is never shown as a figure: a single answer is not a reading, and seat answers
+            stay confidential to the person who gave them. Your investors report: every ease,
+            responsiveness and transparency rating of your firm, with each investor counted once; it
+            is shown from ten investors up. The industry gap pools every firm and is shown from ten
+            firms up.
           </p>
         </section>
 
@@ -357,6 +361,13 @@ export function FirmReport({
             standfirst="Drawn entirely from your own results above, ordered by how directly each addresses your widest gaps."
           />
           <Prose narrative={c.narrative} section="AGENDA" />
+          {c.agenda.length === 0 && (
+            <div className="rpt-pending">
+              <b>No priorities can be set from this edition’s data</b>
+              Too few of your investors rated you for any difference from the industry to be
+              measured, so no priority is drawn — none is guessed.
+            </div>
+          )}
           <div className="rpt-agenda">
             {c.agenda.map((a, i) => (
               <div key={a.title}>
@@ -434,11 +445,12 @@ export function FirmReport({
             <div>The CIS-Dragnet Benchmark Study · Private Member Report</div>
           </div>
           <p className="rpt-method">
-            This report is private to {c.firm.name} and is never shared with CIS, other firms, or
-            any third party. Every figure is computed from submitted responses; ratings asked on
-            1–10 are shown on 0–100 using the study’s own scale conversion; a rating from fewer than
-            ten responses is withheld. Index scores are reported only once their methodology is
-            approved. Generated {new Date(c.generatedAt).toLocaleString()}.
+            This report is private to {c.firm.name}: it is never shared with other firms or any
+            third party, and within the study only the staff who check it before release can open
+            it. Every figure is computed from submitted responses; ratings asked on 1–10 are shown
+            on 0–100 using the study’s own scale conversion; a rating from fewer than ten responses
+            is withheld. Index scores are reported only once their methodology is approved.
+            Generated {new Date(c.generatedAt).toLocaleString()}.
           </p>
         </div>
       </div>

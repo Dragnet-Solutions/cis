@@ -4,6 +4,7 @@ import {
   getReportNarrativeById,
   getReportPublication,
   insertReportNarrative,
+  listOverriddenNarrativeIndices,
   type NarrativeFact,
   type NarrativeSentence,
   type ReportNarrative,
@@ -332,6 +333,33 @@ const INDUSTRY_SECTIONS: SectionBrief[] = [
   { key: 'CLOSING', brief: 'A closing reflection, 2 sentences: from a reading to a trajectory.' },
 ];
 
+/** Which national-report section each family of industry facts belongs to. */
+const FACT_SECTION: Array<[string, string]> = [
+  ['FRICTION.', 'PUB_03_OPERATIONAL_FRICTIONS'],
+  ['FRUSTRATION.', 'PUB_04_INVESTOR_FRUSTRATIONS'],
+  ['IMPACT.', 'PUB_06_CONFIDENCE_AND_PARTICIPATION'],
+  ['LEVER.', 'PUB_06_CONFIDENCE_AND_PARTICIPATION'],
+  ['LVF.', 'PUB_07_LOCAL_VS_FOREIGN'],
+  ['COMPARE.', 'PUB_08_CROSS_INDUSTRY_BENCHMARK'],
+  ['SELF.', 'PUB_09_SERVICE_EXCELLENCE_GAP'],
+  ['INST.', 'PUB_10_INSTITUTIONAL_PERSPECTIVES'],
+];
+
+/**
+ * The facts the Industry narrative is written from: a withheld section's
+ * figures never reach the model at all — not just its own prose, or the summary
+ * or closing could still describe them.
+ */
+export function industryNarrativeFacts(content: IndustryReportContent): NarrativeFact[] {
+  const suppressed = new Set(
+    (content.sections ?? []).filter((s) => s.disposition === 'suppressed').map((s) => s.id),
+  );
+  return industryFacts(content).filter((f) => {
+    const section = FACT_SECTION.find(([prefix]) => f.id.startsWith(prefix))?.[1];
+    return !section || !suppressed.has(section);
+  });
+}
+
 /** One paraphrase per institutional reading — the reading in our words, never theirs. */
 const institutionBriefs = (c: IndustryReportContent): SectionBrief[] =>
   c.institutional.map((i) => ({
@@ -599,7 +627,7 @@ async function draftIndustry(
   const suppressed = new Set(
     (content.sections ?? []).filter((s) => s.disposition === 'suppressed').map((s) => s.id),
   );
-  const facts = industryFacts(content);
+  const facts = industryNarrativeFacts(content);
   const sentences = await draft(
     model,
     'the public Industry report',
@@ -672,8 +700,23 @@ async function narrativeInForce(
   subjectId: string | null,
 ): Promise<ReportNarrative | null> {
   const published = await getReportPublication(pool, editionId, kind, subjectId);
-  if (published) return getReportNarrativeById(pool, published.narrativeId);
-  return getLatestReportNarrative(pool, editionId, kind, subjectId);
+  const narrative = published
+    ? await getReportNarrativeById(pool, published.narrativeId)
+    : await getLatestReportNarrative(pool, editionId, kind, subjectId);
+  return narrative && kind === 'industry' ? withReviewDecisions(pool, narrative) : narrative;
+}
+
+/**
+ * Apply the national review: a held-back sentence whose finding a reviewer
+ * rejected with a reason (the checker was wrong) is shown after all.
+ */
+async function withReviewDecisions(pool: Pool, n: ReportNarrative): Promise<ReportNarrative> {
+  const overridden = new Set(await listOverriddenNarrativeIndices(pool, n.id));
+  if (overridden.size === 0) return n;
+  return {
+    ...n,
+    sentences: n.sentences.map((s, i) => (overridden.has(i) ? { ...s, finding: null } : s)),
+  };
 }
 
 async function assertNotPublished(
@@ -746,7 +789,7 @@ export function ensureIndustryNarrative(
     }
     const content = await buildIndustryReportContent(pool, editionId);
     const narrative = await getIndustryNarrative(pool, editionId);
-    if (!narrativeDue(industryFacts(content), narrative)) return narrative;
+    if (!narrativeDue(industryNarrativeFacts(content), narrative)) return narrative;
     return draftIndustry(pool, editionId, content, model(), createdBy);
   });
 }

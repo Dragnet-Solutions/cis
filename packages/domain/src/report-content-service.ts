@@ -204,6 +204,34 @@ export function rating(values: Array<number | null>): Rating {
   return { value: Math.round(valid.reduce((a, b) => a + b, 0) / valid.length), n: valid.length };
 }
 
+/** One person's rating on a 0–100 scale. */
+export interface Scored {
+  respondentId: string;
+  value: number;
+}
+
+/**
+ * The floor applies to PEOPLE, never to ratings: an investor who rated three
+ * firms, or answered three items pooled into one measure, is one response. Each
+ * respondent's ratings are averaged first, so every person counts once, then
+ * the mean is taken across respondents; `n` is the number of respondents.
+ */
+export function ratingByRespondent(points: Scored[]): Rating {
+  const byRespondent = new Map<string, number[]>();
+  for (const p of points) {
+    if (!Number.isFinite(p.value)) continue;
+    const list = byRespondent.get(p.respondentId) ?? [];
+    list.push(p.value);
+    byRespondent.set(p.respondentId, list);
+  }
+  const means = [...byRespondent.values()].map((v) => v.reduce((a, b) => a + b, 0) / v.length);
+  if (means.length < SUPPRESS_BELOW) return { value: null, n: means.length };
+  return {
+    value: Math.round(means.reduce((a, b) => a + b, 0) / means.length),
+    n: means.length,
+  };
+}
+
 /** The options a select / multi / rank answer names (a select-then-greatest keeps `picked`). */
 export function pickedOptions(answer: unknown): string[] {
   if (Array.isArray(answer)) return answer.filter((x): x is string => typeof x === 'string');
@@ -375,20 +403,20 @@ const DIMENSIONS: Array<{
 ];
 
 /** The dimension's 0–100 ratings from the given answers (one per answer that asks it). */
-function dimensionValues(rows: ReportAnswerRow[], key: InvestorDimension['key']): number[] {
+function dimensionValues(rows: ReportAnswerRow[], key: InvestorDimension['key']): Scored[] {
   const d = DIMENSIONS.find((x) => x.key === key)!;
-  const out: number[] = [];
+  const out: Scored[] = [];
   for (const r of rows) {
     const raw = d.read(r);
     if (raw === undefined) continue;
     const v = onHundredScale(raw);
-    if (v !== null) out.push(v);
+    if (v !== null) out.push({ respondentId: r.respondentId, value: v });
   }
   return out;
 }
 
 /** Overall investor experience: every ease / responsiveness / transparency rating pooled. */
-function experienceValues(rows: ReportAnswerRow[]): number[] {
+function experienceValues(rows: ReportAnswerRow[]): Scored[] {
   return [
     ...dimensionValues(rows, 'ease'),
     ...dimensionValues(rows, 'responsiveness'),
@@ -449,7 +477,9 @@ export function buildAgenda(
     });
   }
 
-  if (agenda.length === 0) {
+  // "Within the margin on every dimension" is a claim, so it needs every
+  // dimension to have been measured; with ratings withheld there is no agenda.
+  if (agenda.length === 0 && gaps.length > 0 && gaps.length === dimensions.length) {
     agenda.push({
       priority: 'sustain',
       title: 'Hold your position',
@@ -557,7 +587,12 @@ async function editionOf(pool: Pool, editionId: string) {
 }
 
 const ratingsOf = (rows: ReportAnswerRow[], read: (r: ReportAnswerRow) => unknown): Rating =>
-  rating(rows.map((r) => onHundredScale(read(r))));
+  ratingByRespondent(
+    rows.flatMap((r) => {
+      const value = onHundredScale(read(r));
+      return value === null ? [] : [{ respondentId: r.respondentId, value }];
+    }),
+  );
 
 export async function buildIndustryReportContent(
   pool: Pool,
@@ -691,7 +726,7 @@ export async function buildIndustryReportContent(
     comparators: comparatorShares(of('S4', 'S4-Q8')),
     selfVsInvestors: {
       firmSelfBelief: ratingsOf(of('S1', 'S1-Q11'), (r) => r.answer),
-      investorExperience: rating(experienceValues(investorRows)),
+      investorExperience: ratingByRespondent(experienceValues(investorRows)),
     },
     institutional,
     institutionalParticipation,
@@ -725,23 +760,21 @@ export async function buildFirmReportContent(
     key: d.key,
     label: d.label,
     sources: d.sources,
-    firm: rating(dimensionValues(aboutFirm, d.key)),
-    industry: rating(dimensionValues(investorRows, d.key)),
+    firm: ratingByRespondent(dimensionValues(aboutFirm, d.key)),
+    industry: ratingByRespondent(dimensionValues(investorRows, d.key)),
   }));
 
   const selfRows = answers.filter((a) => a.instrumentCode === 'S1' && a.questionId === 'S1-Q11');
-  // One S1 seat per firm, so the firm's self-belief is its leadership's single
-  // answer — its own view, not a sample, so it is shown rather than floored.
-  const ownSelf = selfRows.find((a) => a.recruitingFirmId === firmId);
-  const ownSelfValue = ownSelf ? onHundredScale(ownSelf.answer) : null;
+  // One S1 seat per firm, so the firm's self-belief is ONE person's answer (the
+  // MD/CEO seat). It is never shown as a figure: a single answer is not a
+  // reading, and the report goes to the coordinator, who is promised never to
+  // see a seat's answers. Only `n` (whether the seat answered) is kept.
+  const ownSelf = selfRows.filter((a) => a.recruitingFirmId === firmId);
   const selfVsInvestors = {
-    firmSelfBelief: {
-      value: ownSelfValue === null ? null : Math.round(ownSelfValue),
-      n: ownSelfValue === null ? 0 : 1,
-    },
-    investorExperience: rating(experienceValues(aboutFirm)),
+    firmSelfBelief: ratingsOf(ownSelf, (r) => r.answer),
+    investorExperience: ratingByRespondent(experienceValues(aboutFirm)),
     industrySelfBelief: ratingsOf(selfRows, (r) => r.answer),
-    industryInvestorExperience: rating(experienceValues(investorRows)),
+    industryInvestorExperience: ratingByRespondent(experienceValues(investorRows)),
   };
 
   // Retail cut — S4 only, shown only where the firm's own retail volume allows it.
@@ -801,4 +834,42 @@ export async function buildFirmReportContent(
       margin,
     ),
   };
+}
+
+/**
+ * The sections this Industry report will withhold, and why: every figure in
+ * the section is below the 10-response floor, or the section is built on index
+ * scores still pending methodology approval. The national report marks these
+ * sections as not publishable, so its section table says what the report will
+ * actually show (never "publishable" for a section that shows nothing).
+ */
+export function withheldSections(c: IndustryReportContent): Partial<Record<string, string>> {
+  const pending =
+    'Pending methodology approval: no index score is reported until the scoring methodology ' +
+    '(CIS-SCORE-2026) has been approved by the methodology partner.';
+  const floor = (who: string) =>
+    `Fewer than ${SUPPRESS_BELOW} ${who} answered, so every figure in this section is withheld.`;
+  const out: Partial<Record<string, string>> = {};
+  if (c.indices.state === 'pending_methodology') {
+    out['PUB_01_HEADLINE_INDICES'] = pending;
+    out['PUB_02_SEGMENT_IEI_ICI'] = pending;
+    out['PUB_05_MATURITY_HEATMAP'] = pending;
+  }
+  if (!c.frictions) out['PUB_03_OPERATIONAL_FRICTIONS'] = floor('firms');
+  if (!c.frustrations) out['PUB_04_INVESTOR_FRUSTRATIONS'] = floor('retail investors');
+  if (!c.participationImpact && !c.confidenceLevers) {
+    out['PUB_06_CONFIDENCE_AND_PARTICIPATION'] = floor('investors');
+  }
+  if (!c.localVsForeign.rows.some((r) => r.local.value !== null && r.foreign.value !== null)) {
+    out['PUB_07_LOCAL_VS_FOREIGN'] = floor('local and foreign institutions each');
+  }
+  if (!c.comparators) out['PUB_08_CROSS_INDUSTRY_BENCHMARK'] = floor('retail investors');
+  const sv = c.selfVsInvestors;
+  if (sv.firmSelfBelief.value === null || sv.investorExperience.value === null) {
+    out['PUB_09_SERVICE_EXCELLENCE_GAP'] = floor('firms or investors');
+  }
+  if (c.institutional.length === 0) {
+    out['PUB_10_INSTITUTIONAL_PERSPECTIVES'] = 'No institution has given its reading.';
+  }
+  return out;
 }

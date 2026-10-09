@@ -24,6 +24,7 @@ import {
   currentSegmentSufficiency,
   buildIndustryReportContent,
   buildFirmReportContent,
+  withheldSections,
   generateIndustryNarrative,
   generateFirmNarrative,
   getIndustryNarrative,
@@ -32,6 +33,9 @@ import {
   ensureFirmNarrative,
   publishIndustryReport,
   queueReleaseNotices,
+  prepareNationalReview,
+  getNationalReview,
+  decideFinding,
   NATIONAL_SECTIONS,
   type SufficiencyContext,
 } from '@cis/domain';
@@ -66,10 +70,14 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
       },
     },
     async (request, reply) => {
-      const { report, sections } = await generateNationalReport(getPool(), {
+      // What the report itself will withhold is read from its own content, never
+      // taken from the request: a section is not "publishable" if it shows nothing.
+      const pool = getPool();
+      const withheld = withheldSections(await buildIndustryReportContent(pool, request.params.id));
+      const { report, sections } = await generateNationalReport(pool, {
         editionId: request.params.id,
         scoringRunId: request.body.scoringRunId,
-        context: request.body.context as SufficiencyContext,
+        context: { ...(request.body.context as SufficiencyContext), withheld },
       });
       return reply.status(201).send({ reportId: report.id, sections });
     },
@@ -381,6 +389,56 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
     async (request, reply) => {
       await openDraft(getPool(), request.params.id);
       return reply.send({ opened: true });
+    },
+  );
+
+  // The sentence-level review of the draft — the Industry report's AI
+  // narrative. POST makes it current (drafting the narrative if due, recording
+  // its sentences and findings, measuring the checker); GET reads it.
+  app.get(
+    '/national-reports/:id/review',
+    { preHandler: [app.authenticate], schema: { params: z.object({ id: z.string().uuid() }) } },
+    async (request, reply) => {
+      return reply.send(await getNationalReview(getPool(), request.params.id));
+    },
+  );
+
+  app.post(
+    '/national-reports/:id/review',
+    { preHandler: [app.authenticate], schema: { params: z.object({ id: z.string().uuid() }) } },
+    async (request, reply) => {
+      const review = await prepareNationalReview(
+        getPool(),
+        request.params.id,
+        foundryModelFromEnv,
+        request.session.email,
+      );
+      return reply.send(review);
+    },
+  );
+
+  // A reviewer's decision on one checker finding. Who decided is the session.
+  app.post(
+    '/national-reports/:id/findings/:findingId/decision',
+    {
+      preHandler: [app.authenticate],
+      schema: {
+        params: z.object({ id: z.string().uuid(), findingId: z.string().uuid() }),
+        body: z.object({
+          disposition: z.enum(['SUPPRESS_CLAIM', 'REJECT_WITH_REASON']),
+          reason: z.string().trim().max(2000).optional(),
+        }),
+      },
+    },
+    async (request, reply) => {
+      await decideFinding(getPool(), {
+        reportId: request.params.id,
+        findingId: request.params.findingId,
+        disposition: request.body.disposition,
+        reason: request.body.reason ?? null,
+        decidedBy: request.session.email,
+      });
+      return reply.send({ decided: true });
     },
   );
 

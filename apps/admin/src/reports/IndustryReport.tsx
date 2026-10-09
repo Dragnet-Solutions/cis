@@ -98,8 +98,9 @@ export function IndustryReport({
         <Prose narrative={c.narrative} section={id} />
         {s?.disposition === 'caveated' && (
           <p className="rpt-note">
-            Reported with a thin-sample caveat: {s.reason ?? 'the achieved sample is small'}. Shown,
-            not dropped, with the achieved sample stated.
+            Reported with a thin-sample caveat:{' '}
+            {(s.reason ?? 'the achieved sample is small').replace(/\.+$/, '')}. Shown, not dropped,
+            with the achieved sample stated.
           </p>
         )}
       </>
@@ -282,7 +283,11 @@ export function IndustryReport({
               ))}
             </ul>
           ) : (
-            <p>Too few responses have been received for a summary to say anything reliable yet.</p>
+            !c.narrative?.sentences.some((x) => x.section === 'EXEC' && x.finding === null) && (
+              <p>
+                Too few responses have been received for a summary to say anything reliable yet.
+              </p>
+            )
           )}
         </section>
 
@@ -496,9 +501,11 @@ export function IndustryReport({
                 </tbody>
               </table>
               <p className="rpt-note">
-                {lvf.localN} local and {lvf.foreignN} foreign institutional respondents. Gap is
-                foreign minus local. Local: S5a-Q1 responsiveness and reporting, S5a-Q5; foreign:
-                S5b-Q2–Q4. A rating from fewer than ten responses is withheld.
+                {lvf.localN} local and {lvf.foreignN} foreign institutional{' '}
+                {lvf.localN + lvf.foreignN === 1 ? 'respondent' : 'respondents'}. Gap is foreign
+                minus local. Local: S5a-Q1 responsiveness and reporting, S5a-Q5; foreign: S5b-Q2–Q4.
+                A rating from fewer than ten respondents is withheld; each institution counts once,
+                however many firms it rated.
               </p>
             </>,
           )}
@@ -590,8 +597,9 @@ export function IndustryReport({
               <p className="rpt-note">
                 Firms’ view: how confident leadership is that the firm consistently meets investor
                 expectations (S1-Q11, {self.firmSelfBelief.n} firms). Investors’ experience: every
-                ease, responsiveness and transparency rating pooled ({self.investorExperience.n}{' '}
-                ratings). The instrument does not ask firms to rate themselves dimension by
+                ease, responsiveness and transparency rating, each investor counted once (
+                {self.investorExperience.n} investors). Both sides are shown only from ten
+                respondents up. The instrument does not ask firms to rate themselves dimension by
                 dimension, so the gap is reported overall.
               </p>
             </>,

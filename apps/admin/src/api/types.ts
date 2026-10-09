@@ -287,10 +287,40 @@ export interface NationalReportSection {
 export interface NationalApprovalPreconditions {
   signedScoringRun: boolean;
   draftOpened: boolean;
+  /** A written draft (the AI narrative) has been recorded for review. */
+  draftReviewable?: boolean;
   allFindingsDisposed: boolean;
   checkerHealthy: boolean;
   ok: boolean;
   reasons: string[];
+}
+
+/** The sentence-level review of the national report's draft (the AI narrative). */
+export interface NationalReview {
+  narrativeId: string | null;
+  model: string | null;
+  draftedAt: string | null;
+  items: Array<{
+    sentenceId: string;
+    narrativeIndex: number;
+    section: string | null;
+    text: string;
+    factIds: string[];
+    finding: { id: string; kind: string; why: string } | null;
+    disposition: {
+      disposition: 'ACCEPT_AND_EDIT' | 'REJECT_WITH_REASON' | 'SUPPRESS_CLAIM';
+      reason: string | null;
+      disposedBy: string;
+      disposedAt: string;
+    } | null;
+  }>;
+  health: {
+    seededTotal: number;
+    detected: number;
+    thresholdRate: number;
+    healthy: boolean;
+    checkedAt: string;
+  } | null;
 }
 
 export interface NationalReportDetailResponse {

@@ -459,6 +459,8 @@ export {
   buildFirmReportContent,
   ReportContentError,
   institutionalThemes,
+  withheldSections,
+  ratingByRespondent,
   type IndustryReportContent,
   type FirmReportContent,
   type InstitutionalReading,
@@ -471,6 +473,7 @@ export {
   ensureIndustryNarrative,
   ensureFirmNarrative,
   narrativeDue,
+  industryNarrativeFacts,
   industryFacts,
   firmFacts,
   checkNarrativeSentence,
@@ -481,6 +484,14 @@ export {
   ReportPublicationError,
   type NarrativeModel,
 } from './report-narrative-service';
+export {
+  prepareNationalReview,
+  getNationalReview,
+  decideFinding,
+  plantedErrors,
+  measureChecker,
+  type NationalReview,
+} from './national-review-service';
 export {
   publishIndustryReport,
   getPublishedIndustryReport,
