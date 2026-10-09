@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import { Pool } from 'pg';
 import { emitFunnelEvent } from '@cis/db';
-import { FAMILY_META } from './institution-family-service';
 import type {
   FunnelEvent,
   FunnelSegment,
@@ -41,13 +40,6 @@ import type {
 
 const FIRM_INSTRUMENTS = new Set(['S1', 'S2', 'S3']);
 const RETAIL_INSTRUMENTS = new Set(['S4']);
-const REGULATOR_INSTRUMENTS = new Set(Object.values(FAMILY_META).map((f) => f.instrumentCode));
-
-/** Whether an instrument is a regulator / market-infrastructure instrument. */
-export function isRegulatorInstrument(instrumentCode: string): boolean {
-  return REGULATOR_INSTRUMENTS.has(instrumentCode);
-}
-
 /**
  * The funnel segment a completed instrument belongs to, or null for an
  * instrument that belongs to no participation segment — the regulator

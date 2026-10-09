@@ -102,7 +102,6 @@ export {
 // ── Phase 5: scoring, sufficiency, analytics & evidence ──────────────────────
 export {
   segmentForInstrument,
-  isRegulatorInstrument,
   isInvestorInstrument,
   institutionRefFor,
   emitCompletedForRespondent,
