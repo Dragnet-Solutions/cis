@@ -99,6 +99,9 @@ export interface CalculationRun {
   startedAt: string;
   finishedAt: string | null;
   createdAt: string;
+  /** APPROVED once the run was made under the two-person-approved methodology. */
+  methodologyVersion?: string | null;
+  methodologyStatus?: 'TEST_UNAPPROVED' | 'APPROVED' | null;
 }
 
 export type ScoringSignoffState = 'requested' | 'signed_off' | 'superseded' | 'rejected';
@@ -251,6 +254,9 @@ export interface FirmImportResult {
   toAdd: Array<{ line: number; name: string; slug: string }>;
   duplicates: Array<{ line: number; name: string; slug: string; reason: string }>;
   errors: Array<{ line: number; message: string }>;
+  /** Firms enrolled in the edition (null when no edition was given). */
+  enrolled: number | null;
+  enrolmentNote: string | null;
 }
 
 // ─── National report (UX-ADM-005) ───────────────────────────────────────────
@@ -578,6 +584,29 @@ export interface ReportRating {
   n: number;
 }
 
+/** One index score as a report shows it. */
+export interface ReportIndexScore {
+  code: string;
+  name: string;
+  value: number | null;
+  n: number | null;
+  note: string | null;
+}
+
+/** The five indices from the signed run made under the approved methodology. */
+export interface ReportIndicesReported {
+  state: 'reported';
+  methodology: string;
+  runId: string;
+  industry: ReportIndexScore[];
+  firm: ReportIndexScore[] | null;
+  segments: Array<{ segment: string; label: string; iei: ReportRating; ici: ReportRating }>;
+  tiers: Array<{ tier: string; firms: number; omi: number; dmi: number | null }> | null;
+  tiersNote: string | null;
+}
+
+export type ReportIndices = ReportPending | ReportIndicesReported;
+
 export interface ReportPending {
   state: 'pending_methodology';
   note: string;
@@ -630,7 +659,7 @@ export interface IndustryReportContent {
     achieved: number;
     meets: boolean;
   }>;
-  indices: ReportPending;
+  indices: ReportIndices;
   frictions: { base: number; items: ReportShare[] } | null;
   frustrations: { base: number; items: ReportShare[] } | null;
   participationImpact: { base: number; items: ReportShare[] } | null;
@@ -664,7 +693,7 @@ export interface FirmReportContent {
     releaseState: string;
   };
   margin: number;
-  indices: ReportPending;
+  indices: ReportIndices;
   dimensions: Array<{
     key: 'ease' | 'responsiveness' | 'transparency' | 'trust';
     label: string;
@@ -687,4 +716,19 @@ export interface FirmReportContent {
   narrative: ReportNarrativeView | null;
   /** When the document left CIS (released to its firm / published); then final. */
   publishedAt?: string | null;
+}
+
+/** The scoring methodology's two-person approval (Runbook §5.2). */
+export interface MethodologyApprovalView {
+  methodology: { id: string; version: string };
+  approved: {
+    actionId: string;
+    requestedBy: string;
+    approvedBy: string;
+    approvedAt: string;
+    reason: string;
+  } | null;
+  pending: { actionId: string; requestedBy: string; requestedAt: string; reason: string } | null;
+  viewerId: string;
+  operatorNames: Record<string, string>;
 }

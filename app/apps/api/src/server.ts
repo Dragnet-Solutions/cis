@@ -152,6 +152,7 @@ function resolveStatusCode(error: Error & { statusCode?: number }): number {
     case 'EditionStateError':
     case 'InstrumentsNotFrozenError':
     case 'CriticalActionStateError':
+    case 'CandidateScoringError':
     case 'FirmTeamError':
     case 'AlreadyClaimedError':
     case 'SeatConflictError':

@@ -1,5 +1,11 @@
 import type { ReactNode } from 'react';
-import type { ReportNarrativeView, ReportPending, ReportRating } from '../api/types';
+import type {
+  ReportIndexScore,
+  ReportIndices,
+  ReportNarrativeView,
+  ReportPending,
+  ReportRating,
+} from '../api/types';
 import './report.css';
 
 /** Below this many responses a figure is withheld, never shown (the study floor). */
@@ -312,5 +318,74 @@ export function Cover({
         ))}
       </div>
     </div>
+  );
+}
+
+/**
+ * The five index scores as cards — the signed run's figures under the approved
+ * methodology, or "Pending" with the notice while it is not approved. `compare`
+ * (firm report) shows the industry figure beside the firm's own.
+ */
+export function IndexCards({
+  indices,
+  scores,
+  compare,
+}: {
+  indices: ReportIndices;
+  scores: ReportIndexScore[] | null;
+  compare?: ReportIndexScore[] | undefined;
+}): JSX.Element {
+  if (indices.state !== 'reported' || !scores) {
+    return (
+      <>
+        <div className="rpt-cards">
+          {['OMI', 'DMI', 'IEI', 'ICI', 'SEI'].map((k) => (
+            <div key={k}>
+              <div className="k">{k}</div>
+              <div className="v">Pending</div>
+              <div className="s">Methodology sign-off</div>
+            </div>
+          ))}
+        </div>
+        {indices.state !== 'reported' && <PendingPanel pending={indices} />}
+      </>
+    );
+  }
+  return (
+    <>
+      <div className="rpt-cards">
+        {scores.map((x) => {
+          const other = compare?.find((y) => y.code === x.code);
+          return (
+            <div key={x.code}>
+              <div className="k">
+                {x.code} · {x.name}
+              </div>
+              <div className="v">{x.value === null ? '—' : x.value}</div>
+              <div className="s">
+                {other
+                  ? `Industry ${other.value === null ? '—' : other.value}`
+                  : x.value === null
+                    ? 'Not calculable'
+                    : 'of 100'}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <ul className="rpt-note" style={{ paddingLeft: 18 }}>
+        {scores
+          .filter((x) => x.note)
+          .map((x) => (
+            <li key={x.code}>
+              <b>{x.code}:</b> {x.note}
+            </li>
+          ))}
+      </ul>
+      <p className="rpt-note">
+        Scored 0–100 by the approved methodology ({indices.methodology}), from the signed scoring
+        run.
+      </p>
+    </>
   );
 }

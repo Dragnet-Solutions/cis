@@ -9,6 +9,7 @@ import {
   GapPill,
   NarrativeControls,
   NarrativeStatus,
+  IndexCards,
   PendingPanel,
   Prose,
   SectionHead,
@@ -40,14 +41,6 @@ const SECTION_ORDER = [
   'PUB_08_CROSS_INDUSTRY_BENCHMARK',
   'PUB_09_SERVICE_EXCELLENCE_GAP',
   'PUB_10_INSTITUTIONAL_PERSPECTIVES',
-];
-
-const INDICES = [
-  'Operational maturity',
-  'Digital maturity',
-  'Investor experience',
-  'Investor confidence',
-  'Service excellence',
 ];
 
 export function IndustryReport({
@@ -299,18 +292,10 @@ export function IndustryReport({
           />
           {gated(
             'PUB_01_HEADLINE_INDICES',
-            <>
-              <div className="rpt-cards">
-                {INDICES.map((k) => (
-                  <div key={k}>
-                    <div className="k">{k}</div>
-                    <div className="v">Pending</div>
-                    <div className="s">Methodology sign-off</div>
-                  </div>
-                ))}
-              </div>
-              <PendingPanel pending={c.indices} />
-            </>,
+            <IndexCards
+              indices={c.indices}
+              scores={c.indices.state === 'reported' ? c.indices.industry : null}
+            />,
           )}
         </section>
 
@@ -320,7 +305,37 @@ export function IndustryReport({
             title="Experience and confidence, by investor segment"
             standfirst="Investor Experience and Investor Confidence, computed separately for retail investors, local institutions and foreign institutions."
           />
-          {gated('PUB_02_SEGMENT_IEI_ICI', <PendingPanel pending={c.indices} />)}
+          {gated(
+            'PUB_02_SEGMENT_IEI_ICI',
+            c.indices.state === 'reported' ? (
+              <>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Segment</th>
+                      <th>Investor experience</th>
+                      <th>Investor confidence</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {c.indices.segments.map((g) => (
+                      <tr key={g.segment}>
+                        <td>{g.label}</td>
+                        <td>{show(g.iei)}</td>
+                        <td>{show(g.ici)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p className="rpt-note">
+                  Each investor counts once in their segment. A segment score from fewer than ten
+                  investors is withheld.
+                </p>
+              </>
+            ) : (
+              <PendingPanel pending={c.indices} />
+            ),
+          )}
         </section>
 
         <section>
@@ -407,10 +422,18 @@ export function IndustryReport({
           />
           {gated(
             'PUB_05_MATURITY_HEATMAP',
-            <PendingPanel
-              pending={c.indices}
-              title="Pending methodology sign-off — tiers are built on the maturity indices"
-            />,
+            c.indices.state === 'reported' ? (
+              <div className="rpt-pending">
+                <b>Not drawn this edition</b>
+                Maturity tiers are not defined in the approved scoring methodology, so the heatmap
+                by tier is not drawn.
+              </div>
+            ) : (
+              <PendingPanel
+                pending={c.indices}
+                title="Pending methodology sign-off — tiers are built on the maturity indices"
+              />
+            ),
           )}
         </section>
 

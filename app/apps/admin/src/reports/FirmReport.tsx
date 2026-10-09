@@ -7,7 +7,7 @@ import {
   Cover,
   NarrativeControls,
   NarrativeStatus,
-  PendingPanel,
+  IndexCards,
   Prose,
   SectionHead,
   Toolbar,
@@ -34,14 +34,6 @@ const QUESTIONS = [
   'Is service quality shifting investor confidence or behaviour?',
   'Where does our own view differ most from our investors’?',
   'Which improvement priorities deserve attention first?',
-];
-
-const INDICES = [
-  'Operational maturity',
-  'Digital maturity',
-  'Investor experience',
-  'Investor confidence',
-  'Service excellence',
 ];
 
 export function FirmReport({
@@ -178,16 +170,11 @@ export function FirmReport({
             title="Your five index scores, in industry context"
             standfirst="Your own Operational Maturity, Digital Maturity, Investor Experience, Investor Confidence and Service Excellence, each shown against the anonymised industry benchmark."
           />
-          <div className="rpt-cards">
-            {INDICES.map((k) => (
-              <div key={k}>
-                <div className="k">{k}</div>
-                <div className="v">Pending</div>
-                <div className="s">Methodology sign-off</div>
-              </div>
-            ))}
-          </div>
-          <PendingPanel pending={c.indices} />
+          <IndexCards
+            indices={c.indices}
+            scores={c.indices.state === 'reported' ? c.indices.firm : null}
+            compare={c.indices.state === 'reported' ? c.indices.industry : undefined}
+          />
           <Prose narrative={c.narrative} section="SUMMARY" lead />
         </section>
 
@@ -212,17 +199,25 @@ export function FirmReport({
           {best && worst && best !== worst && (
             <p>
               Your investors rate you{' '}
-              <b>
-                furthest {best.gap >= 0 ? 'above' : 'from'} the industry on{' '}
-                {best.label.toLowerCase()}
-              </b>{' '}
-              ({best.gap >= 0 ? '+' : '−'}
-              {Math.abs(best.gap)}) and{' '}
-              <b>
-                {worst.gap < 0 ? 'below' : 'closest to'} it on {worst.label.toLowerCase()}
-              </b>{' '}
-              ({worst.gap >= 0 ? '+' : '−'}
-              {Math.abs(worst.gap)}).
+              {best.gap > 0 && worst.gap < 0 ? (
+                <>
+                  <b>furthest above the industry on {best.label.toLowerCase()}</b> (
+                  {signed(best.gap)}) and <b>furthest below it on {worst.label.toLowerCase()}</b> (
+                  {signed(worst.gap)}).
+                </>
+              ) : worst.gap >= 0 ? (
+                <>
+                  at or above the industry on every dimension measured —{' '}
+                  <b>furthest above on {best.label.toLowerCase()}</b> ({signed(best.gap)}), and
+                  closest to it on {worst.label.toLowerCase()} ({signed(worst.gap)}).
+                </>
+              ) : (
+                <>
+                  at or below the industry on every dimension measured —{' '}
+                  <b>furthest below on {worst.label.toLowerCase()}</b> ({signed(worst.gap)}), and
+                  closest to it on {best.label.toLowerCase()} ({signed(best.gap)}).
+                </>
+              )}
             </p>
           )}
           <Prose narrative={c.narrative} section="F2" />

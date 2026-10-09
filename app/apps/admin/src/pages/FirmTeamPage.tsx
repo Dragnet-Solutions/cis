@@ -147,9 +147,12 @@ function firmCount(n: number): string {
 function FirmDirectoryImport({
   client,
   onImported,
+  editionId,
 }: {
   client: AdminClient;
   onImported: () => Promise<void>;
+  /** The edition new firms are enrolled in, so they appear in its surveys. */
+  editionId: string | null;
 }): JSX.Element {
   const [csv, setCsv] = useState<string | null>(null);
   const [fileName, setFileName] = useState('');
@@ -168,7 +171,7 @@ function FirmDirectoryImport({
     setCsv(text);
     setBusy(true);
     try {
-      setPreview(await client.importFirms(text, true));
+      setPreview(await client.importFirms(text, true, editionId));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not read that file');
     } finally {
@@ -181,11 +184,15 @@ function FirmDirectoryImport({
     setBusy(true);
     setError(null);
     try {
-      const result = await client.importFirms(csv, false);
+      const result = await client.importFirms(csv, false, editionId);
       setDone(
         `${firmCount(result.added)} added to the directory.${
           result.duplicates.length ? ` ${result.duplicates.length} already listed, skipped.` : ''
-        }`,
+        }${
+          result.enrolled !== null && result.enrolled > 0
+            ? ` ${firmCount(result.enrolled)} enrolled in this edition, so they appear in the surveys.`
+            : ''
+        }${result.enrolmentNote ? ` ${result.enrolmentNote}` : ''}`,
       );
       setPreview(null);
       setCsv(null);
@@ -522,7 +529,7 @@ export function FirmTeamPage({
       </fieldset>
 
       {orgId && <InvestorCategoriesCard client={client} orgId={orgId} />}
-      <FirmDirectoryImport client={client} onImported={loadFirms} />
+      <FirmDirectoryImport client={client} onImported={loadFirms} editionId={editionId} />
       {orgId && editionId && <FirmDigestCard client={client} orgId={orgId} editionId={editionId} />}
     </main>
   );
