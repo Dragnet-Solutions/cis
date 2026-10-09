@@ -60,6 +60,15 @@ export {
 } from './firm-team-service';
 
 export {
+  importFirmDirectory,
+  planFirmImport,
+  parseCsv,
+  slugifyFirmName,
+  MAX_IMPORT_ROWS,
+} from './firm-directory-service';
+export type { FirmImportRow, FirmImportPlan, FirmImportResult } from './firm-directory-service';
+
+export {
   claimSpace,
   recordFollowUpConsent,
   requestInvitation,
@@ -162,14 +171,25 @@ export {
   getRetailCutThresholds,
   cutStateFor,
   generateFirmReports,
-  approveFirmReport,
+  openFirmReport,
+  requestFirmReportRelease,
+  decideFirmReportRelease,
+  getPendingFirmReportRelease,
+  FIRM_REPORT_RELEASE_ACTION,
   regenerateFirmReport,
   releaseFirmReports,
   correctFirmReport,
   getFirmReports,
   FirmReportError,
 } from './firm-report-service';
-export type { RetailCutThresholds, GenerationResult, ReleaseResult } from './firm-report-service';
+export type {
+  RetailCutThresholds,
+  GenerationResult,
+  ReleaseResult,
+  ReleaseOptions,
+  FirmReportReleaseDecision,
+  FirmReportReleaseDecisionResult,
+} from './firm-report-service';
 
 // ── Phase 7: scoring sign-off (UX-ADM-004) ───────────────────────────────────
 export {

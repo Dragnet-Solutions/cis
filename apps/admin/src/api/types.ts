@@ -243,6 +243,16 @@ export interface FirmSummary {
   slug: string;
 }
 
+/** What a firm directory import would do (dry run) or did. */
+export interface FirmImportResult {
+  dryRun: boolean;
+  totalRows: number;
+  added: number;
+  toAdd: Array<{ line: number; name: string; slug: string }>;
+  duplicates: Array<{ line: number; name: string; slug: string; reason: string }>;
+  errors: Array<{ line: number; message: string }>;
+}
+
 // ─── National report (UX-ADM-005) ───────────────────────────────────────────
 
 export type NationalReportSectionId =
@@ -350,6 +360,17 @@ export interface FirmReport {
   approvalState: FirmReportApprovalState;
   releaseState: FirmReportReleaseState;
   heldReason: string | null;
+}
+
+/** A request to release firm reports, awaiting a second person. */
+export interface PendingFirmReportRelease extends PendingAction {
+  reportIds: string[];
+}
+
+export interface FirmReportReleaseDecision extends Partial<ReleaseFirmReportsResult> {
+  status: 'approved' | 'rejected';
+  /** Set when the reports were approved but the release then failed. */
+  releaseError: string | null;
 }
 
 export interface ReleaseFirmReportsResult {

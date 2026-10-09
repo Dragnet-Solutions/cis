@@ -8,6 +8,9 @@ import {
   type EditionSummary,
   type FirmReport,
   type FirmSummary,
+  type FirmImportResult,
+  type PendingFirmReportRelease,
+  type FirmReportReleaseDecision,
   type IndexScoreView,
   type InstrumentsResponse,
   type InvitationRequestItem,
@@ -196,6 +199,10 @@ export interface AdminClient {
   getFirmReports(id: string): Promise<{
     reports: FirmReport[];
     notices: Record<string, { sent: number; logged: number; failed: number; queued: number }>;
+    /** Per report: who has opened it. */
+    openedBy: Record<string, Array<{ id: string; displayName: string }>>;
+    /** The release request awaiting a second person, if any. */
+    pendingRelease: PendingFirmReportRelease | null;
   }>;
   publishIndustryReport(id: string): Promise<{ publishedAt: string }>;
   // Report documents — content computed from submitted responses.
@@ -213,7 +220,21 @@ export interface AdminClient {
   downloadInstitutionalPdf(id: string): Promise<Blob>;
   downloadFirmPdf(id: string, firmId: string): Promise<Blob>;
   generateFirmReports(id: string, scoringRunId: string): Promise<unknown>;
-  approveFirmReport(reportId: string): Promise<{ approvalState: string }>;
+  /** Record that the signed-in operator opened a report. */
+  openFirmReport(reportId: string): Promise<{ opened: boolean }>;
+  /** Maker step: ask for the generated reports to be released, with a reason. */
+  requestFirmReportRelease(
+    id: string,
+    reason: string,
+    reportIds?: string[],
+  ): Promise<{ criticalActionId: string }>;
+  /** Checker step: approve (which releases) or reject a release request. */
+  decideFirmReportRelease(
+    id: string,
+    actionId: string,
+    approved: boolean,
+    rejectionReason?: string,
+  ): Promise<FirmReportReleaseDecision>;
   regenerateFirmReport(reportId: string): Promise<{ report: FirmReport }>;
   releaseFirmReports(id: string): Promise<ReleaseFirmReportsResult>;
   // Invitations (UX-OPS-002)
@@ -268,6 +289,8 @@ export interface AdminClient {
   ): Promise<{ status: 'approved' | 'rejected'; frozen: boolean }>;
   // Firm coordinator team (UX-FRM-007) — ordinary account admin, not maker-checker.
   listFirms(): Promise<FirmSummary[]>;
+  /** Preview (dryRun) or carry out an import of the firm directory from CSV. */
+  importFirms(csv: string, dryRun: boolean): Promise<FirmImportResult>;
   listCoordinators(orgId: string): Promise<Coordinator[]>;
   createLeadCoordinator(
     orgId: string,
@@ -499,8 +522,20 @@ export function createClient(token: string | null, hooks: SessionHooks = {}): Ad
         body: { scoringRunId },
         token,
       }),
-    approveFirmReport: (reportId) =>
-      request(`/firm-reports/${reportId}/approve`, { method: 'POST', token }),
+    openFirmReport: (reportId) =>
+      request(`/firm-reports/${reportId}/open`, { method: 'POST', token }),
+    requestFirmReportRelease: (id, reason, reportIds) =>
+      request(`/editions/${id}/firm-reports/release/request`, {
+        method: 'POST',
+        body: reportIds ? { reason, reportIds } : { reason },
+        token,
+      }),
+    decideFirmReportRelease: (id, actionId, approved, rejectionReason) =>
+      request(`/editions/${id}/firm-reports/release/${actionId}/decide`, {
+        method: 'POST',
+        body: rejectionReason ? { approved, rejectionReason } : { approved },
+        token,
+      }),
     regenerateFirmReport: (reportId) =>
       request(`/firm-reports/${reportId}/regenerate`, { method: 'POST', token }),
     releaseFirmReports: (id) =>
@@ -556,6 +591,8 @@ export function createClient(token: string | null, hooks: SessionHooks = {}): Ad
         token,
       }),
     listFirms: () => request<{ firms: FirmSummary[] }>('/firms', { token }).then((r) => r.firms),
+    importFirms: (csv, dryRun) =>
+      request('/firms/import', { method: 'POST', body: { csv, dryRun }, token }),
     listCoordinators: (orgId) =>
       request<{ coordinators: Coordinator[] }>(`/firms/${orgId}/coordinators`, { token }).then(
         (r) => r.coordinators,

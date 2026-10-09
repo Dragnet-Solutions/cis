@@ -335,6 +335,24 @@ function SetupView({
 }): JSX.Element {
   const [chosenOrgId, setChosenOrgId] = useState<string | null>(organizationId);
   const [firmQuery, setFirmQuery] = useState(firm);
+  // The claim link names the firm. The directory arrives after this form first
+  // renders, so the box is filled (and held) once the named firm is found in it
+  // — not just from the first render, when the list is still empty.
+  const linkedFirm = organizationId ? (firms.find((f) => f.id === organizationId) ?? null) : null;
+  const linkNotFound = !!organizationId && firms.length > 0 && !linkedFirm;
+  const [linkReleased, setLinkReleased] = useState(false);
+  const firmLocked = !!linkedFirm && !linkReleased;
+  useEffect(() => {
+    if (linkedFirm && !linkReleased) {
+      setChosenOrgId(linkedFirm.id);
+      setFirmQuery(linkedFirm.displayName);
+    }
+  }, [linkedFirm, linkReleased]);
+  useEffect(() => {
+    // A link to a firm that is not in the directory chooses nothing.
+    if (linkNotFound) setChosenOrgId((id) => (id === organizationId ? null : id));
+  }, [linkNotFound, organizationId]);
+  const chosenName = firms.find((f) => f.id === chosenOrgId)?.displayName ?? firm;
   const [privacy, setPrivacy] = useState(false);
   const [followUp, setFollowUp] = useState(false);
   const [name, setName] = useState('');
@@ -422,8 +440,8 @@ function SetupView({
       <p className="lede">
         {chosenOrgId ? (
           <>
-            You are claiming this space for <b>{firm}</b>. From now on you sign in with your email
-            address and this PIN.
+            You are claiming this space for <b>{chosenName}</b>. From now on you sign in with your
+            email address and this PIN.
           </>
         ) : (
           'Choose your firm to begin.'
@@ -432,10 +450,33 @@ function SetupView({
 
       <div className="field">
         <label htmlFor="setupFirm">Your firm</label>
+        {firmLocked && (
+          <p className="hint" id="setupFirmHint">
+            From your invitation link.{' '}
+            <button
+              type="button"
+              className="textlink"
+              onClick={() => {
+                setLinkReleased(true);
+                setChosenOrgId(null);
+                setFirmQuery('');
+              }}
+            >
+              Not your firm?
+            </button>
+          </p>
+        )}
+        {linkNotFound && (
+          <p className="hint">
+            Your invitation link does not match a firm on our list. Choose your firm below.
+          </p>
+        )}
         <input
           id="setupFirm"
           type="text"
           value={firmQuery}
+          readOnly={firmLocked}
+          aria-describedby={firmLocked ? 'setupFirmHint' : undefined}
           placeholder="Type or choose a firm"
           onChange={(e) => {
             setFirmQuery(e.target.value);

@@ -328,7 +328,7 @@ export function App(): JSX.Element {
       ) : tab === 'dragnet' && editionId && session.user.hasDragnetRight ? (
         <DragnetPage client={client} editionId={editionId} />
       ) : (
-        <FirmReportsPage client={client} editionId={editionId} />
+        <FirmReportsPage client={client} editionId={editionId} viewer={session.user} />
       )}
     </div>
   );

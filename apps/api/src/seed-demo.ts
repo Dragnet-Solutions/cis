@@ -422,7 +422,9 @@ async function main(): Promise<void> {
   await api(`/national-reports/${reportId}/open`, 'POST', maker);
   log('National report generated and its draft opened.');
 
-  // Firm reports, each approved.
+  // Firm reports: generated, each opened by the maker, and their release
+  // requested. Releasing is two-person — the checker approves it once the
+  // national report is approved.
   await api(`/editions/${editionId}/firm-reports/generate`, 'POST', maker, {
     scoringRunId: run.id,
   });
@@ -431,8 +433,13 @@ async function main(): Promise<void> {
     'GET',
     maker,
   );
-  for (const r of reports) await api(`/firm-reports/${r.id}/approve`, 'POST', maker);
-  log(`${reports.length} firm reports generated and approved.`);
+  for (const r of reports) await api(`/firm-reports/${r.id}/open`, 'POST', maker);
+  if (reports.length > 0) {
+    await api(`/editions/${editionId}/firm-reports/release/request`, 'POST', maker, {
+      reason: 'Demo: every firm report generated and read',
+    });
+  }
+  log(`${reports.length} firm reports generated, opened and their release requested.`);
 
   await handOverPasswords(pool, hash);
   await closePool();

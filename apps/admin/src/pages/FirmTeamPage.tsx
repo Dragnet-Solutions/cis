@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { AdminClient } from '../api/client';
-import { ApiError, type Coordinator, type FirmSummary } from '../api/types';
+import { ApiError, type Coordinator, type FirmImportResult, type FirmSummary } from '../api/types';
 
 type InvestorCategory = 'retail' | 'local_institutional' | 'foreign_institutional' | 'not_sure';
 
@@ -131,6 +131,166 @@ function FirmDigestCard({
   );
 }
 
+/** "1 firm", "3 firms". */
+function firmCount(n: number): string {
+  return `${n} ${n === 1 ? 'firm' : 'firms'}`;
+}
+
+/**
+ * Loading the firm directory before launch: upload a CSV (a header row with a
+ * `name` column, and optionally `slug`), preview exactly what would happen —
+ * nothing is written — then import. Firms already in the directory, or
+ * repeated in the file, are skipped, never added twice. A file with any line
+ * that cannot be read is not imported at all. Needs the "Change the setup"
+ * right; every firm added is recorded in the audit log.
+ */
+function FirmDirectoryImport({
+  client,
+  onImported,
+}: {
+  client: AdminClient;
+  onImported: () => Promise<void>;
+}): JSX.Element {
+  const [csv, setCsv] = useState<string | null>(null);
+  const [fileName, setFileName] = useState('');
+  const [preview, setPreview] = useState<FirmImportResult | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  async function choose(file: File | undefined): Promise<void> {
+    setPreview(null);
+    setDone(null);
+    setError(null);
+    if (!file) return;
+    setFileName(file.name);
+    const text = await file.text();
+    setCsv(text);
+    setBusy(true);
+    try {
+      setPreview(await client.importFirms(text, true));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not read that file');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function importNow(): Promise<void> {
+    if (!csv) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await client.importFirms(csv, false);
+      setDone(
+        `${firmCount(result.added)} added to the directory.${
+          result.duplicates.length ? ` ${result.duplicates.length} already listed, skipped.` : ''
+        }`,
+      );
+      setPreview(null);
+      setCsv(null);
+      await onImported();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'The import did not complete');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <fieldset className="contact-fields">
+      <legend>Import the firm directory</legend>
+      <p className="lede" style={{ fontSize: 13 }}>
+        Load the participating firms from a CSV file before launch. The first line is a header with
+        a <b>name</b> column, and optionally a <b>slug</b> column (a short permanent identifier,
+        made from the name if left out). You see what would be added before anything changes. Firms
+        already listed are skipped.
+      </p>
+      <div className="field">
+        <label htmlFor="ftp-import">CSV file</label>
+        <input
+          id="ftp-import"
+          type="file"
+          accept=".csv,text/csv"
+          disabled={busy}
+          onChange={(e) => void choose(e.target.files?.[0])}
+        />
+      </div>
+
+      {preview && (
+        <div className="note">
+          <p>
+            <b>{fileName}</b>: {preview.totalRows} {preview.totalRows === 1 ? 'line' : 'lines'}{' '}
+            read. {firmCount(preview.toAdd.length)} would be added
+            {preview.duplicates.length > 0 && `, ${preview.duplicates.length} already listed`}
+            {preview.errors.length > 0 &&
+              `, ${preview.errors.length} ${preview.errors.length === 1 ? 'line' : 'lines'} cannot be read`}
+            .
+          </p>
+          {preview.errors.length > 0 && (
+            <>
+              <p className="err">
+                Nothing can be imported until these lines are corrected in the file.
+              </p>
+              <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+                {preview.errors.map((e) => (
+                  <li key={`e${e.line}`}>
+                    Line {e.line}: {e.message}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          {preview.toAdd.length > 0 && (
+            <table className="ftbl" style={{ marginTop: 8 }}>
+              <thead>
+                <tr>
+                  <th scope="col">Line</th>
+                  <th scope="col">Firm to add</th>
+                  <th scope="col">Slug</th>
+                </tr>
+              </thead>
+              <tbody>
+                {preview.toAdd.map((r) => (
+                  <tr key={`a${r.line}`}>
+                    <td>{r.line}</td>
+                    <td>{r.name}</td>
+                    <td>{r.slug}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {preview.duplicates.length > 0 && (
+            <>
+              <p style={{ marginTop: 8 }}>Skipped:</p>
+              <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+                {preview.duplicates.map((d) => (
+                  <li key={`d${d.line}`}>
+                    Line {d.line}, {d.name}: {d.reason}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          <div className="actions">
+            <button
+              type="button"
+              className="btn"
+              disabled={busy || preview.errors.length > 0 || preview.toAdd.length === 0}
+              onClick={() => void importNow()}
+            >
+              Import {firmCount(preview.toAdd.length)}
+            </button>
+          </div>
+        </div>
+      )}
+      {done && <p className="qstate ok">{done}</p>}
+      {error && <div className="err">{error}</div>}
+    </fieldset>
+  );
+}
+
 /**
  * UX-FRM-007 firm coordinator team administration. Ordinary account admin — NOT
  * maker-checker. The rules the UI surfaces (all enforced server-side):
@@ -154,17 +314,19 @@ export function FirmTeamPage({
   const [notice, setNotice] = useState<string | null>(null);
   const [form, setForm] = useState({ name: '', email: '', role: '' });
 
-  useEffect(() => {
-    void (async () => {
-      try {
-        const fs = await client.listFirms();
-        setFirms(fs);
-        if (fs[0]) setOrgId(fs[0].id);
-      } catch (err) {
-        setError(err instanceof ApiError ? err.message : 'Could not load firms');
-      }
-    })();
+  const loadFirms = useCallback(async () => {
+    try {
+      const fs = await client.listFirms();
+      setFirms(fs);
+      setOrgId((current) => current ?? fs[0]?.id ?? null);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not load firms');
+    }
   }, [client]);
+
+  useEffect(() => {
+    void loadFirms();
+  }, [loadFirms]);
 
   const reload = useCallback(
     async (id: string) => {
@@ -360,6 +522,7 @@ export function FirmTeamPage({
       </fieldset>
 
       {orgId && <InvestorCategoriesCard client={client} orgId={orgId} />}
+      <FirmDirectoryImport client={client} onImported={loadFirms} />
       {orgId && editionId && <FirmDigestCard client={client} orgId={orgId} editionId={editionId} />}
     </main>
   );

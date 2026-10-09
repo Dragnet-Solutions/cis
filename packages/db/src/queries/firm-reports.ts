@@ -237,3 +237,48 @@ export async function hasReleasedFirmReport(
   );
   return res.rows[0]?.released ?? false;
 }
+
+// ─── openings (who has read a report before it is approved) ─────────────────────
+
+/** Record that an operator opened a report. The first opening is kept; a later
+ *  one changes nothing. */
+export async function recordFirmReportOpening(
+  pool: Pool,
+  firmReportId: string,
+  userId: string,
+): Promise<void> {
+  await query(
+    pool,
+    `INSERT INTO firm_report_openings (firm_report_id, user_id)
+     VALUES ($1, $2)
+     ON CONFLICT (firm_report_id, user_id) DO NOTHING`,
+    [firmReportId, userId],
+  );
+}
+
+export interface FirmReportOpening {
+  firmReportId: string;
+  userId: string;
+  firstOpenedAt: Date;
+}
+
+/** Every recorded opening of the given reports. */
+export async function listFirmReportOpenings(
+  pool: Pool,
+  firmReportIds: string[],
+): Promise<FirmReportOpening[]> {
+  if (firmReportIds.length === 0) return [];
+  const res = await query<{ firm_report_id: string; user_id: string; first_opened_at: Date }>(
+    pool,
+    `SELECT firm_report_id, user_id, first_opened_at
+       FROM firm_report_openings
+      WHERE firm_report_id = ANY($1::uuid[])
+      ORDER BY first_opened_at`,
+    [firmReportIds],
+  );
+  return res.rows.map((r) => ({
+    firmReportId: r.firm_report_id,
+    userId: r.user_id,
+    firstOpenedAt: r.first_opened_at,
+  }));
+}
