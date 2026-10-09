@@ -25,10 +25,6 @@ coverage/
 *.p12
 *.pfx
 
-# Claude Code: personal settings and session scratch (shared launch.json stays tracked)
-.claude/settings.local.json
-.claude/worktrees/
-.claude/scratchpad/
 
 # Test and browser-automation output, and generated report PDFs
 test-results/

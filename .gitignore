@@ -18,9 +18,8 @@ dist/
 .turbo/
 coverage/
 
-# Claude Code: personal settings and agent worktrees
-.claude/settings.local.json
-.claude/worktrees/
+# Local tool settings
+.claude/
 
 # OS and editors
 .DS_Store
