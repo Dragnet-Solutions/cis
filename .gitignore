@@ -1,48 +1,30 @@
-# Dependencies
-node_modules/
-.pnpm-store/
+# Repository root. The application's own ignores are in app/.gitignore; these
+# keep secrets and local state out of git wherever they sit in the repo.
 
-# Build output and caches
-dist/
-build/
-coverage/
-.turbo/
-.vite/
-.cache/
-*.tsbuildinfo
-
-# Environment and secrets — every .env variant at any depth, including the
-# .env.example template: none of them is tracked.
+# Environment and secrets — every .env variant at any depth
 .env
 .env.*
 **/.env
 **/.env.*
-# Archives or backups of env files, and key material
 *env*.zip
-*.env.bak
 *.pem
 *.key
 *.p12
 *.pfx
 
-# Claude Code: personal settings and session scratch (shared launch.json stays tracked)
+# Dependencies and build output
+node_modules/
+dist/
+.turbo/
+coverage/
+
+# Claude Code: personal settings and agent worktrees
 .claude/settings.local.json
 .claude/worktrees/
-.claude/scratchpad/
 
-# Test and browser-automation output, and generated report PDFs
-test-results/
-playwright-report/
-*.pdf
-
-# Logs
-*.log
-logs/
-
-# Editors and OS
-.vscode/*
-!.vscode/extensions.json
-.idea/
-*.swp
+# OS and editors
 .DS_Store
 Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json

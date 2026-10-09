@@ -1,0 +1,8 @@
+# Application source
+/app/ @abokidev
+
+# Infrastructure
+/IaC/ @malik-dragnet
+
+# Kubernetes manifests
+/k8s-manifests/ @malik-dragnet

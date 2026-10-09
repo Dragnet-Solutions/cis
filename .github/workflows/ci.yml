@@ -10,6 +10,10 @@ jobs:
   ci:
     name: Lint · Typecheck · Test · Audit
     runs-on: ubuntu-24.04
+    # The pnpm workspace lives in app/.
+    defaults:
+      run:
+        working-directory: app
 
     services:
       postgres:
@@ -56,6 +60,7 @@ jobs:
         with:
           node-version: '22'
           cache: 'pnpm'
+          cache-dependency-path: app/pnpm-lock.yaml
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

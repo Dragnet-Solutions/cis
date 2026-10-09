@@ -16,7 +16,7 @@
     "format:check": "prettier --check .",
     "typecheck": "turbo run typecheck",
     "audit:deps": "pnpm audit --audit-level=high",
-    "prepare": "husky"
+    "prepare": "cd .. && husky"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.71.1",

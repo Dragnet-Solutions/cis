@@ -4,13 +4,13 @@
     {
       "name": "cis-api",
       "runtimeExecutable": "bash",
-      "runtimeArgs": ["-c", "set -a && source .env && set +a && pnpm --filter @cis/api dev"],
+      "runtimeArgs": ["-c", "cd app && set -a && source .env && set +a && pnpm --filter @cis/api dev"],
       "port": 3000
     },
     {
       "name": "cis-admin",
-      "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--filter", "@cis/admin", "exec", "vite", "--port", "5174", "--strictPort"],
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd app && pnpm --filter @cis/admin exec vite --port 5174 --strictPort"],
       "port": 5174
     },
     {
@@ -18,7 +18,7 @@
       "runtimeExecutable": "bash",
       "runtimeArgs": [
         "-c",
-        "set -a && source .env && set +a && DATABASE_URL=postgres://cis:cis_test_password@localhost:5433/cis_demo PORT=3200 REPORT_RENDER_URL=http://localhost:5176 pnpm --filter @cis/api dev"
+        "cd app && set -a && source .env && set +a && DATABASE_URL=postgres://cis:cis_test_password@localhost:5433/cis_demo PORT=3200 REPORT_RENDER_URL=http://localhost:5176 pnpm --filter @cis/api dev"
       ],
       "port": 3200
     },
@@ -27,7 +27,7 @@
       "runtimeExecutable": "bash",
       "runtimeArgs": [
         "-c",
-        "VITE_API_TARGET=http://localhost:3200 pnpm --filter @cis/admin exec vite --port 5176 --strictPort"
+        "cd app && VITE_API_TARGET=http://localhost:3200 pnpm --filter @cis/admin exec vite --port 5176 --strictPort"
       ],
       "port": 5176
     }

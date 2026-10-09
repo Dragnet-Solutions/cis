@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output and caches
+dist/
+build/
+coverage/
+.turbo/
+.vite/
+.cache/
+*.tsbuildinfo
+
+# Environment and secrets — every .env variant at any depth, including the
+# .env.example template: none of them is tracked.
+.env
+.env.*
+**/.env
+**/.env.*
+# Archives or backups of env files, and key material
+*env*.zip
+*.env.bak
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Claude Code: personal settings and session scratch (shared launch.json stays tracked)
+.claude/settings.local.json
+.claude/worktrees/
+.claude/scratchpad/
+
+# Test and browser-automation output, and generated report PDFs
+test-results/
+playwright-report/
+*.pdf
+
+# Logs
+*.log
+logs/
+
+# Editors and OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
