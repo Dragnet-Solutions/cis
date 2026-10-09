@@ -40,8 +40,13 @@ export {
   createReferral,
   createColleagueInvite,
   ReviewGapError,
+  CollectionClosedError,
+  RegulatorLinkRequiredError,
+  acceptsResponses,
+  assertCollectionOpen,
+  getPublicConsentContent,
 } from './journey-service';
-export type { ContactInput, ResumeState } from './journey-service';
+export type { ContactInput, ResumeState, PublicConsentContent } from './journey-service';
 
 export {
   createLeadCoordinator,
@@ -379,7 +384,11 @@ export {
 } from './regulator-engagement-service';
 
 // ── Phase 19: Institutional instrument families ──────────────────────────────
-export { FAMILY_META, instrumentCodeForFamily } from './institution-family-service';
+export {
+  FAMILY_META,
+  instrumentCodeForFamily,
+  isRegulatorInstrument,
+} from './institution-family-service';
 export type { FamilyMeta } from './institution-family-service';
 
 // ── Phase 16: Dragnet Internal Analysis (UX-ADM-007) ─────────────────────────

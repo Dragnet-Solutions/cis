@@ -15,10 +15,9 @@ type Loaded = {
 /**
  * The real entry point for an assigned S1/S2/S3 firm survey seat (UX-FRM-007
  * / Task D, Part 6). A firm seat is not a special case at the journey layer
- * — the same `startJourney` every other entry point uses — so this mirrors
- * InstitutionalEntry.tsx's shape (a single named context, no consent gate:
- * `requiresConsent` covers only S5a/S5b, not S1/S2/S3) rather than
- * RetailEntry's. Unlike an institutional entry, the seat link itself is a
+ * — the same `startJourney` every other entry point uses — so it is a single
+ * named context with no consent gate (`requiresConsent` covers only S5a/S5b,
+ * not S1/S2/S3) rather than RetailEntry's shape. The seat link itself is a
  * credential for exactly one seat, so a seat holder who closed the browser
  * mid-survey picks up where they stopped from this same link.
  *
