@@ -256,4 +256,38 @@ describe('Unreachable cohort and drop-off histogram', () => {
     expect(peak.count).toBe(4);
     expect(hist.find((b) => b.questionId === 'S4-Q1')!.count).toBe(1);
   });
+
+  // Regression (E2E 2026-10-09, D9): the drop-off list showed the raw code
+  // "S4-A1" (a Dragnet operational question) instead of anything readable.
+  it('labels each drop-off point in words, never by its code', async () => {
+    await investor('i@x.example', 'S4-Q1');
+    await investor('j@x.example', 'S4-A1');
+
+    const hist = await getDropoffHistogram(pool, editionId);
+    for (const b of hist) expect(b.label).not.toContain(b.questionId);
+
+    const q1 = hist.find((b) => b.questionId === 'S4-Q1')!;
+    expect(q1.label.length).toBeGreaterThan(20); // the question's own wording
+    const ops = hist.find((b) => b.questionId === 'S4-A1')!;
+    expect(ops.label).toMatch(/Dragnet operational question/);
+    expect(ops.surveyName).toBe('Retail investor survey');
+  });
+
+  // Regression (E2E 2026-10-09, D2): a regulator who opened its link and
+  // stopped is followed up on the Regulators screen, not counted or reminded
+  // as an unfinished investor.
+  it('leaves regulators out of the unfinished counts', async () => {
+    const r = await createRespondent(pool, { editionId, instrumentCode: 'I-SEC' });
+    await setRespondentContact(pool, r.id, { channel: 'email', email: 'sec@x.example' });
+    await upsertDraft(pool, {
+      respondentId: r.id,
+      questionId: 'I-SEC-Q1',
+      scope: 'shared',
+      ratedFirmId: null,
+      answer: { a: '5' },
+    });
+    const stats = await getUnfinishedStats(pool, editionId);
+    expect(stats.unfinished).toBe(0);
+    expect(await getDropoffHistogram(pool, editionId)).toHaveLength(0);
+  });
 });

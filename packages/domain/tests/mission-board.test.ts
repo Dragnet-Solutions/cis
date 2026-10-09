@@ -179,6 +179,8 @@ describe('No brief-derived illustration or system-mechanism leakage in card/acti
       'no_link_activity',
       'institutional_all_firms',
       'bounced',
+      'regulator_follow_up',
+      'before_launch',
     ];
     for (const cohort of cohorts) {
       assertClean(`remediationForCohort('${cohort}')`, remediationForCohort(cohort).label);

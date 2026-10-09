@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AdminClient } from '../api/client';
 import { ApiError, type ReminderStepConfig, type UnfinishedResponse } from '../api/types';
+import { plural } from '../shared/plural';
 
 /**
  * UX-OPS-004 — Unfinished (reminder timing & frequency), live-wired to the
@@ -120,8 +121,10 @@ export function UnfinishedPage({
     <main>
       <h1 tabIndex={-1}>Unfinished</h1>
       <p className="lede">
-        {data.stats.unfinished} people started and did not submit. {data.stats.reachable} of them
-        gave a contact detail and can be reminded.
+        {plural(data.stats.unfinished, 'person', 'people')} started and did not submit.{' '}
+        {data.stats.unfinished === 0
+          ? 'Nobody needs reminding.'
+          : `${data.stats.reachable.toLocaleString()} of them gave a contact detail and can be reminded.`}
       </p>
 
       {error && <div className="err">{error}</div>}
@@ -172,13 +175,40 @@ export function UnfinishedPage({
           <div className="drop">
             {data.dropoff.length === 0 && <p className="muted">No drop-off data recorded yet.</p>}
             {data.dropoff.map((s) => (
-              <div className={`drow${s.peak ? ' peak' : ''}`} key={s.questionId}>
+              <div
+                className={`drow${s.peak ? ' peak' : ''}`}
+                key={s.questionId}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'minmax(0, 1fr) auto minmax(80px, 30%)',
+                  gap: 12,
+                  alignItems: 'center',
+                  padding: '8px 0',
+                  borderBottom: '1px solid var(--line, #d9d9d9)',
+                }}
+              >
                 <div>
-                  <b>{s.questionId}</b>
+                  <b>{s.label}</b>
+                  {s.surveyName && (
+                    <span style={{ display: 'block', color: 'var(--fg-3, #6a6a6a)', fontSize: 13 }}>
+                      {s.surveyName}
+                    </span>
+                  )}
                 </div>
-                <div className="n">{s.count}</div>
-                <div className="bar">
-                  <span style={{ width: `${peakN > 0 ? (s.count / peakN) * 100 : 0}%` }} />
+                <div className="n">{plural(s.count, 'person', 'people')}</div>
+                <div
+                  className="bar"
+                  style={{ height: 8, background: 'var(--bg-2, #f4f4f4)', borderRadius: 999 }}
+                >
+                  <span
+                    style={{
+                      display: 'block',
+                      height: '100%',
+                      borderRadius: 999,
+                      background: s.peak ? 'var(--brand-red, #CC0000)' : 'var(--fg-2, #3d3d3d)',
+                      width: `${peakN > 0 ? (s.count / peakN) * 100 : 0}%`,
+                    }}
+                  />
                 </div>
               </div>
             ))}
@@ -252,7 +282,7 @@ export function UnfinishedPage({
             <b>reminders to any one person.</b>{' '}
             {onCount === 0
               ? 'Every reminder is currently off. Nobody will be reminded.'
-              : `${onCount} ${onCount === 1 ? 'is' : 'are'} currently on.`}
+              : `${plural(onCount, 'reminder')} ${onCount === 1 ? 'is' : 'are'} currently on.`}
           </p>
 
           <div className="actions">

@@ -297,17 +297,56 @@ interface PopulationPredicate {
   note?: string;
 }
 
+type SeatMatrix = Array<{ organizationId: string; completeSeats: string[] }>;
+
+/** The firms in a firm-side population: those whose named seats are ALL complete. */
+function firmsWithSeatsComplete(seats: string[], matrix: SeatMatrix): string[] {
+  return matrix
+    .filter((f) => seats.every((s) => f.completeSeats.includes(s)))
+    .map((f) => f.organizationId);
+}
+
+/** Seats each firm-side index needs when its metric definition names none. */
+const DEFAULT_INDEX_SEATS: Record<'OMI' | 'DMI', string[]> = {
+  OMI: ['S1', 'S2', 'S3'],
+  DMI: ['S1', 'S3'],
+};
+
+/**
+ * The OMI-complete / DMI-complete firms — the ONE definition the Scoring page's
+ * effective population, the mission board (conditions 7/8) and the Responses
+ * complete-firm lines all read, so they cannot disagree. It is the index's own
+ * configured population predicate (OMI: S1, S2 and S3 complete; DMI: S1 and S3
+ * complete). `asOf` reads it at an earlier instant (the board's pace window).
+ */
+export async function completeFirmsForIndex(
+  pool: Pool,
+  editionId: string,
+  metricCode: 'OMI' | 'DMI',
+  asOf?: Date,
+): Promise<{ seats: string[]; firmIds: string[] }> {
+  const metric = (await getActiveMetricDefinitions(pool)).find((m) => m.metricCode === metricCode);
+  const predicate = (metric?.config as { population?: PopulationPredicate } | undefined)
+    ?.population;
+  const seats =
+    predicate?.kind === 'firm_seats_complete' && Array.isArray(predicate.seats)
+      ? predicate.seats
+      : DEFAULT_INDEX_SEATS[metricCode];
+  const matrix = await getFirmSeatCompletionMatrix(pool, editionId, asOf);
+  return { seats, firmIds: firmsWithSeatsComplete(seats, matrix) };
+}
+
 /** Describe (and where possible count) an index's population from its config. */
 function describePopulation(
   predicate: PopulationPredicate | undefined,
-  matrix: Array<{ organizationId: string; completeSeats: string[] }>,
+  matrix: SeatMatrix,
 ): { label: string; count: number | null; gap: boolean } {
   if (!predicate) {
     return { label: 'Population not configured', count: null, gap: true };
   }
   if (predicate.kind === 'firm_seats_complete' && Array.isArray(predicate.seats)) {
     const seats = predicate.seats;
-    const count = matrix.filter((f) => seats.every((s) => f.completeSeats.includes(s))).length;
+    const count = firmsWithSeatsComplete(seats, matrix).length;
     const label =
       seats.length === 3
         ? 'Complete firms — all three seats (S1, S2, S3)'

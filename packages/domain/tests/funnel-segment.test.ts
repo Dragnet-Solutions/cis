@@ -7,8 +7,25 @@
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { Pool } from 'pg';
-import { createRespondent, listFunnelEvents } from '@cis/db';
-import { seedReferenceData, submitResponses, segmentForInstrument } from '../src';
+import {
+  createRespondent,
+  listFunnelEvents,
+  emitFunnelEvent,
+  countDistinctInstitutions,
+  countDistinctInstitutionsSince,
+  countCompletedBySegment,
+  countCompletedBySegmentSince,
+} from '@cis/db';
+import {
+  seedReferenceData,
+  submitResponses,
+  segmentForInstrument,
+  isRegulatorInstrument,
+  isInvestorInstrument,
+  institutionRefFor,
+  currentSegmentSufficiency,
+  getResponsesMonitor,
+} from '../src';
 import { getTestPool, runMigrations, truncateAllTables, closeTestPool } from '../../db/tests/setup';
 
 let pool: Pool;
@@ -75,5 +92,90 @@ describe('institutional completions derive the correct funnel segment', () => {
     expect(local?.institutionRef).toBeTruthy();
     expect(foreign?.institutionRef).toBeTruthy();
     expect(local?.institutionRef).not.toBe(foreign?.institutionRef);
+  });
+});
+
+/**
+ * Regulator submissions (I-SEC / I-NGX / I-CSCS / I-DEP) are Institutional
+ * Perspectives context, never institutional-investor participation. They used
+ * to be written as `local_institution`, so the SEC and NGX answering showed
+ * "Local institutions 2 of 1" with no S5a response at all.
+ */
+describe('regulator submissions never count toward an investor segment', () => {
+  it('maps no regulator instrument to a segment', () => {
+    for (const code of ['I-SEC', 'I-NGX', 'I-CSCS', 'I-DEP']) {
+      expect(segmentForInstrument(code)).toBeNull();
+      expect(isRegulatorInstrument(code)).toBe(true);
+      expect(isInvestorInstrument(code)).toBe(false);
+    }
+    expect(isInvestorInstrument('S5a')).toBe(true);
+    expect(isInvestorInstrument('S1')).toBe(false);
+    expect(isRegulatorInstrument('S5a')).toBe(false);
+  });
+
+  async function submit(instrumentCode: string, institutionName: string): Promise<string> {
+    const r = await createRespondent(pool, {
+      editionId,
+      instrumentCode,
+      consentAccepted: true,
+      institutionName,
+    });
+    await submitResponses(pool, {
+      editionId,
+      respondentId: r.id,
+      sharedAnswers: {},
+      firmAnswers: {},
+    });
+    return r.id;
+  }
+
+  it('writes no funnel event and leaves every institution count at the S5a total', async () => {
+    const sec = await submit('I-SEC', 'Securities and Exchange Commission');
+    const ngx = await submit('I-NGX', 'Nigerian Exchange Limited');
+    await submit('S5a', 'A Local Pension Fund');
+
+    const events = await listFunnelEvents(pool, editionId);
+    expect(events.find((e) => e.responseId === sec)).toBeUndefined();
+    expect(events.find((e) => e.responseId === ngx)).toBeUndefined();
+
+    expect(await countDistinctInstitutions(pool, editionId, 'local_institution')).toBe(1);
+    expect((await countCompletedBySegment(pool, editionId))['local_institution']).toBe(1);
+
+    // Sufficiency (national report, report dependencies) and monitoring read the same.
+    const sufficiency = await currentSegmentSufficiency(pool, editionId);
+    expect(sufficiency['local_institution']!.counted).toBe(1);
+    const monitor = await getResponsesMonitor(pool, editionId, new Date());
+    expect(monitor.cards.find((c) => c.segment === 'local_institution')!.current).toBe(1);
+  });
+
+  it('excludes a regulator event written by an earlier build as local_institution', async () => {
+    const sec = await createRespondent(pool, {
+      editionId,
+      instrumentCode: 'I-SEC',
+      consentAccepted: true,
+      institutionName: 'Securities and Exchange Commission',
+    });
+    await emitFunnelEvent(pool, {
+      eventType: 'completed',
+      editionId,
+      segment: 'local_institution',
+      institutionRef: institutionRefFor('Securities and Exchange Commission'),
+      channel: 'portal',
+      source: 'direct',
+      responseId: sec.id,
+    });
+    const since = new Date(Date.now() - 86_400_000);
+
+    expect(await countDistinctInstitutions(pool, editionId, 'local_institution')).toBe(0);
+    expect(await countDistinctInstitutionsSince(pool, editionId, 'local_institution', since)).toBe(
+      0,
+    );
+    expect((await countCompletedBySegment(pool, editionId))['local_institution']).toBeUndefined();
+    expect(
+      (await countCompletedBySegmentSince(pool, editionId, since))['local_institution'],
+    ).toBeUndefined();
+    expect((await currentSegmentSufficiency(pool, editionId))['local_institution']!.counted).toBe(
+      0,
+    );
   });
 });

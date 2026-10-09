@@ -40,6 +40,48 @@ function formatDate(iso: string | null): string {
   });
 }
 
+/** A calendar day as YYYY-MM-DD in the viewer's own timezone. */
+function localDayKey(d: Date): string {
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${month}-${day}`;
+}
+
+/** The calendar day an edition date was set for (the date the operator picked). */
+function setDayKey(iso: string): string {
+  return iso.slice(0, 10);
+}
+
+/** Whether a set date is today or already behind us. */
+export function dateStanding(iso: string, today: Date = new Date()): 'past' | 'today' | 'future' {
+  const set = setDayKey(iso);
+  const now = localDayKey(today);
+  return set < now ? 'past' : set === now ? 'today' : 'future';
+}
+
+/** The banner shown when the launch date is reached but the instruments are not frozen. */
+export function launchDateBanner(plannedOpenAt: string | null, today: Date = new Date()): string {
+  const arrived = plannedOpenAt !== null && dateStanding(plannedOpenAt, today) === 'today';
+  return `The planned launch date has ${arrived ? 'arrived' : 'passed'}, but the survey instruments are not frozen.`;
+}
+
+/** How the last day for returns reads once the results are locked: "Passed" only
+ *  when that day is actually behind us. */
+export function lockedClosingLabel(
+  surveyCloseAt: string | null,
+  today: Date = new Date(),
+): { pill: string; dateLabel: string } {
+  if (!surveyCloseAt) return { pill: 'Closed (results locked)', dateLabel: 'Closed' };
+  switch (dateStanding(surveyCloseAt, today)) {
+    case 'past':
+      return { pill: 'Passed', dateLabel: 'Closed' };
+    case 'today':
+      return { pill: 'Closed (results locked)', dateLabel: 'Last day for returns' };
+    case 'future':
+      return { pill: 'Closed early (results locked)', dateLabel: 'Had been set for' };
+  }
+}
+
 export function EditionPage({
   client,
   editionId,
@@ -143,8 +185,9 @@ export function EditionPage({
     );
   }
 
+  const lockedClosing = lockedClosingLabel(edition.surveyCloseAt);
   const closingPill: [PillKind, string] = isLocked
-    ? ['muted', 'Passed']
+    ? ['muted', lockedClosing.pill]
     : ['neutral', 'Can be changed'];
   const floorsPill: [PillKind, string] = isDraft ? ['neutral', 'Can be changed'] : ['ok', 'Fixed'];
 
@@ -171,7 +214,7 @@ export function EditionPage({
 
       {edition.openingProblem === 'launch_date_passed_not_frozen' && (
         <div className="warnbox">
-          <b>The planned launch date has passed, but the survey instruments are not frozen.</b>
+          <b>{launchDateBanner(edition.plannedOpenAt)}</b>
           <p style={{ margin: '6px 0 0' }}>
             The edition cannot open until the instrument set is frozen, on Surveys under Setup.
           </p>
@@ -221,12 +264,13 @@ export function EditionPage({
         </div>
         <div className="stagebody">
           <p>
-            Anything not returned by this date is not in the {edition.label} edition. It can be
-            moved while collection is running.
+            {isLocked
+              ? `Collection ended when the results were locked. Nothing returned after that is in the ${edition.label} edition.`
+              : `Anything not returned by this date is not in the ${edition.label} edition. It can be moved while collection is running.`}
           </p>
           {isLocked ? (
             <dl className="kv">
-              <dt>Closed</dt>
+              <dt>{lockedClosing.dateLabel}</dt>
               <dd>{formatDate(edition.surveyCloseAt)}</dd>
             </dl>
           ) : (

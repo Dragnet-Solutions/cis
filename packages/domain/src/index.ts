@@ -102,6 +102,8 @@ export {
 // ── Phase 5: scoring, sufficiency, analytics & evidence ──────────────────────
 export {
   segmentForInstrument,
+  isRegulatorInstrument,
+  isInvestorInstrument,
   institutionRefFor,
   emitCompletedForRespondent,
 } from './funnel-service';
@@ -179,6 +181,7 @@ export {
   approveSignoff,
   rejectSignoff,
   getScoreView,
+  completeFirmsForIndex,
   hasSignedOffRun,
   getAuthoritativeSignoff,
   listSignoffs,

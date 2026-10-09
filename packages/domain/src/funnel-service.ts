@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Pool } from 'pg';
 import { emitFunnelEvent } from '@cis/db';
+import { FAMILY_META } from './institution-family-service';
 import type {
   FunnelEvent,
   FunnelSegment,
@@ -26,24 +27,46 @@ import type {
  * written:
  *   S1/S2/S3 → firm            S4 → retail
  *   S5a      → local_institution   S5b → foreign_institution
- * The three regulator instruments (I-SEC/I-NGX/I-CSCS) are contextual
- * "Institutional Perspectives" (PUB_10), not institutional-investor responses;
- * their sufficiency is the separate all-three-regulators check, not the
- * local/foreign investor floors. They are Nigerian bodies, so they map to
- * `local_institution` for the funnel's fixed four-value segment, and are
- * excluded from the investor-institution floor counts by instrument code.
+ * The regulator / market-infrastructure instruments (I-SEC, I-NGX, I-CSCS,
+ * I-DEP — the institutional families in institution-family-service) are
+ * contextual "Institutional Perspectives" (PUB_10), not institutional-investor
+ * responses. Their sufficiency is the separate all-regulators check over
+ * `institution_engagement`, never the local/foreign investor floors, so they
+ * have NO funnel segment: `segmentForInstrument` returns null and no
+ * `completed` funnel event is written for them. (They used to be mapped to
+ * `local_institution`, so a regulator's answer counted as a local
+ * institutional investor; the @cis/db count queries also exclude any such
+ * historic rows by instrument type.)
  */
 
 const FIRM_INSTRUMENTS = new Set(['S1', 'S2', 'S3']);
 const RETAIL_INSTRUMENTS = new Set(['S4']);
+const REGULATOR_INSTRUMENTS = new Set(Object.values(FAMILY_META).map((f) => f.instrumentCode));
 
-export function segmentForInstrument(instrumentCode: string): FunnelSegment {
+/** Whether an instrument is a regulator / market-infrastructure instrument. */
+export function isRegulatorInstrument(instrumentCode: string): boolean {
+  return REGULATOR_INSTRUMENTS.has(instrumentCode);
+}
+
+/**
+ * The funnel segment a completed instrument belongs to, or null for an
+ * instrument that belongs to no participation segment — the regulator
+ * instruments, and any code this mapping does not know (never a default).
+ */
+export function segmentForInstrument(instrumentCode: string): FunnelSegment | null {
   if (FIRM_INSTRUMENTS.has(instrumentCode)) return 'firm';
   if (RETAIL_INSTRUMENTS.has(instrumentCode)) return 'retail';
   if (instrumentCode === 'S5a') return 'local_institution';
   if (instrumentCode === 'S5b') return 'foreign_institution';
-  // Regulator/contextual instruments (Institutional Perspectives) — see above.
-  return 'local_institution';
+  return null;
+}
+
+/** Investor-side instruments (retail, local or foreign institutional) — the
+ *  respondents reminders and the Unfinished view are about. Firm seats and
+ *  regulators are neither. */
+export function isInvestorInstrument(instrumentCode: string): boolean {
+  const segment = segmentForInstrument(instrumentCode);
+  return segment !== null && segment !== 'firm';
 }
 
 /** An opaque, stable token for an institution name — no name is ever stored on
@@ -60,14 +83,16 @@ export function institutionRefFor(institutionName: string | null): string | null
  * Emit the single `completed` funnel event for a respondent submission. Called
  * inside the response-finalizing transaction. `firmId` stays null for retail/
  * institutional completions (one response, however many firms rated); a firm-
- * survey completion carries the firm id.
+ * survey completion carries the firm id. A regulator submission belongs to no
+ * participation segment, so nothing is emitted for it (returns null).
  */
 export async function emitCompletedForRespondent(
   client: Pool,
   respondent: Respondent,
   opts: { channel?: FunnelChannel; source?: FunnelSource } = {},
-): Promise<FunnelEvent> {
+): Promise<FunnelEvent | null> {
   const segment = segmentForInstrument(respondent.instrumentCode);
+  if (segment === null) return null;
   return emitFunnelEvent(client, {
     eventType: 'completed',
     editionId: respondent.editionId,

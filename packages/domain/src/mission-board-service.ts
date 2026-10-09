@@ -23,12 +23,11 @@ import {
   type FirmFunnelInput,
 } from './mission-forecast';
 import {
-  omiCompleteFirmIds,
-  dmiCompleteFirmIds,
   missingOmiRoleCounts,
   industrySeiState,
   type IndustrySeiState,
 } from './candidate-scoring-service';
+import { completeFirmsForIndex } from './scoring-signoff-service';
 
 /**
  * Format a value read from `institution_engagement.target_by` (a DATE
@@ -91,7 +90,9 @@ export type RemediationCohort =
   | 'no_outreach'
   | 'no_link_activity'
   | 'institutional_all_firms'
-  | 'bounced';
+  | 'bounced'
+  | 'regulator_follow_up'
+  | 'before_launch';
 
 export function remediationForCohort(cohort: RemediationCohort): {
   label: string;
@@ -139,6 +140,23 @@ export function remediationForCohort(cohort: RemediationCohort): {
       return {
         label: 'Export the bounced addresses for CIS',
         audienceId: null,
+        generated: false,
+      };
+    // A regulator is reached through its named contact on the Regulators
+    // screen, never through a firm mailing.
+    case 'regulator_follow_up':
+      return {
+        label: 'Follow up with the named contact on the Regulators screen',
+        audienceId: null,
+        generated: false,
+      };
+    // Before launch nobody has been invited, assigned or started, so no chase
+    // exists yet. What can move every firm-side forecast is getting the
+    // invitations out and each firm's coordinator onboard.
+    case 'before_launch':
+      return {
+        label: 'Send the firm invitations so each coordinator can claim their firm',
+        audienceId: 'all',
         generated: false,
       };
   }
@@ -324,7 +342,7 @@ export const CONDITIONS: readonly ConditionMeta[] = [
     output: 'INSTITUTIONAL_PERSPECTIVES',
     severity: 3,
     enabled: true,
-    cohort: 'institutional_all_firms',
+    cohort: 'regulator_follow_up',
     what: 'Institutional Perspectives at risk',
     inputs: 'institution late against target_by, or declined',
   },
@@ -401,10 +419,11 @@ export interface BoardContext {
   forecasts: Record<MissionSegment, SegmentForecast>;
   /**
    * Phase 11 correction: OMI/DMI at-risk (conditions 7/8) are evaluated against
-   * ITEM-LEVEL complete-firm forecasts — how many firms will be OMI-complete /
-   * DMI-complete by close — NOT raw firm participation. A firm can participate
-   * yet be neither OMI- nor DMI-complete, so these forecasts can be at risk while
-   * the firm participation forecast is on track.
+   * complete-firm forecasts — how many firms will be OMI-complete / DMI-complete
+   * by close — NOT raw firm participation. A firm can participate yet be neither
+   * OMI- nor DMI-complete, so these forecasts can be at risk while the firm
+   * participation forecast is on track. "Complete" is the Scoring page's own
+   * definition (`completeFirmsForIndex`), never a second one.
    */
   omiCompleteForecast: SegmentForecast;
   dmiCompleteForecast: SegmentForecast;
@@ -418,6 +437,9 @@ export interface BoardContext {
   institutions: InstitutionEngagement[];
   today: Date;
   daysRemaining: number;
+  /** The edition has not launched yet (draft): nobody can be chased, so a
+   *  card's action is the pre-launch one that is actually available. */
+  beforeLaunch?: boolean;
   firmFunnel: FirmFunnelInput[];
   /** Per-firm invited/last-activity timestamps for condition 23 (kept beside the
    *  funnel inputs so evaluateBoard stays pure over its context). */
@@ -428,14 +450,21 @@ export interface BoardContext {
   medianFirmConversion: number | null;
 }
 
+/** "1 firm", "2 firms" — a count with its noun in the right number. */
+function countOf(n: number, noun: string): string {
+  return `${n} ${n === 1 ? noun : `${noun}s`}`;
+}
+
 function segForecastEvidence(f: SegmentForecast): string[] {
   return [
     `Current ${f.current} of ${f.target}`,
-    `${f.daysRemaining} days left`,
-    f.velocity === null ? 'Pace: n/a (day 0)' : `Pace ${f.velocity.toFixed(1)}/day`,
-    f.requiredVelocity === null ? 'Required: n/a' : `Required ${f.requiredVelocity.toFixed(1)}/day`,
+    `${countOf(f.daysRemaining, 'day')} left`,
+    f.velocity === null ? 'No pace yet' : `Pace ${f.velocity.toFixed(1)} a day`,
+    f.requiredVelocity === null
+      ? 'Pace needed: not yet known'
+      : `Needed ${f.requiredVelocity.toFixed(1)} a day`,
     f.forecastAtClose === null
-      ? 'Forecast: n/a'
+      ? 'No forecast yet'
       : `Forecast at close ${Math.round(f.forecastAtClose)}`,
   ];
 }
@@ -515,7 +544,7 @@ export function evaluateBoard(ctx: BoardContext): MissionCard[] {
       if (enabled(5) && f.atRisk && responses >= f.target && !engine1LiveSegments.has(seg)) {
         cards.push(
           makeSimpleCard(5, f.projectedShortfall, segForecastEvidence(f), [
-            `${labelSegment(seg)} distinct count short though ${responses} responses received`,
+            `Too few different ${labelSegment(seg).toLowerCase()}s, though ${countOf(responses, 'response')} came in`,
           ]),
         );
       }
@@ -576,13 +605,15 @@ export function evaluateBoard(ctx: BoardContext): MissionCard[] {
     cards.push({
       conditionId: -1,
       severity: 3,
-      whatIsAtRisk: 'Industry SEI is not calculable',
+      whatIsAtRisk: 'The industry service excellence gap cannot be calculated yet',
       evidence: [
-        `${ctx.industrySei.contributingFirms} firm(s) currently have reportable Firm_SEI`,
-        `Reason: ${ctx.industrySei.reason ?? 'not enough data yet'}`,
+        `${countOf(ctx.industrySei.contributingFirms, 'firm')} ${ctx.industrySei.contributingFirms === 1 ? 'has' : 'have'} a service excellence gap score that can be reported`,
+        ctx.industrySei.contributingFirms === 0 && /signed-off/i.test(ctx.industrySei.reason ?? '')
+          ? 'No scoring run has been signed off yet'
+          : 'Too few firms to combine into an industry figure safely',
       ],
       consequence: [
-        'Industry SEI cannot be produced yet. More firms clearing their own Firm_SEI sufficiency floor, or scoring being signed off, resolves this.',
+        'The industry figure cannot be produced yet. It can be once scoring is signed off and enough firms have a reportable score of their own.',
       ],
       why: null,
       recommendedAction: null,
@@ -616,9 +647,11 @@ export function evaluateBoard(ctx: BoardContext): MissionCard[] {
           14,
           ctx.attributable.required - value,
           [
-            `${closed ? 'Actual' : 'Forecast'} firm-attributable ${Math.round(value)} of ${ctx.attributable.required} required`,
+            `${closed ? 'Actual' : 'Forecast'} responses through firms' own links: ${Math.round(value)} of ${ctx.attributable.required} needed`,
           ],
-          ['Participating-firm report at risk'],
+          [
+            'Every participating firm still receives its combined report, but with few responses through its own links that report will be thin and its client breakdowns may be withheld',
+          ],
         ),
       );
     }
@@ -695,7 +728,7 @@ export function evaluateBoard(ctx: BoardContext): MissionCard[] {
         severity: 6,
         whatIsAtRisk: 'Firms invited five days ago with no activity of any kind',
         evidence: [
-          `${stale.length} firm${stale.length > 1 ? 's' : ''} invited ≥5 days ago, no funnel activity`,
+          `${countOf(stale.length, 'firm')} invited five or more days ago, with no activity since`,
         ],
         consequence: ['These firms have demonstrably not acted'],
         why: null,
@@ -707,6 +740,24 @@ export function evaluateBoard(ctx: BoardContext): MissionCard[] {
         ...(impact !== undefined ? { expectedImpact: impact } : {}),
         projectedShortfall: 0,
       });
+    }
+  }
+
+  // Before launch no one has been invited, so no chase or reminder exists yet:
+  // every firm- or investor-side card points at the action that IS available —
+  // getting the invitations out. Regulator cards keep their own follow-up.
+  if (ctx.beforeLaunch) {
+    const preLaunch = remediationForCohort('before_launch');
+    for (const card of cards) {
+      if (!card.recommendedAction || card.recommendedAction.cohort === 'regulator_follow_up') {
+        continue;
+      }
+      card.recommendedAction = {
+        label: preLaunch.label,
+        cohort: 'before_launch',
+        audienceId: preLaunch.audienceId,
+      };
+      delete card.expectedImpact;
     }
   }
 
@@ -892,11 +943,16 @@ export async function buildBoardContext(
   // Item-level OMI/DMI complete forecasts (Phase 11): current vs as-of the window
   // start, so the pace of firms BECOMING complete drives the forecast — not raw
   // participation. Target is the firm floor (a complete-firm count is required).
+  // OMI-/DMI-complete is the SAME function the Scoring page counts its effective
+  // population with (completeFirmsForIndex), so the board, the Responses lines
+  // and Scoring can never show different numbers for one firm.
   const firmFloor = floorOf('firm');
-  const omiCompleteNow = (await omiCompleteFirmIds(pool, editionId)).length;
-  const omiCompleteThen = (await omiCompleteFirmIds(pool, editionId, windowStart)).length;
-  const dmiCompleteNow = (await dmiCompleteFirmIds(pool, editionId)).length;
-  const dmiCompleteThen = (await dmiCompleteFirmIds(pool, editionId, windowStart)).length;
+  const completeCount = async (metric: 'OMI' | 'DMI', at?: Date): Promise<number> =>
+    (await completeFirmsForIndex(pool, editionId, metric, at)).firmIds.length;
+  const omiCompleteNow = await completeCount('OMI');
+  const omiCompleteThen = await completeCount('OMI', windowStart);
+  const dmiCompleteNow = await completeCount('DMI');
+  const dmiCompleteThen = await completeCount('DMI', windowStart);
   const missingRoleCounts = await missingOmiRoleCounts(pool, editionId);
   const omiCompleteForecast = buildSegmentForecast({
     segment: 'firm',
@@ -956,6 +1012,7 @@ export async function buildBoardContext(
     institutions,
     today: asOf,
     daysRemaining,
+    beforeLaunch: edition.status === 'draft',
     firmFunnel,
     firmFunnelMeta,
     maturity,

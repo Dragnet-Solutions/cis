@@ -1,5 +1,5 @@
 import { Pool } from 'pg';
-import { listReportDependencies, getConfig } from '@cis/db';
+import { listReportDependencies, getConfig, type InstitutionEngagement } from '@cis/db';
 import type { MissionSegment, SegmentForecast, ReportDependency } from '@cis/shared-types';
 import { buildBoardContext } from './mission-board-service';
 import { diagnoseFirmFunnel, type FunnelDiagnosis } from './mission-forecast';
@@ -78,6 +78,48 @@ export interface DependencyRow {
   enabled: boolean;
   displayState: DependencyDisplayState;
   note: string;
+  /** Regulator-dependent outputs only: regulators that have responded, of those required. */
+  regulators?: { confirmed: number; required: number };
+}
+
+/**
+ * Outputs that rest on the regulators, not on any investor segment: the
+ * Institutional Perspectives section (PUB_10). Whatever segments a stored
+ * dependency row lists, these read the regulator roles.
+ */
+const REGULATOR_OUTPUTS = new Set(['INSTITUTIONAL_PERSPECTIVES', 'PUBLIC_REPORT.PUB_10']);
+
+/**
+ * Institutional Perspectives is only published with all three regulators (SEC,
+ * NGX and CSCS) — the national report's own `requires_all_regulators` rule,
+ * which counts distinct institutions with a confirmed response.
+ */
+const REGULATORS_REQUIRED = 3;
+
+export interface RegulatorStanding {
+  confirmed: number;
+  required: number;
+  /** A regulator has declined, or is past the target date it was given. */
+  slipping: boolean;
+  closed: boolean;
+}
+
+function regulatorStanding(
+  institutions: InstitutionEngagement[],
+  today: Date,
+  closed: boolean,
+): RegulatorStanding {
+  const confirmed = new Set(
+    institutions.filter((i) => i.status === 'confirmed').map((i) => i.institutionId),
+  ).size;
+  const slipping = institutions.some(
+    (i) =>
+      i.status === 'declined' ||
+      (i.targetBy !== null &&
+        ['not_started', 'invited', 'in_progress'].includes(i.status) &&
+        today > i.targetBy),
+  );
+  return { confirmed, required: REGULATORS_REQUIRED, slipping, closed };
 }
 
 export interface ResponsesMonitor {
@@ -123,6 +165,7 @@ function dependencyDisplay(
   dep: ReportDependency,
   atRiskSegments: Set<MissionSegment>,
   retailThin: boolean,
+  regulators: RegulatorStanding,
 ): DependencyRow {
   const base = {
     outputId: dep.outputId,
@@ -130,19 +173,40 @@ function dependencyDisplay(
     requiredInstruments: dep.requiredInstruments,
     enabled: dep.enabled,
   };
+  // Institutional Perspectives rests on the regulators, never on the local or
+  // foreign investor segments: on track while all three can still respond, at
+  // risk once one declines or slips past its target, or collection closes short.
+  if (REGULATOR_OUTPUTS.has(dep.outputId)) {
+    const { confirmed, required } = regulators;
+    const met = confirmed >= required;
+    const atRisk = !met && (regulators.slipping || regulators.closed);
+    const progress = `${confirmed} of ${required} regulators have responded`;
+    return {
+      ...base,
+      dependsOn: ['regulators'],
+      requiredInstruments: null,
+      regulators: { confirmed, required },
+      displayState: atRisk ? 'at_risk' : 'on_track',
+      note: met
+        ? `${progress}.`
+        : atRisk
+          ? `${progress}. The section is published only with all ${required}.`
+          : `${progress} so far. The section is published only with all ${required}.`,
+    };
+  }
   // §B4: the two firm-report rows are special.
   if (dep.outputId === 'PARTICIPATING_FIRM_REPORT') {
     return {
       ...base,
       displayState: 'guaranteed',
-      note: 'Combined report is guaranteed to every participating firm. At risk here means thin, not withheld.',
+      note: 'Every participating firm receives its combined report, however few responses it has; few responses make it thinner, never withheld.',
     };
   }
   if (dep.outputId === 'PARTICIPATING_FIRM_REPORT_CATEGORY_CUTS') {
     return {
       ...base,
       displayState: retailThin ? 'some_suppressed' : 'on_track',
-      note: 'Per-firm category cuts are suppressed by design where a firm is thin — "Some suppressed", never "At risk".',
+      note: 'A firm with too few retail clients responding does not get the breakdown for that group. This is expected for some firms and does not put the report at risk.',
     };
   }
   // Generic rows: at risk when any depended-on segment is at risk (matches the
@@ -151,7 +215,9 @@ function dependencyDisplay(
   return {
     ...base,
     displayState: atRisk ? 'at_risk' : 'on_track',
-    note: atRisk ? 'A depended-on segment is forecast to miss its floor.' : 'On track.',
+    note: atRisk
+      ? 'A group this output needs is forecast to miss its target.'
+      : 'Every group this output needs is on course for its target.',
   };
 }
 
@@ -199,7 +265,10 @@ export async function getResponsesMonitor(
   const atRiskSegments = new Set<MissionSegment>(SEGMENTS.filter((s) => ctx.forecasts[s].atRisk));
   const retailThin = ctx.forecasts.retail.atRisk;
   const deps = await listReportDependencies(pool);
-  const dependencies = deps.map((d) => dependencyDisplay(d, atRiskSegments, retailThin));
+  const regulators = regulatorStanding(ctx.institutions, ctx.today, ctx.daysRemaining <= 0);
+  const dependencies = deps.map((d) =>
+    dependencyDisplay(d, atRiskSegments, retailThin, regulators),
+  );
 
   const funnelDiagnosis = diagnoseFirmFunnel(ctx.firmFunnel);
 
