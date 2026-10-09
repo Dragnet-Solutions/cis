@@ -27,7 +27,6 @@ async function request<T>(path: string, method = 'GET', body?: unknown): Promise
 }
 
 export interface ConsentContent {
-  provisional?: boolean;
   notice: string;
   expansionTitle: string;
   expansion: string;
@@ -71,6 +70,8 @@ export const journeyApi = {
     request<{
       editionId: string | null;
       editionLabel: string | null;
+      editionStatus: 'draft' | 'open' | 'locked' | 'archived' | null;
+      collectionOpen: boolean;
       resultsSectionVisible: boolean;
     }>('/journeys/context'),
 

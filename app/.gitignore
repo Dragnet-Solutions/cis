@@ -1,10 +1,44 @@
+# Dependencies
 node_modules/
+.pnpm-store/
+
+# Build output and caches
 dist/
-.env
-.env.local
-*.log
+build/
 coverage/
 .turbo/
+.vite/
+.cache/
 *.tsbuildinfo
+
+# Environment and secrets — every .env variant at any depth, including the
+# .env.example template: none of them is tracked.
+.env
+.env.*
+**/.env
+**/.env.*
+# Archives or backups of env files, and key material
+*env*.zip
+*.env.bak
+*.pem
+*.key
+*.p12
+*.pfx
+
+
+# Test and browser-automation output, and generated report PDFs
+test-results/
+playwright-report/
+*.pdf
+
+# Logs
+*.log
+logs/
+
+# Editors and OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
 .DS_Store
 Thumbs.db

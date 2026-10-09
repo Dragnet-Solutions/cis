@@ -20,8 +20,17 @@ import {
   emitFunnelEvent,
   countDistinctInstitutions,
   countDistinctInstitutionsSince,
+  listInstitutionEngagement,
+  setInstitutionEngagement,
 } from '@cis/db';
-import { seedReferenceData, getResponsesMonitor, getMissionBoard } from '../src';
+import { randomUUID } from 'node:crypto';
+import {
+  seedReferenceData,
+  getResponsesMonitor,
+  getMissionBoard,
+  getScoreView,
+  completeFirmsForIndex,
+} from '../src';
 import { getTestPool, runMigrations, truncateAllTables, closeTestPool } from '../../db/tests/setup';
 
 let pool: Pool;
@@ -50,7 +59,7 @@ async function openWindow(): Promise<Date> {
 }
 
 /** A firm with DMI-complete answers (S1-Q3, S1-Q8 on S1; S3-Q2 on S3). */
-async function dmiCompleteFirm(slug: string): Promise<string> {
+async function dmiCompleteFirm(slug: string, s3q2 = '0-10%'): Promise<string> {
   const org = await createOrganization(pool, { slug, displayName: slug, orgType: 'firm' });
   await ensureSeats(pool, editionId, org.id);
   const s1 = await createRespondent(pool, { editionId, instrumentCode: 'S1' });
@@ -88,7 +97,7 @@ async function dmiCompleteFirm(slug: string): Promise<string> {
     questionId: 'S3-Q2',
     scope: 'shared',
     ratedFirmId: null,
-    answer: { a: '0-10%' },
+    answer: { a: s3q2 },
   });
   return org.id;
 }
@@ -227,5 +236,65 @@ describe('Participating firms are counted as firms, not seat responses', () => {
     const monitor = await getResponsesMonitor(pool, editionId, asOf);
     const firmCard = monitor.cards.find((c) => c.segment === 'firm')!;
     expect(firmCard.current).toBe(2);
+  });
+});
+
+// Regression (E2E 2026-10-09, D17): a firm whose S1 and S3 surveys were both
+// complete read "DMI-complete 0" on the Responses page / mission board while
+// Scoring counted it as 1 — the board used an item-level rule of its own (a
+// "Don't know" on S3-Q2 dropped the firm), Scoring the index's configured
+// population. Both now read the one function.
+describe('DMI-/OMI-complete is one definition across Responses, the board and Scoring', () => {
+  it('a firm with S1 and S3 complete is DMI-complete everywhere, whatever it answered', async () => {
+    const asOf = await openWindow();
+    // The Operations seat answered "Don't know" on S3-Q2.
+    const firmId = await dmiCompleteFirm('d17-firm', "Don't know");
+
+    const dmi = await completeFirmsForIndex(pool, editionId, 'DMI');
+    expect(dmi.firmIds).toEqual([firmId]);
+    expect(dmi.seats).toEqual(['S1', 'S3']);
+
+    const monitor = await getResponsesMonitor(pool, editionId, asOf);
+    const lines = monitor.cards.find((c) => c.segment === 'firm')!.completeFirm!;
+    expect(lines.find((l) => l.metric === 'DMI')!.current).toBe(1);
+    expect(lines.find((l) => l.metric === 'OMI')!.current).toBe(0);
+
+    const view = await getScoreView(pool, editionId, randomUUID());
+    expect(view.find((v) => v.metricCode === 'DMI')!.effectivePopulation).toBe(1);
+    expect(view.find((v) => v.metricCode === 'OMI')!.effectivePopulation).toBe(0);
+  });
+});
+
+// Regression (E2E 2026-10-09, D10): the Institutional Perspectives row was tied
+// to the local/foreign investor segments. It rests on the regulators — the
+// national report publishes that section only with all three of them.
+describe('Institutional Perspectives depends on the regulators, not investor segments', () => {
+  async function confirm(institutionName: string, status: 'confirmed' | 'declined') {
+    const roles = await listInstitutionEngagement(pool, editionId);
+    const role = roles.find((r) => r.institutionName.includes(institutionName))!;
+    await setInstitutionEngagement(pool, editionId, role.institutionId, role.familyCode, {
+      status,
+    });
+  }
+  const row = async (asOf: Date) =>
+    (await getResponsesMonitor(pool, editionId, asOf)).dependencies.find(
+      (d) => d.outputId === 'INSTITUTIONAL_PERSPECTIVES',
+    )!;
+
+  it('counts confirmed regulators against the three required', async () => {
+    const asOf = await openWindow(); // no S5a/S5b at all — those segments are at risk
+    let ip = await row(asOf);
+    expect(ip.dependsOn).toEqual(['regulators']);
+    expect(ip.regulators).toEqual({ confirmed: 0, required: 3 });
+    expect(ip.displayState).toBe('on_track'); // all three can still respond
+
+    await confirm('Securities and Exchange', 'confirmed');
+    await confirm('Nigerian Exchange', 'confirmed');
+    ip = await row(asOf);
+    expect(ip.regulators).toEqual({ confirmed: 2, required: 3 });
+
+    await confirm('Central Securities', 'declined');
+    ip = await row(asOf);
+    expect(ip.displayState).toBe('at_risk');
   });
 });

@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { PublicLanding } from './PublicLanding';
 import { RetailEntry } from './RetailEntry';
-import { InstitutionalEntry, VARIANT_LABEL, type RegulatorVariant } from './InstitutionalEntry';
 import { FirmSeatEntry } from './FirmSeatEntry';
 import { RunJourney } from './RunJourney';
 import { Completion } from './Completion';
@@ -14,7 +13,7 @@ import { ErrorState, type ErrorStateKind } from '../shared/ErrorState';
 type Screen =
   | { name: 'landing' }
   | { name: 'retail-entry'; code: InvestorInstrument; recruitingFirmId: string | null }
-  | { name: 'inst-entry'; code: RegulatorVariant }
+  | { name: 'inst-choice' }
   | { name: 'firm-seat-entry'; linkToken: string }
   | {
       name: 'running';
@@ -31,7 +30,6 @@ type Screen =
   | { name: 'help-about' }
   | { name: 'previous-editions' };
 
-const REGULATORS: RegulatorVariant[] = ['I-SEC', 'I-NGX', 'I-CSCS', 'I-DEP'];
 const RETAIL_INSTRUMENT = 'S4';
 
 /** The three investor instruments — all multi-firm, all consent-gated at
@@ -53,10 +51,18 @@ const SEGMENT_INSTRUMENT: Record<
  * portal — a respondent never sees admin. Every entry surface funnels into the
  * ONE shared journey shell (via RunJourney); resume-by-link is handled the same
  * way, not as a separate path.
+ *
+ * "I represent an institution" is for institutional INVESTORS (S5a / S5b). The
+ * regulator and market-infrastructure reviews (I-SEC, I-NGX, I-CSCS, I-DEP)
+ * have no public entry: they open only from the named contact's issued link
+ * (?resume=), and the server refuses to start one any other way.
  */
 export function RespondentApp(): JSX.Element {
   const [editionId, setEditionId] = useState<string | null>(null);
   const [editionLabel, setEditionLabel] = useState<string | null>(null);
+  const [editionStatus, setEditionStatus] = useState<
+    'draft' | 'open' | 'locked' | 'archived' | null
+  >(null);
   const [resultsVisible, setResultsVisible] = useState(false);
   const [screen, setScreen] = useState<Screen>({ name: 'landing' });
   const [error, setError] = useState<string | null>(null);
@@ -76,6 +82,7 @@ export function RespondentApp(): JSX.Element {
         if (cancelled) return;
         setEditionId(ctx.editionId);
         setEditionLabel(ctx.editionLabel);
+        setEditionStatus(ctx.editionStatus);
         setResultsVisible(ctx.resultsSectionVisible);
 
         // A firm seat's own entry link: ?firmSeat=<token> — independent of
@@ -88,6 +95,10 @@ export function RespondentApp(): JSX.Element {
         const outreachRef = new URLSearchParams(window.location.search).get('ref');
         if (firmSeatToken) {
           setScreen({ name: 'firm-seat-entry', linkToken: firmSeatToken });
+        } else if (outreachRef && !ctx.collectionOpen) {
+          // A firm's link followed after collection ended: the landing page
+          // says collection has closed — no entry form to fill in for nothing.
+          setScreen({ name: 'landing' });
         } else if (outreachRef) {
           try {
             const outreachCtx = await journeyApi.outreachContext(outreachRef);
@@ -171,11 +182,12 @@ export function RespondentApp(): JSX.Element {
           <>
             <PublicLanding
               editionLabel={editionLabel}
+              editionStatus={editionStatus}
               resultsSectionVisible={resultsVisible}
               onTakeRetail={() =>
                 setScreen({ name: 'retail-entry', code: RETAIL_INSTRUMENT, recruitingFirmId: null })
               }
-              onTakeInstitutional={() => setScreen({ name: 'inst-entry', code: 'I-SEC' })}
+              onTakeInstitutional={() => setScreen({ name: 'inst-choice' })}
               onHelpAbout={() => setScreen({ name: 'help-about' })}
               onPreviousEditions={() => setScreen({ name: 'previous-editions' })}
             />
@@ -202,40 +214,47 @@ export function RespondentApp(): JSX.Element {
           />
         )}
 
-        {editionId && screen.name === 'inst-entry' && (
-          <>
-            {REGULATORS.includes(screen.code as RegulatorVariant) && (
-              <nav className="actions" aria-label="Choose a review">
-                {REGULATORS.map((c) => (
-                  <button
-                    key={c}
-                    type="button"
-                    className={c === screen.code ? 'btn' : 'btn-2'}
-                    onClick={() => setScreen({ name: 'inst-entry', code: c })}
-                  >
-                    {VARIANT_LABEL[c]}
-                  </button>
-                ))}
-              </nav>
-            )}
-            <InstitutionalEntry
-              key={screen.code}
-              editionId={editionId}
-              instrumentCode={screen.code}
-              onStarted={(respondentId, firms) => {
-                if (outreachToken) void journeyApi.outreachEvent(outreachToken, 'starts');
-                setScreen({
-                  name: 'running',
-                  respondentId,
-                  firms,
-                  code: screen.code,
-                  retail: false,
-                  firmSeatLinkToken: null,
-                  outreachToken,
-                });
-              }}
-            />
-          </>
+        {editionId && screen.name === 'inst-choice' && (
+          <div className="journey">
+            <p className="eyebrow">Institutional investors</p>
+            <h1 tabIndex={-1}>Where is your institution based?</h1>
+            <p className="lede">
+              This survey is for institutions that invest through Nigerian stockbroking firms.
+            </p>
+            <div className="actions">
+              <button
+                type="button"
+                className="btn"
+                onClick={() =>
+                  setScreen({ name: 'retail-entry', code: 'S5a', recruitingFirmId: null })
+                }
+              >
+                A Nigerian institution
+              </button>
+              <button
+                type="button"
+                className="btn"
+                onClick={() =>
+                  setScreen({ name: 'retail-entry', code: 'S5b', recruitingFirmId: null })
+                }
+              >
+                An institution based abroad
+              </button>
+            </div>
+            <p className="lede" style={{ fontSize: 13 }}>
+              Regulators and market infrastructure institutions take part through the personal link
+              sent to their named contact.
+            </p>
+            <div className="actions">
+              <button
+                type="button"
+                className="btn-2"
+                onClick={() => setScreen({ name: 'landing' })}
+              >
+                Back
+              </button>
+            </div>
+          </div>
         )}
 
         {editionId && screen.name === 'firm-seat-entry' && (

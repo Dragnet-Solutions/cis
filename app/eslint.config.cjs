@@ -24,11 +24,9 @@ module.exports = [
       prettier: prettierPlugin,
     },
     languageOptions: {
+      // Syntax-only parsing: the rules below are not type-aware, so no
+      // tsconfig project lookup is needed (and test files sit outside them).
       parser: tsparser,
-      parserOptions: {
-        projectService: true,
-        tsconfigRootDir: __dirname,
-      },
     },
     rules: {
       ...tseslint.configs['recommended'].rules,

@@ -38,8 +38,9 @@ import {
   getMissionBoard,
   NATIONAL_SECTIONS,
   evaluateSection,
+  CollectionClosedError,
 } from '../src';
-import { listInstitutions, getInstrumentItems } from '@cis/db';
+import { listInstitutions, getInstrumentItems, updateEditionStatus } from '@cis/db';
 import { getTestPool, runMigrations, truncateAllTables, closeTestPool } from '../../db/tests/setup';
 import { answerAll } from './helpers/answers';
 
@@ -377,5 +378,15 @@ describe('Each role reads as its own mandate', () => {
       'Clearing, settlement and custody',
     );
     expect(cscsRoles.find((r) => r.familyCode === 'D')!.mandate).toMatch(/Depository/);
+  });
+});
+
+describe('No link is issued once the results are locked (E2E 9 Oct follow-up)', () => {
+  it('refuses to issue a survey link after the lock', async () => {
+    await saveContact(pool, editionId, sec, 'A', CONTACT);
+    await updateEditionStatus(pool, editionId, 'locked');
+    await expect(
+      issueSurveyLink(pool, editionId, sec, 'A', { targetBy: '2026-09-01' }),
+    ).rejects.toBeInstanceOf(CollectionClosedError);
   });
 });

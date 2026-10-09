@@ -122,6 +122,38 @@ export const reportDeliveryRoutes: FastifyPluginAsyncZod = async (app) => {
   // Rendered once per published narrative, then served from memory: a public
   // download never starts a browser per request.
   const pdfCache = new Map<string, Promise<Buffer>>();
+  const publicPdf = async (editionId: string, document: 'industry' | 'institutional') => {
+    const pool = getPool();
+    const report = await getPublishedIndustryReport(pool, editionId);
+    const narrative = await getIndustryNarrative(pool, editionId);
+    const key = `${document}:${editionId}:${narrative?.id ?? 'none'}`;
+    let pdf = pdfCache.get(key);
+    if (!pdf) {
+      pdf = renderReportPdf(`/print/${document}?edition=${editionId}&audience=public`, null);
+      pdfCache.set(key, pdf);
+      pdf.catch(() => pdfCache.delete(key));
+    }
+    return { label: report.edition.label, pdf: await pdf };
+  };
+
+  app.get(
+    '/public/editions/:id/institutional-report/pdf',
+    {
+      config: { rateLimit: { max: 10, timeWindow: 60_000 } },
+      schema: { params: z.object({ id: z.string().uuid() }) },
+    },
+    async (request, reply) => {
+      const { label, pdf } = await publicPdf(request.params.id, 'institutional');
+      return reply
+        .header('Content-Type', 'application/pdf')
+        .header(
+          'Content-Disposition',
+          `attachment; filename="CIS-Dragnet-Institutional-Perspectives-${label}.pdf"`,
+        )
+        .send(pdf);
+    },
+  );
+
   app.get(
     '/public/editions/:id/industry-report/pdf',
     {
@@ -129,23 +161,14 @@ export const reportDeliveryRoutes: FastifyPluginAsyncZod = async (app) => {
       schema: { params: z.object({ id: z.string().uuid() }) },
     },
     async (request, reply) => {
-      const pool = getPool();
-      const report = await getPublishedIndustryReport(pool, request.params.id);
-      const narrative = await getIndustryNarrative(pool, request.params.id);
-      const key = `${request.params.id}:${narrative?.id ?? 'none'}`;
-      let pdf = pdfCache.get(key);
-      if (!pdf) {
-        pdf = renderReportPdf(`/print/industry?edition=${request.params.id}&audience=public`, null);
-        pdfCache.set(key, pdf);
-        pdf.catch(() => pdfCache.delete(key));
-      }
+      const { label, pdf } = await publicPdf(request.params.id, 'industry');
       return reply
         .header('Content-Type', 'application/pdf')
         .header(
           'Content-Disposition',
-          `attachment; filename="CIS-Dragnet-Industry-Report-${report.edition.label}.pdf"`,
+          `attachment; filename="CIS-Dragnet-Industry-Report-${label}.pdf"`,
         )
-        .send(await pdf);
+        .send(pdf);
     },
   );
 };

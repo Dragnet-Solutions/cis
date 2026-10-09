@@ -146,6 +146,8 @@ function resolveStatusCode(error: Error & { statusCode?: number }): number {
     case 'ManagedContentPermissionError':
     case 'DragnetPermissionError':
     case 'ParticipationClosedError':
+    case 'CollectionClosedError':
+    case 'RegulatorLinkRequiredError':
       return 403;
     case 'EditionStateError':
     case 'InstrumentsNotFrozenError':

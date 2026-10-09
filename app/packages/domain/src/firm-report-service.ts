@@ -13,9 +13,30 @@ import {
   hasSignedOffRun,
   countRetailRespondentsRatingFirm,
   insertReportPublication,
+  recordFirmReportOpening,
+  listFirmReportOpenings,
+  createCriticalAction,
+  getCriticalActionById,
+  getPendingCriticalActionForEdition,
+  getOrganizationById,
+  withTransaction,
 } from '@cis/db';
-import type { FirmReport, FirmReportCutState } from '@cis/shared-types';
-import { DomainError } from './errors';
+import {
+  canRequestCriticalAction,
+  canApproveCriticalAction,
+  PermissionDeniedError,
+  MakerCheckerViolationError,
+  type RbacContext,
+} from '@cis/auth';
+import { writeAudit } from '@cis/audit';
+import type { CriticalAction, FirmReport, FirmReportCutState } from '@cis/shared-types';
+import {
+  DomainError,
+  InvalidReasonError,
+  CriticalActionStateError,
+  MIN_REASON_LENGTH,
+} from './errors';
+import type { ActorContext } from './edition-service';
 import { eligibleFirmIds } from './eligibility-service';
 import { assertRunOfficialUsable } from './candidate-scoring-service';
 
@@ -130,17 +151,280 @@ export async function generateFirmReports(
   };
 }
 
-/** Mark a firm report approved (only once it has generated). */
-export async function approveFirmReport(pool: Pool, id: string): Promise<FirmReport> {
+// ─── Approval for release: maker-checker ─────────────────────────────────────
+
+/**
+ * Releasing the firm reports is one of the six critical actions (People and
+ * access): every firm sees its report at once, and nothing released is ever
+ * recalled. So no one approves a firm report alone. It runs on the same
+ * `critical_actions` maker-checker as freezing the instruments and locking the
+ * results:
+ *
+ *   1. One person REQUESTS release of a set of generated reports — usually all
+ *      of them, so 80 firms are one request, not 80 clicks — with a reason.
+ *   2. A DIFFERENT person approves (or rejects). The maker can never approve
+ *      their own request; identities come from the session, never a request
+ *      body. Approving marks every covered report approved and releases them.
+ *   3. Every covered report must have been OPENED by the requester or the
+ *      approver before the approval is accepted — the national report's "open
+ *      the draft before approving it" rule, per report. The two people sharing
+ *      the decision may split the reading between them, but no report goes out
+ *      that neither of them has read.
+ *
+ * `releaseFirmReports` is unchanged: it releases only reports whose approval
+ * state is 'approved', and the only way to reach that state is step 2.
+ */
+export const FIRM_REPORT_RELEASE_ACTION = 'firm_report_release';
+
+/** Record that an operator opened a report — the "read it before approving it"
+ *  record the approval checks. Opening a released report is harmless. */
+export async function openFirmReport(pool: Pool, id: string, userId: string): Promise<void> {
   const report = await getFirmReport(pool, id);
   if (!report) throw new FirmReportError('Firm report not found', 'NOT_FOUND');
-  if (report.generationState !== 'generated') {
-    throw new FirmReportError(
-      'A report can be approved only once it has generated',
-      'NOT_GENERATED',
+  await recordFirmReportOpening(pool, id, userId);
+}
+
+/** The reports a release request can cover: the latest version of each firm's
+ *  report that has generated, is not yet approved, and is not released. */
+async function requestableReports(pool: Pool, editionId: string): Promise<FirmReport[]> {
+  const reports = await listFirmReports(pool, editionId);
+  return reports.filter(
+    (r) =>
+      r.generationState === 'generated' &&
+      r.approvalState !== 'approved' &&
+      r.releaseState !== 'released',
+  );
+}
+
+function reportIdsOf(action: CriticalAction): string[] {
+  const ids = action.payload['reportIds'];
+  return Array.isArray(ids) ? ids.filter((x): x is string => typeof x === 'string') : [];
+}
+
+/** The pending release request for an edition, if any. */
+export async function getPendingFirmReportRelease(
+  pool: Pool,
+  editionId: string,
+): Promise<CriticalAction | null> {
+  return getPendingCriticalActionForEdition(pool, editionId, FIRM_REPORT_RELEASE_ACTION);
+}
+
+/**
+ * Maker step: request release of a set of generated reports. `reportIds`
+ * narrows the request; left out, it covers every report that can be requested.
+ */
+export async function requestFirmReportRelease(
+  pool: Pool,
+  rbac: RbacContext,
+  editionId: string,
+  data: { reason: string; reportIds?: string[] },
+  ctx: ActorContext = {},
+): Promise<CriticalAction> {
+  const reason = data.reason.trim();
+  if (reason.length < MIN_REASON_LENGTH) throw new InvalidReasonError();
+
+  if (!canRequestCriticalAction(rbac, FIRM_REPORT_RELEASE_ACTION)) {
+    throw new PermissionDeniedError(rbac.userId, `request:${FIRM_REPORT_RELEASE_ACTION}`);
+  }
+
+  if (await getPendingFirmReportRelease(pool, editionId)) {
+    throw new CriticalActionStateError(
+      'A request to release firm reports is already awaiting a decision',
     );
   }
-  return setApprovalState(pool, id, 'approved');
+
+  const requestable = await requestableReports(pool, editionId);
+  let covered = requestable;
+  if (data.reportIds) {
+    const byId = new Map(requestable.map((r) => [r.id, r]));
+    const unknown = data.reportIds.filter((id) => !byId.has(id));
+    if (unknown.length > 0) {
+      throw new FirmReportError(
+        'Only generated reports that are not yet approved or released can be requested',
+        'NOT_REQUESTABLE',
+      );
+    }
+    covered = [...new Set(data.reportIds)].map((id) => byId.get(id)!);
+  }
+  if (covered.length === 0) {
+    throw new FirmReportError('There are no generated reports waiting for approval', 'NOTHING');
+  }
+
+  const action = await createCriticalAction(pool, {
+    actionType: FIRM_REPORT_RELEASE_ACTION,
+    requestedBy: rbac.userId,
+    payload: { reason, reportIds: covered.map((r) => r.id) },
+    editionId,
+  });
+
+  await writeAudit(pool, {
+    actorId: rbac.userId,
+    actionType: 'critical_action.requested',
+    entityType: 'critical_action',
+    entityId: action.id,
+    editionId,
+    newValue: { actionType: FIRM_REPORT_RELEASE_ACTION, reportCount: covered.length },
+    reason,
+    ipAddress: ctx.ipAddress ?? null,
+    userAgent: ctx.userAgent ?? null,
+  });
+  return action;
+}
+
+export interface FirmReportReleaseDecision {
+  approved: boolean;
+  rejectionReason?: string;
+}
+
+export interface FirmReportReleaseDecisionResult {
+  action: CriticalAction;
+  /** The release that followed an approval; null after a rejection. */
+  release: ReleaseResult | null;
+  /** Set when the reports were approved but the release itself then failed —
+   *  the approval stands and "Release again" retries. */
+  releaseError: string | null;
+}
+
+/**
+ * Checker step: approve or reject a release request. Approval needs a
+ * different person from the requester, the national report approved, and every
+ * covered report still waiting and opened by the requester or the approver.
+ * Approving marks the covered reports approved and then releases them through
+ * `releaseFirmReports` (with `releaseOptions`, if given).
+ */
+export async function decideFirmReportRelease(
+  pool: Pool,
+  rbac: RbacContext,
+  editionId: string,
+  actionId: string,
+  decision: FirmReportReleaseDecision,
+  ctx: ActorContext = {},
+  releaseOptions?: ReleaseOptions,
+): Promise<FirmReportReleaseDecisionResult> {
+  const action = await getCriticalActionById(pool, actionId);
+  if (
+    !action ||
+    action.actionType !== FIRM_REPORT_RELEASE_ACTION ||
+    action.editionId !== editionId
+  ) {
+    throw new CriticalActionStateError('That release request was not found for this edition');
+  }
+  if (action.status !== 'pending') {
+    throw new CriticalActionStateError(
+      `That release request has already been decided (${action.status})`,
+    );
+  }
+  if (!canApproveCriticalAction(rbac, FIRM_REPORT_RELEASE_ACTION)) {
+    throw new PermissionDeniedError(rbac.userId, `approve:${FIRM_REPORT_RELEASE_ACTION}`);
+  }
+  if (rbac.userId === action.requestedBy) {
+    throw new MakerCheckerViolationError(rbac.userId, actionId);
+  }
+
+  if (!decision.approved) {
+    const rejectionReason = decision.rejectionReason?.trim() || 'Rejected by checker';
+    const a = await pool.query(
+      `UPDATE critical_actions
+          SET status='rejected', rejected_by=$1, rejected_at=NOW(), rejection_reason=$2
+        WHERE id=$3 AND status='pending' AND requested_by <> $1`,
+      [rbac.userId, rejectionReason, actionId],
+    );
+    if (a.rowCount === 0) {
+      throw new CriticalActionStateError('The release request could not be rejected');
+    }
+    await writeAudit(pool, {
+      actorId: rbac.userId,
+      actionType: 'critical_action.rejected',
+      entityType: 'critical_action',
+      entityId: actionId,
+      editionId,
+      oldValue: { status: 'pending' },
+      newValue: { status: 'rejected' },
+      reason: rejectionReason,
+      ipAddress: ctx.ipAddress ?? null,
+      userAgent: ctx.userAgent ?? null,
+    });
+    const rejected = await getCriticalActionById(pool, actionId);
+    return { action: rejected ?? action, release: null, releaseError: null };
+  }
+
+  // Approving releases, and release waits for the national report.
+  if (!(await hasApprovedNationalReport(pool, editionId))) {
+    throw new FirmReportError(
+      'Firm reports cannot be released until the national report is approved',
+      'NATIONAL_NOT_APPROVED',
+    );
+  }
+
+  const ids = reportIdsOf(action);
+  const reports: FirmReport[] = [];
+  for (const id of ids) {
+    const r = await getFirmReport(pool, id);
+    if (!r || r.generationState !== 'generated' || r.releaseState === 'released') {
+      throw new FirmReportError(
+        'A report in this request has changed since it was requested. Reject it and ask for a fresh request.',
+        'REQUEST_STALE',
+      );
+    }
+    reports.push(r);
+  }
+
+  // Open before approve: each report read by one of the two people deciding.
+  const deciders = new Set([action.requestedBy, rbac.userId]);
+  const openedIds = new Set(
+    (await listFirmReportOpenings(pool, ids))
+      .filter((o) => deciders.has(o.userId))
+      .map((o) => o.firmReportId),
+  );
+  const unopened = reports.filter((r) => !openedIds.has(r.id));
+  if (unopened.length > 0) {
+    const names: string[] = [];
+    for (const r of unopened.slice(0, 5)) {
+      names.push((await getOrganizationById(pool, r.organizationId))?.displayName ?? 'a firm');
+    }
+    const more = unopened.length > 5 ? ` and ${unopened.length - 5} more` : '';
+    throw new FirmReportError(
+      `${unopened.length} of ${reports.length} ${reports.length === 1 ? 'report has' : 'reports have'} not been opened by you or the person who asked: ${names.join(', ')}${more}. Open each one before approving.`,
+      'NOT_OPENED',
+    );
+  }
+
+  await withTransaction(pool, async (client) => {
+    const c = client as unknown as Pool;
+    const a = await c.query(
+      `UPDATE critical_actions
+          SET status='approved', approved_by=$1, approved_at=NOW()
+        WHERE id=$2 AND status='pending' AND requested_by <> $1`,
+      [rbac.userId, actionId],
+    );
+    if (a.rowCount === 0) {
+      throw new CriticalActionStateError('The release request could not be approved');
+    }
+    for (const r of reports) await setApprovalState(c, r.id, 'approved');
+  });
+
+  await writeAudit(pool, {
+    actorId: rbac.userId,
+    actionType: 'critical_action.approved',
+    entityType: 'critical_action',
+    entityId: actionId,
+    editionId,
+    oldValue: { status: 'pending' },
+    newValue: { status: 'approved', reportCount: reports.length },
+    reason: typeof action.payload['reason'] === 'string' ? action.payload['reason'] : null,
+    ipAddress: ctx.ipAddress ?? null,
+    userAgent: ctx.userAgent ?? null,
+  });
+
+  let release: ReleaseResult | null = null;
+  let releaseError: string | null = null;
+  try {
+    release = await releaseFirmReports(pool, editionId, releaseOptions);
+  } catch (err) {
+    releaseError = err instanceof Error ? err.message : String(err);
+  }
+  const approved = await getCriticalActionById(pool, actionId);
+  return { action: approved ?? action, release, releaseError };
 }
 
 /**

@@ -21,9 +21,11 @@ import {
   requestSignoff,
   approveSignoff,
   generateFirmReports,
-  approveFirmReport,
-  releaseFirmReports,
+  openFirmReport,
+  requestFirmReportRelease,
+  decideFirmReportRelease,
 } from '@cis/domain';
+import { loadRbacContext } from '@cis/auth';
 import { buildServer } from '../src/server';
 import {
   getTestPool,
@@ -62,7 +64,13 @@ async function login(email: string): Promise<string> {
   return res.json<{ token: string }>().token;
 }
 
-async function setUp(): Promise<{ editionId: string; scoringRunId: string; firmId: string }> {
+async function setUp(): Promise<{
+  editionId: string;
+  scoringRunId: string;
+  firmId: string;
+  makerUserId: string;
+  checkerUserId: string;
+}> {
   const pool = getPool();
   const seed = await seedReferenceData(pool);
   const org = await createOrganization(pool, {
@@ -94,7 +102,13 @@ async function setUp(): Promise<{ editionId: string; scoringRunId: string; firmI
     },
   });
   await approveSignoff(pool, { signoffId: signoff.id, approvedBy: 'checker' });
-  return { editionId: seed.editionId, scoringRunId: run.id, firmId: org.id };
+  return {
+    editionId: seed.editionId,
+    scoringRunId: run.id,
+    firmId: org.id,
+    makerUserId: seed.makerUserId,
+    checkerUserId: seed.checkerUserId,
+  };
 }
 
 describe('POST /firm-reports/:id/regenerate', () => {
@@ -121,13 +135,20 @@ describe('POST /firm-reports/:id/regenerate', () => {
   });
 
   it('refuses to regenerate an already-released report over HTTP', async () => {
-    const { editionId, scoringRunId, firmId } = await setUp();
+    const { editionId, scoringRunId, firmId, makerUserId, checkerUserId } = await setUp();
     const gen = await generateFirmReports(getPool(), { editionId, scoringRunId });
     const report = gen.reports.find((r) => r.organizationId === firmId)!;
-    await approveFirmReport(getPool(), report.id);
     const nr = await createNationalReport(getPool(), { editionId, scoringRunId });
     await approveNationalReport(getPool(), nr.id, 'checker');
-    await releaseFirmReports(getPool(), editionId);
+    // Released the only way there is: opened, requested by one person,
+    // approved (and so released) by another.
+    await openFirmReport(getPool(), report.id, makerUserId);
+    const maker = await loadRbacContext(getPool(), makerUserId);
+    const checker = await loadRbacContext(getPool(), checkerUserId);
+    const action = await requestFirmReportRelease(getPool(), maker, editionId, {
+      reason: 'Read and ready',
+    });
+    await decideFirmReportRelease(getPool(), checker, editionId, action.id, { approved: true });
 
     const token = await login('adaeze.okoro@cis.example');
     const res = await app.inject({
