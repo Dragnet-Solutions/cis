@@ -1,3 +1,28 @@
 packages:
   - 'apps/*'
   - 'packages/*'
+
+# Native builds allowed to run on install.
+onlyBuiltDependencies:
+  - argon2
+  - esbuild
+
+# Pinned floors for transitive dependencies with published security fixes.
+# Each line raises a vulnerable range to its first patched release; the
+# advisory each one closes is in the trailing comment.
+overrides:
+  glob: ^11.1.0
+  vite: ^6.4.3
+  esbuild: ^0.25.0
+  vitest: ^4.1.11 # GHSA-82fw-gwwq-j7x9, and the tinypool RCEs it no longer pulls in
+  fastify: ^5.12.5 # GHSA-667r-xxjv-c9mm, -p68q-wchp-6fh7, -hwr6-493r-vm6h, -9q9j-q6p8-xq58, -4mh8-r7rc-xpvc …
+  fast-jwt: ^6.3.4 # GHSA-x937-hj6v-793p
+  tinypool: ^2.1.2 # GHSA-5gmw-xhrv-c9v3, GHSA-85c8-ppgw-ccpr
+  'fast-uri@>=3 <3.1.8': ^3.1.8 # GHSA-qw65-cvwx-89v3, -58mr-gqgx-xq4g, -hrr3-gc8f-f4qj
+  'fast-uri@>=4 <4.1.5': ^4.1.5 # GHSA-qw65-cvwx-89v3, -58mr-gqgx-xq4g, -hrr3-gc8f-f4qj, -jvvf-x445-j334
+  ip-address: ^10.7.1 # GHSA-rpw4-54j3-4h4q, -2vr4-cq9g-pvrc, -j6r3-76f7-8jcv, -h3mg-xc3c-68pw
+  'js-yaml@>=4 <4.3.2': ^4.3.2 # GHSA-2883-xcg3-v3hh
+  source-map-js: ^1.2.2 # GHSA-68fv-2mgg-jv7q
+  'brace-expansion@<1.1.21': ^1.1.21 # GHSA-q2hr-2g5m-vwhr, -qhr7-859c-m2p7, -6j4f-fj2g-mc7p
+  'brace-expansion@>=2 <2.1.7': ^2.1.7
+  'brace-expansion@>=4 <5.0.12': ^5.0.12
