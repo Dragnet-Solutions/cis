@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { MethodologyApproval } from './MethodologyApproval';
 import type { AdminClient } from '../api/client';
 import {
   ApiError,
@@ -139,6 +140,8 @@ export function ScoresSignoffPage({
 
       {error && <div className="err">{error}</div>}
 
+      <MethodologyApproval client={client} onChange={() => void load()} />
+
       {!currentRun ? (
         <div className="warnbox">
           <b>No scoring run exists yet for this edition.</b>
@@ -190,7 +193,11 @@ export function ScoresSignoffPage({
                     </td>
                     <td>
                       {i.score === null ? (
-                        <span className="tag wait">Pending validation</span>
+                        currentRun?.methodologyStatus === 'APPROVED' ? (
+                          <span className="tag soft">Not calculable</span>
+                        ) : (
+                          <span className="tag wait">Pending validation</span>
+                        )
                       ) : (
                         <>
                           {i.score} <span className="muted">/ 100</span>

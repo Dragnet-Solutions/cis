@@ -21,7 +21,7 @@ import { CriticalActionRequest, CriticalActionReview } from '../components/Maker
  * not excluded, and holds no other firm back; release is blocked until the
  * national report is approved.
  *
- * Releasing the firm reports is one of the six critical actions, so it needs
+ * Releasing the firm reports is one of the critical actions, so it needs
  * two people: one requests release of the generated reports with a reason; a
  * different person approves, which releases them. Every report in the request
  * must have been opened by one of the two first — opening a report here

@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { Pool } from 'pg';
-import { createOrganization, listOrganizations } from '@cis/db';
+import { createOrganization, listOrganizations, updateEditionStatus } from '@cis/db';
 import { loadRbacContext, type RbacContext } from '@cis/auth';
 import {
   seedReferenceData,
@@ -18,6 +18,7 @@ import { getTestPool, runMigrations, truncateAllTables, closeTestPool } from '..
 
 let pool: Pool;
 let operator: RbacContext;
+let editionId: string;
 
 beforeAll(async () => {
   pool = getTestPool();
@@ -27,6 +28,7 @@ beforeEach(async () => {
   await truncateAllTables(pool);
   const seed = await seedReferenceData(pool);
   operator = await loadRbacContext(pool, seed.makerUserId);
+  editionId = seed.editionId;
 });
 afterAll(async () => {
   await closeTestPool();
@@ -148,5 +150,45 @@ describe('Import', () => {
       ).rejects.toMatchObject({ name: 'PermissionDeniedError' });
     }
     expect(await firmNames()).toEqual([]);
+  });
+});
+
+describe('Importing enrols the firms in the edition (D34)', () => {
+  const enrolled = async () =>
+    (
+      await pool.query<{ display_name: string; status: string }>(
+        `SELECT o.display_name, p.status FROM edition_participation p
+           JOIN organizations o ON o.id = p.organization_id
+          WHERE p.edition_id = $1 ORDER BY o.display_name`,
+        [editionId],
+      )
+    ).rows;
+
+  it('enrols new firms, and firms already in the directory, as active participants', async () => {
+    await createOrganization(pool, { slug: 'old-firm', displayName: 'Old Firm', orgType: 'firm' });
+    const csv = 'name\nNew Firm One\nOld Firm\n';
+    const preview = await importFirmDirectory(pool, operator, csv, { dryRun: true, editionId });
+    expect(preview.enrolled).toBe(0);
+    expect(await enrolled()).toEqual([]);
+
+    const result = await importFirmDirectory(pool, operator, csv, { dryRun: false, editionId });
+    expect(result.added).toBe(1);
+    expect(result.enrolled).toBe(2);
+    expect(await enrolled()).toEqual([
+      { display_name: 'New Firm One', status: 'active' },
+      { display_name: 'Old Firm', status: 'active' },
+    ]);
+  });
+
+  it('does not enrol into an edition that has stopped collecting', async () => {
+    await updateEditionStatus(pool, editionId, 'locked');
+    const result = await importFirmDirectory(pool, operator, 'name\nLate Firm\n', {
+      dryRun: false,
+      editionId,
+    });
+    expect(result.added).toBe(1);
+    expect(result.enrolled).toBe(0);
+    expect(result.enrolmentNote).toMatch(/no longer collecting/);
+    expect(await enrolled()).toEqual([]);
   });
 });

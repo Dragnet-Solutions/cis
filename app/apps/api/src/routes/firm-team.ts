@@ -64,6 +64,7 @@ export const firmTeamRoutes: FastifyPluginAsyncZod = async (app) => {
         body: z.object({
           csv: z.string().min(1).max(1_000_000),
           dryRun: z.boolean(),
+          editionId: z.string().uuid().optional(),
         }),
       },
     },
@@ -74,7 +75,7 @@ export const firmTeamRoutes: FastifyPluginAsyncZod = async (app) => {
         pool,
         rbac,
         request.body.csv,
-        { dryRun: request.body.dryRun },
+        { dryRun: request.body.dryRun, editionId: request.body.editionId ?? null },
         { ipAddress: request.ip, userAgent: request.headers['user-agent'] ?? null },
       );
       return reply.status(request.body.dryRun ? 200 : 201).send(result);

@@ -7,8 +7,13 @@ import {
   listOrganizations,
   listSubmittedAnswers,
   getTransform,
+  getAuthoritativeSignoff,
+  getCalculationRun,
+  listCalculatedResults,
+  listSampleFloors,
   type ReportAnswerRow,
 } from '@cis/db';
+import { investorSegmentUnitScores } from './candidate-scoring-service';
 import { DomainError } from './errors';
 import { currentSegmentSufficiency } from './eligibility-service';
 import { getSections, NATIONAL_SECTIONS } from './national-report-service';
@@ -58,6 +63,49 @@ export interface Pending {
   note: string;
 }
 
+/** One index score as a report shows it: the value, its base and any caveat. */
+export interface IndexScore {
+  code: string;
+  name: string;
+  value: number | null;
+  n: number | null;
+  note: string | null;
+}
+
+/**
+ * The five indices from the signed scoring run, once that run was made under
+ * the approved methodology. `firm` is the firm's own scores (firm report only);
+ * `segments` is IEI/ICI by investor segment, each behind the 10-investor floor.
+ */
+export interface IndicesReported {
+  state: 'reported';
+  methodology: string;
+  runId: string;
+  industry: IndexScore[];
+  firm: IndexScore[] | null;
+  segments: Array<{ segment: string; label: string; iei: Rating; ici: Rating }>;
+  /**
+   * Firms grouped into thirds by Firm_OMI, with each tier's mean OMI and DMI —
+   * null when there are too few scored firms for a tier mean not to point at
+   * one firm (`tiersNote` says why).
+   */
+  tiers: Array<{ tier: string; firms: number; omi: number; dmi: number | null }> | null;
+  tiersNote: string | null;
+}
+
+/** A tier's mean is only shown when it pools at least this many firms. */
+const MIN_FIRMS_PER_TIER = 3;
+
+export type Indices = Pending | IndicesReported;
+
+const INDEX_NAMES: Array<[string, string]> = [
+  ['OMI', 'Operational maturity'],
+  ['DMI', 'Digital maturity'],
+  ['IEI', 'Investor experience'],
+  ['ICI', 'Investor confidence'],
+  ['SEI', 'Service excellence'],
+];
+
 const INDICES_PENDING: Pending = {
   state: 'pending_methodology',
   note:
@@ -85,7 +133,7 @@ export interface IndustryReportContent {
     achieved: number;
     meets: boolean;
   }>;
-  indices: Pending;
+  indices: Indices;
   frictions: { base: number; items: Share[] } | null;
   frustrations: { base: number; items: Share[] } | null;
   participationImpact: { base: number; items: Share[] } | null;
@@ -172,7 +220,7 @@ export interface FirmReportContent {
     releaseState: string;
   };
   margin: number;
-  indices: Pending;
+  indices: Indices;
   dimensions: InvestorDimension[];
   selfVsInvestors: {
     firmSelfBelief: Rating;
@@ -693,7 +741,7 @@ export async function buildIndustryReportContent(
     generatedAt: new Date().toISOString(),
     sections,
     participation,
-    indices: INDICES_PENDING,
+    indices: await buildIndices(pool, editionId, null),
     frictions: shareCiting(cited(of('S3', 'S3-Q1'))),
     frustrations: shareCiting(cited(of('S4', 'S4-Q9'))),
     participationImpact: shareYes(of('S4'), [
@@ -813,7 +861,7 @@ export async function buildFirmReportContent(
       releaseState: firmReport.releaseState,
     },
     margin,
-    indices: INDICES_PENDING,
+    indices: await buildIndices(pool, editionId, firmId),
     dimensions,
     selfVsInvestors,
     retailCut: {
@@ -854,6 +902,14 @@ export function withheldSections(c: IndustryReportContent): Partial<Record<strin
     out['PUB_01_HEADLINE_INDICES'] = pending;
     out['PUB_02_SEGMENT_IEI_ICI'] = pending;
     out['PUB_05_MATURITY_HEATMAP'] = pending;
+  } else {
+    if (!c.indices.tiers) {
+      out['PUB_05_MATURITY_HEATMAP'] = c.indices.tiersNote ?? 'Tiers are not drawn this edition.';
+    }
+    const seg = c.indices.segments;
+    if (!seg.some((x) => x.iei.value !== null || x.ici.value !== null)) {
+      out['PUB_02_SEGMENT_IEI_ICI'] = floor('investors in any one segment');
+    }
   }
   if (!c.frictions) out['PUB_03_OPERATIONAL_FRICTIONS'] = floor('firms');
   if (!c.frustrations) out['PUB_04_INVESTOR_FRUSTRATIONS'] = floor('retail investors');
@@ -872,4 +928,119 @@ export function withheldSections(c: IndustryReportContent): Partial<Record<strin
     out['PUB_10_INSTITUTIONAL_PERSPECTIVES'] = 'No institution has given its reading.';
   }
   return out;
+}
+
+/**
+ * The indices a report shows: the signed scoring run's own figures when that
+ * run was made under the approved methodology, otherwise the pending notice.
+ * Never a placeholder value: a run that is not approved shows no score.
+ */
+async function buildIndices(
+  pool: Pool,
+  editionId: string,
+  firmId: string | null,
+): Promise<Indices> {
+  const signoff = await getAuthoritativeSignoff(pool, editionId);
+  const run = signoff ? await getCalculationRun(pool, signoff.calculationRunId) : null;
+  if (!run || run.methodologyStatus !== 'APPROVED') return INDICES_PENDING;
+
+  const results = await listCalculatedResults(pool, run.id);
+  const firmFloor =
+    (await listSampleFloors(pool, editionId)).find((f) => f.category === 'firm')?.floorValue ??
+    null;
+  const round = (v: number | null) => (v === null ? null : Math.round(v));
+  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+  const industry = INDEX_NAMES.map(([code, name]): IndexScore => {
+    const row = results.find(
+      (r) => r.subjectType === 'market' && r.subjectId === 'INDUSTRY' && r.metricCode === code,
+    );
+    const n = row?.n ?? null;
+    let note: string | null = null;
+    if (!row || row.value === null) {
+      note = row?.reason ?? 'Not calculable from this edition’s responses.';
+    } else if ((code === 'OMI' || code === 'DMI') && n !== null) {
+      note =
+        firmFloor !== null && n < firmFloor
+          ? `From ${plural(n, 'firm', 'firms')}, below the ${firmFloor}-firm floor — indicative only.`
+          : `From ${plural(n, 'firm', 'firms')}.`;
+    } else if (n !== null) {
+      note = `Pooled from ${plural(n, 'investor', 'investors')} in segments that clear their floor.`;
+    }
+    return { code, name, value: round(row?.value ?? null), n, note };
+  });
+
+  const firm =
+    firmId === null
+      ? null
+      : INDEX_NAMES.map(([code, name]): IndexScore => {
+          const row = results.find(
+            (r) => r.subjectType === 'firm' && r.subjectId === firmId && r.metricCode === code,
+          );
+          const n = row?.n ?? null;
+          let note: string | null = null;
+          if (!row || row.value === null) {
+            note = 'Not calculable from your firm’s responses this edition.';
+          } else if ((code === 'IEI' || code === 'ICI') && n !== null && n < SUPPRESS_BELOW) {
+            note = `From ${plural(n, 'investor rating', 'investor ratings')} — fewer than ten, read with caution.`;
+          }
+          return { code, name, value: round(row?.value ?? null), n, note };
+        });
+
+  const units = await investorSegmentUnitScores(pool, editionId);
+  const segments = (
+    [
+      ['retail', 'Retail investors', units.retail],
+      ['local_institution', 'Local institutional investors', units.local],
+      ['foreign_institution', 'Foreign institutional investors', units.foreign],
+    ] as const
+  ).map(([segment, label, u]) => ({ segment, label, iei: rating(u.iei), ici: rating(u.ici) }));
+
+  // Maturity tiers: thirds by Firm_OMI, highest first.
+  const firmValues = (code: string) =>
+    new Map(
+      results
+        .filter((r) => r.subjectType === 'firm' && r.metricCode === code && r.value !== null)
+        .map((r) => [r.subjectId, r.value as number]),
+    );
+  const omiByFirm = firmValues('OMI');
+  const dmiByFirm = firmValues('DMI');
+  const ranked = [...omiByFirm.entries()].sort((a, b) => b[1] - a[1]);
+  let tiers: IndicesReported['tiers'] = null;
+  let tiersNote: string | null = null;
+  if (ranked.length < MIN_FIRMS_PER_TIER * 3) {
+    tiersNote =
+      `Tiers need at least ${MIN_FIRMS_PER_TIER * 3} firms with an operational-maturity score ` +
+      `(${MIN_FIRMS_PER_TIER} per third), so that no tier's average points at a single firm; ` +
+      `this edition has ${ranked.length}.`;
+  } else {
+    const size = Math.ceil(ranked.length / 3);
+    tiers = ['Top third', 'Middle third', 'Bottom third'].map((tier, i) => {
+      const group = ranked.slice(i * size, (i + 1) * size);
+      const dmi = group
+        .map(([id]) => dmiByFirm.get(id))
+        .filter((v): v is number => v !== undefined);
+      return {
+        tier,
+        firms: group.length,
+        omi: Math.round(group.reduce((a, [, v]) => a + v, 0) / group.length),
+        dmi: dmi.length ? Math.round(dmi.reduce((a, b) => a + b, 0) / dmi.length) : null,
+      };
+    });
+    if (tiers.some((t) => t.firms < MIN_FIRMS_PER_TIER)) {
+      tiers = null;
+      tiersNote = `A tier would hold fewer than ${MIN_FIRMS_PER_TIER} firms, so tiers are not drawn.`;
+    }
+  }
+
+  return {
+    state: 'reported',
+    methodology: run.methodologyVersion ?? 'approved methodology',
+    runId: run.id,
+    industry,
+    firm,
+    segments,
+    tiers,
+    tiersNote,
+  };
 }

@@ -314,6 +314,7 @@ export {
   recordLikeForLikeComparison,
   recordInvestorLikeForLike,
   runCandidateScoring,
+  firmOmiScores,
   CandidateScoringError,
 } from './candidate-scoring-service';
 export type {
@@ -531,3 +532,13 @@ export {
   publicNarrative,
   type PublicNarrative,
 } from './report-publication-service';
+
+// ── Scoring methodology approval (two-person) ────────────────────────────────
+export {
+  METHODOLOGY_APPROVAL_ACTION,
+  getMethodologyApproval,
+  isMethodologyApproved,
+  requestMethodologyApproval,
+  decideMethodologyApproval,
+  type MethodologyApprovalState,
+} from './methodology-approval-service';

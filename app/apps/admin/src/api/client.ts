@@ -27,6 +27,7 @@ import {
   type PersonInput,
   type ReleaseFirmReportsResult,
   type NationalReview,
+  type MethodologyApprovalView,
   type ReminderSchedule,
   type ResponsesMonitor,
   type SampleFloor,
@@ -118,6 +119,13 @@ export interface AdminClient {
   getMissionBoard(id: string): Promise<MissionBoardResponse>;
   // Scoring & sign-off (UX-ADM-004)
   triggerScoringRun(id: string): Promise<{ run: unknown }>;
+  getScoringMethodology(): Promise<MethodologyApprovalView>;
+  requestMethodologyApproval(reason: string): Promise<{ criticalActionId: string }>;
+  decideMethodologyApproval(
+    actionId: string,
+    approved: boolean,
+    rejectionReason?: string,
+  ): Promise<{ status: string }>;
   getScoringRuns(id: string): Promise<ScoringRunsResponse>;
   getScoreView(id: string, runId: string): Promise<{ scores: IndexScoreView[] }>;
   // Who requests/approves/rejects is always the signed-in operator; the server
@@ -290,7 +298,7 @@ export interface AdminClient {
   // Firm coordinator team (UX-FRM-007) — ordinary account admin, not maker-checker.
   listFirms(): Promise<FirmSummary[]>;
   /** Preview (dryRun) or carry out an import of the firm directory from CSV. */
-  importFirms(csv: string, dryRun: boolean): Promise<FirmImportResult>;
+  importFirms(csv: string, dryRun: boolean, editionId?: string | null): Promise<FirmImportResult>;
   listCoordinators(orgId: string): Promise<Coordinator[]>;
   createLeadCoordinator(
     orgId: string,
@@ -413,6 +421,19 @@ export function createClient(token: string | null, hooks: SessionHooks = {}): Ad
     getInstruments: (id) => request(`/editions/${id}/instruments`, { token }),
     getMissionBoard: (id) => request(`/editions/${id}/mission-board`, { token }),
     triggerScoringRun: (id) => request(`/editions/${id}/scoring-runs`, { method: 'POST', token }),
+    getScoringMethodology: () => request('/scoring-methodology', { token }),
+    requestMethodologyApproval: (reason) =>
+      request('/scoring-methodology/approval/request', {
+        method: 'POST',
+        body: { reason },
+        token,
+      }),
+    decideMethodologyApproval: (actionId, approved, rejectionReason) =>
+      request(`/scoring-methodology/approval/${actionId}/decide`, {
+        method: 'POST',
+        body: rejectionReason ? { approved, rejectionReason } : { approved },
+        token,
+      }),
     getScoringRuns: (id) => request(`/editions/${id}/scoring-runs`, { token }),
     getScoreView: (id, runId) => request(`/editions/${id}/scoring-runs/${runId}/scores`, { token }),
     requestSignoff: (id, runId, checkedAccount) =>
@@ -591,8 +612,12 @@ export function createClient(token: string | null, hooks: SessionHooks = {}): Ad
         token,
       }),
     listFirms: () => request<{ firms: FirmSummary[] }>('/firms', { token }).then((r) => r.firms),
-    importFirms: (csv, dryRun) =>
-      request('/firms/import', { method: 'POST', body: { csv, dryRun }, token }),
+    importFirms: (csv, dryRun, editionId) =>
+      request('/firms/import', {
+        method: 'POST',
+        body: editionId ? { csv, dryRun, editionId } : { csv, dryRun },
+        token,
+      }),
     listCoordinators: (orgId) =>
       request<{ coordinators: Coordinator[] }>(`/firms/${orgId}/coordinators`, { token }).then(
         (r) => r.coordinators,

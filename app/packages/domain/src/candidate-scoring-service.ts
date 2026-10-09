@@ -20,7 +20,8 @@ import {
 import type { CalculationRun, CalculatedResultComposition } from '@cis/shared-types';
 import { DomainError } from './errors';
 import { datasetHashFor } from './calculation-service';
-import { scoreItem, isSubstantive, applyTransform } from './scoring-transforms';
+import { scoreItem, isSubstantive, applyTransform, scoreS3Q4Composite } from './scoring-transforms';
+import { isMethodologyApproved } from './methodology-approval-service';
 import { computeSufficiency, segmentDisplayState, REPORTABLE_AT } from './sufficiency-service';
 import type { SegmentDisplayState } from '@cis/shared-types';
 
@@ -186,6 +187,50 @@ export async function firmDmiScores(
     let score = 0;
     for (const q of required) score += (weights[q] ?? 0) * (scoreItem(q, items.get(q)) as number);
     out.push({ firmId, score });
+  }
+  return out;
+}
+
+/**
+ * Per-firm Firm_OMI (methodology §OMI): each role sub-index (CEO, Compliance,
+ * Operations) is the mean of its scored items; a firm scores only when all
+ * three are calculable (`all_three_role_subindices_required`), and its OMI is
+ * the mean of the three. A composite item (S3-Q4) is scored once, from its grid.
+ */
+export async function firmOmiScores(
+  pool: Pool,
+  editionId: string,
+): Promise<Array<{ firmId: string; score: number }>> {
+  const roles = getOmiRoleItemGroups();
+  const stemOf = (item: string) => item.split('.')[0]!;
+  const questionIds = Array.from(new Set(Object.values(roles).flat().map(stemOf)));
+  const rows = await getFirmSideItemAnswers(pool, editionId, questionIds);
+  const byFirm = new Map<string, Map<string, string | null>>();
+  for (const r of rows) {
+    if (!byFirm.has(r.firmId)) byFirm.set(r.firmId, new Map());
+    byFirm.get(r.firmId)!.set(r.questionId, r.a);
+  }
+  const scoreOf = (stem: string, raw: string | null | undefined): number | null => {
+    if (stem !== 'S3-Q4') return scoreItem(stem, raw);
+    try {
+      return scoreS3Q4Composite(typeof raw === 'string' ? JSON.parse(raw) : raw);
+    } catch {
+      return null;
+    }
+  };
+  const out: Array<{ firmId: string; score: number }> = [];
+  for (const [firmId, answers] of byFirm) {
+    const roleMeans: number[] = [];
+    for (const items of Object.values(roles)) {
+      const stems = Array.from(new Set(items.map(stemOf)));
+      const scored = stems
+        .map((q) => scoreOf(q, answers.get(q)))
+        .filter((v): v is number => v !== null);
+      if (scored.length === 0) break;
+      roleMeans.push(scored.reduce((a, b) => a + b, 0) / scored.length);
+    }
+    if (roleMeans.length !== Object.keys(roles).length) continue; // not OMI-complete
+    out.push({ firmId, score: roleMeans.reduce((a, b) => a + b, 0) / roleMeans.length });
   }
   return out;
 }
@@ -1089,6 +1134,7 @@ export interface CandidateRunResult {
 export async function runCandidateScoring(
   pool: Pool,
   editionId: string,
+  opts: { methodologyStatus?: 'TEST_UNAPPROVED' | 'APPROVED' } = {},
 ): Promise<CandidateRunResult> {
   const meta = getMethodologyMeta();
   if (meta.status !== 'TEST_UNAPPROVED') {
@@ -1098,14 +1144,50 @@ export async function runCandidateScoring(
       'UNEXPECTED_STATUS',
     );
   }
+  // A run is APPROVED only when two people have approved this methodology
+  // version on the Scoring page (methodology-approval-service.ts).
+  const methodologyStatus = opts.methodologyStatus ?? 'TEST_UNAPPROVED';
+  if (methodologyStatus === 'APPROVED' && !(await isMethodologyApproved(pool))) {
+    throw new CandidateScoringError(
+      `${meta.id} v${meta.version} has not been approved, so its runs cannot be marked approved`,
+      'METHODOLOGY_NOT_APPROVED',
+    );
+  }
   const datasetHash = await datasetHashFor(pool, editionId);
   const run = await createCalculationRun(pool, {
     editionId,
     runType: 'scoring',
     methodologyVersion: methodologyVersionString(),
-    methodologyStatus: 'TEST_UNAPPROVED',
+    methodologyStatus,
     datasetHash,
   });
+
+  // Firm_OMI and Industry_OMI (mean of valid firms).
+  const omi = await firmOmiScores(pool, editionId);
+  for (const f of omi) {
+    await insertCalculatedResult(pool, {
+      calculationRunId: run.id,
+      subjectType: 'firm',
+      subjectId: f.firmId,
+      metricCode: 'OMI',
+      value: Math.round(f.score * 10000) / 10000,
+      n: 3,
+      denominator: 3,
+      sufficiencyState: 'REPORTABLE',
+    });
+  }
+  if (omi.length > 0) {
+    await insertCalculatedResult(pool, {
+      calculationRunId: run.id,
+      subjectType: 'market',
+      subjectId: 'INDUSTRY',
+      metricCode: 'OMI',
+      value: Math.round((omi.reduce((a, b) => a + b.score, 0) / omi.length) * 10000) / 10000,
+      n: omi.length,
+      denominator: omi.length,
+      sufficiencyState: 'REPORTABLE',
+    });
+  }
 
   const dmi = await firmDmiScores(pool, editionId);
   for (const f of dmi) {
@@ -1187,6 +1269,27 @@ export async function runCandidateScoring(
       sufficiencyState: 'REPORTABLE',
     });
     firmSeiCount += 1;
+  }
+
+  // Firm_Investor_IEI / ICI (firm_combined): each firm's own investors, for its
+  // private report. Shared market-level items never reach a firm's figure.
+  for (const s of investorScores) {
+    for (const [metricCode, value, n] of [
+      ['IEI', s.investorIei, s.nIei],
+      ['ICI', s.investorIci, s.nIci],
+    ] as const) {
+      if (value === null) continue;
+      await insertCalculatedResult(pool, {
+        calculationRunId: run.id,
+        subjectType: 'firm',
+        subjectId: s.firmId,
+        metricCode,
+        value: Math.round(value * 10000) / 10000,
+        n,
+        denominator: n,
+        sufficiencyState: 'REPORTABLE',
+      });
+    }
   }
 
   // Investor-side IEI/ICI pooling (§7.5/§8.5/§9) — the real caller

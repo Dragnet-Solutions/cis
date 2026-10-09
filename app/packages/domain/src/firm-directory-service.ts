@@ -1,5 +1,11 @@
 import { Pool } from 'pg';
-import { listOrganizations, createOrganization, withTransaction } from '@cis/db';
+import {
+  listOrganizations,
+  createOrganization,
+  withTransaction,
+  getEditionById,
+  upsertEditionParticipation,
+} from '@cis/db';
 import { requirePermission, type RbacContext } from '@cis/auth';
 import { writeAudit } from '@cis/audit';
 import { FirmTeamError } from './firm-team-service';
@@ -47,6 +53,14 @@ export interface FirmImportResult extends FirmImportPlan {
   dryRun: boolean;
   /** Number of firms actually added (always 0 on a dry run). */
   added: number;
+  /**
+   * Firms in the file enrolled in the edition as active participants — the new
+   * ones and any already in the directory — so they appear in the surveys.
+   * Null when no edition was given; 0 on a dry run.
+   */
+  enrolled: number | null;
+  /** Why nobody was enrolled although an edition was given, if so. */
+  enrolmentNote: string | null;
 }
 
 /** Split CSV text into rows of fields. Handles quoted fields, doubled quotes,
@@ -201,12 +215,29 @@ export async function importFirmDirectory(
   pool: Pool,
   rbac: RbacContext,
   csv: string,
-  options: { dryRun: boolean },
+  options: { dryRun: boolean; editionId?: string | null },
   ctx: ActorContext = {},
 ): Promise<FirmImportResult> {
   requirePermission(rbac, EDITION_MANAGE_PERMISSION);
   const plan = await planFirmImport(pool, csv);
-  if (options.dryRun) return { ...plan, dryRun: true, added: 0 };
+
+  // Importing a firm also enrols it in the edition being set up, so it appears
+  // in the surveys — but only while that edition can still take participants.
+  const edition = options.editionId ? await getEditionById(pool, options.editionId) : null;
+  const enrolling = !!edition && (edition.status === 'draft' || edition.status === 'open');
+  const enrolmentNote =
+    options.editionId && !enrolling
+      ? 'The edition is no longer collecting, so the firms were not enrolled in it.'
+      : null;
+  if (options.dryRun) {
+    return {
+      ...plan,
+      dryRun: true,
+      added: 0,
+      enrolled: options.editionId ? 0 : null,
+      enrolmentNote,
+    };
+  }
 
   if (plan.errors.length > 0) {
     throw new FirmTeamError(
@@ -215,15 +246,37 @@ export async function importFirmDirectory(
     );
   }
 
+  // Firms in the file that are already in the directory are enrolled too.
+  const existing = (await listOrganizations(pool)).filter((o) => o.orgType === 'firm');
+  const existingIds = new Set<string>();
+  for (const d of plan.duplicates) {
+    const match = existing.find(
+      (o) => nameKey(o.displayName) === nameKey(d.name) || o.slug === d.slug,
+    );
+    if (match) existingIds.add(match.id);
+  }
+  let enrolled = 0;
+
   try {
     await withTransaction(pool, async (client) => {
       const c = client as unknown as Pool;
+      const enrol = async (organizationId: string) => {
+        if (!enrolling) return;
+        await upsertEditionParticipation(c, {
+          editionId: edition!.id,
+          organizationId,
+          status: 'active',
+        });
+        enrolled += 1;
+      };
+      for (const id of existingIds) await enrol(id);
       for (const row of plan.toAdd) {
         const org = await createOrganization(c, {
           slug: row.slug,
           displayName: row.name,
           orgType: 'firm',
         });
+        await enrol(org.id);
         await writeAudit(c, {
           actorId: rbac.userId,
           actionType: 'firm_directory.firm_added',
@@ -246,5 +299,11 @@ export async function importFirmDirectory(
     throw err;
   }
 
-  return { ...plan, dryRun: false, added: plan.toAdd.length };
+  return {
+    ...plan,
+    dryRun: false,
+    added: plan.toAdd.length,
+    enrolled: options.editionId ? enrolled : null,
+    enrolmentNote,
+  };
 }

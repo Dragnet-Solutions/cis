@@ -154,7 +154,7 @@ export async function generateFirmReports(
 // ─── Approval for release: maker-checker ─────────────────────────────────────
 
 /**
- * Releasing the firm reports is one of the six critical actions (People and
+ * Releasing the firm reports is one of the critical actions (People and
  * access): every firm sees its report at once, and nothing released is ever
  * recalled. So no one approves a firm report alone. It runs on the same
  * `critical_actions` maker-checker as freezing the instruments and locking the

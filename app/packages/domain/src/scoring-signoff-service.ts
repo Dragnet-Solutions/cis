@@ -27,6 +27,8 @@ import type {
 } from '@cis/shared-types';
 import { DomainError } from './errors';
 import { runScoring, type ScoringRunResult } from './calculation-service';
+import { runCandidateScoring } from './candidate-scoring-service';
+import { isMethodologyApproved } from './methodology-approval-service';
 
 /**
  * UX-ADM-004 — Setup: Results, Scores (sign-off). The maker-checker gate on the
@@ -109,6 +111,15 @@ export async function triggerScoringRun(
   if (!edition) throw new ScoringSignoffError(`Edition ${input.editionId} not found`, 'NOT_FOUND');
   if (edition.status !== 'locked') {
     throw new ScoringBlockedError(edition.status);
+  }
+  // Once two people have approved the scoring methodology, a run computes the
+  // five indices with it and is marked APPROVED; until then the provisional
+  // placeholder runs, and no index score is reported.
+  if (await isMethodologyApproved(pool)) {
+    const result = await runCandidateScoring(pool, input.editionId, {
+      methodologyStatus: 'APPROVED',
+    });
+    return { run: result.run, results: await listCalculatedResults(pool, result.run.id) };
   }
   return runScoring(pool, input);
 }
@@ -366,6 +377,11 @@ function describePopulation(
 /** Aggregate a run's per-firm values for a metric into a display score (mean of
  *  the non-null values), rounded to one decimal. Null when nothing scored. */
 function aggregateScore(results: CalculatedResult[], metricCode: string): number | null {
+  // A run under the approved methodology records the industry figure itself.
+  const industry = results.find(
+    (r) => r.subjectType === 'market' && r.subjectId === 'INDUSTRY' && r.metricCode === metricCode,
+  );
+  if (industry) return industry.value === null ? null : Math.round(industry.value * 10) / 10;
   const values = results
     .filter((r) => r.metricCode === metricCode && r.value !== null)
     .map((r) => r.value as number);
