@@ -27,7 +27,9 @@ export function RetailEntry({
   onStarted: (respondentId: string, firms: ParticipatingFirm[]) => void;
 }): JSX.Element {
   const [consent, setConsent] = useState<ConsentContent | null>(null);
-  const [firms, setFirms] = useState<ParticipatingFirm[]>([]);
+  // null until the list has loaded — an empty list means there really are none.
+  const [firms, setFirms] = useState<ParticipatingFirm[] | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [accepted, setAccepted] = useState(false);
   const [channel, setChannel] = useState<Channel>('none');
@@ -44,21 +46,21 @@ export function RetailEntry({
 
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
-      try {
-        const [cc, fs] = await Promise.all([
-          journeyApi.consentContent(),
-          journeyApi.participatingFirms(editionId),
-        ]);
-        if (cancelled) return;
-        setConsent(cc.consent);
-        setFirms(fs);
-        // Drop a pre-selection that is not a participating firm this edition.
-        setPicked((prev) => prev.filter((id) => fs.some((f) => f.id === id)));
-      } catch (err) {
-        if (!cancelled) setError(err instanceof ApiError ? err.message : 'Could not load the page');
-      }
-    })();
+    const failed = (err: unknown): void => {
+      if (cancelled) return;
+      setLoadFailed(true);
+      setError(err instanceof ApiError ? err.message : 'Could not load the page');
+    };
+    // Loaded independently, so neither waits on the other.
+    journeyApi.consentContent().then((cc) => {
+      if (!cancelled) setConsent(cc.consent);
+    }, failed);
+    journeyApi.participatingFirms(editionId).then((fs) => {
+      if (cancelled) return;
+      setFirms(fs);
+      // Drop a pre-selection that is not a participating firm this edition.
+      setPicked((prev) => prev.filter((id) => fs.some((f) => f.id === id)));
+    }, failed);
     return () => {
       cancelled = true;
     };
@@ -97,7 +99,7 @@ export function RetailEntry({
         phone: channel === 'text' || channel === 'both' ? phone : null,
       });
       await journeyApi.ratedFirms(respondentId, picked);
-      onStarted(respondentId, firms);
+      onStarted(respondentId, firms ?? []);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not start the survey');
       setBusy(false);
@@ -122,11 +124,6 @@ export function RetailEntry({
             {consent.expansionTitle}
           </button>
           {expanded && <p className="consent-expansion">{consent.expansion}</p>}
-          {consent.provisional && (
-            <p className="consent-provisional">
-              This wording is provisional and owned by the study’s data protection officer.
-            </p>
-          )}
 
           {/* then the consent checkbox — this gates the primary action */}
           <label className="ctl-choice consent-check">
@@ -203,7 +200,11 @@ export function RetailEntry({
       {/* firm picker from real active participating firms */}
       <fieldset className="firm-picker">
         <legend>Which firms would you like to tell us about?</legend>
-        {firms.length === 0 ? (
+        {firms === null ? (
+          <p className="lede">
+            {loadFailed ? 'The list of firms could not be loaded.' : 'Loading…'}
+          </p>
+        ) : firms.length === 0 ? (
           <p className="lede">No participating firms are available for this edition yet.</p>
         ) : (
           firms.map((f) => (

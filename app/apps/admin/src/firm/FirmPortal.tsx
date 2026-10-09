@@ -22,6 +22,8 @@ import {
   type FirmDirectoryEntry,
   type FirmResults,
 } from './portalClient';
+import { FirmReport } from '../reports/FirmReport';
+import { portalFirmSource } from '../reports/source';
 import { usePortalSession, type PortalSession } from './usePortalSession';
 import { ApiError } from '../api/types';
 import { ErrorState, type ErrorStateKind } from '../shared/ErrorState';
@@ -333,6 +335,24 @@ function SetupView({
 }): JSX.Element {
   const [chosenOrgId, setChosenOrgId] = useState<string | null>(organizationId);
   const [firmQuery, setFirmQuery] = useState(firm);
+  // The claim link names the firm. The directory arrives after this form first
+  // renders, so the box is filled (and held) once the named firm is found in it
+  // — not just from the first render, when the list is still empty.
+  const linkedFirm = organizationId ? (firms.find((f) => f.id === organizationId) ?? null) : null;
+  const linkNotFound = !!organizationId && firms.length > 0 && !linkedFirm;
+  const [linkReleased, setLinkReleased] = useState(false);
+  const firmLocked = !!linkedFirm && !linkReleased;
+  useEffect(() => {
+    if (linkedFirm && !linkReleased) {
+      setChosenOrgId(linkedFirm.id);
+      setFirmQuery(linkedFirm.displayName);
+    }
+  }, [linkedFirm, linkReleased]);
+  useEffect(() => {
+    // A link to a firm that is not in the directory chooses nothing.
+    if (linkNotFound) setChosenOrgId((id) => (id === organizationId ? null : id));
+  }, [linkNotFound, organizationId]);
+  const chosenName = firms.find((f) => f.id === chosenOrgId)?.displayName ?? firm;
   const [privacy, setPrivacy] = useState(false);
   const [followUp, setFollowUp] = useState(false);
   const [name, setName] = useState('');
@@ -420,8 +440,8 @@ function SetupView({
       <p className="lede">
         {chosenOrgId ? (
           <>
-            You are claiming this space for <b>{firm}</b>. From now on you sign in with your email
-            address and this PIN.
+            You are claiming this space for <b>{chosenName}</b>. From now on you sign in with your
+            email address and this PIN.
           </>
         ) : (
           'Choose your firm to begin.'
@@ -430,10 +450,33 @@ function SetupView({
 
       <div className="field">
         <label htmlFor="setupFirm">Your firm</label>
+        {firmLocked && (
+          <p className="hint" id="setupFirmHint">
+            From your invitation link.{' '}
+            <button
+              type="button"
+              className="textlink"
+              onClick={() => {
+                setLinkReleased(true);
+                setChosenOrgId(null);
+                setFirmQuery('');
+              }}
+            >
+              Not your firm?
+            </button>
+          </p>
+        )}
+        {linkNotFound && (
+          <p className="hint">
+            Your invitation link does not match a firm on our list. Choose your firm below.
+          </p>
+        )}
         <input
           id="setupFirm"
           type="text"
           value={firmQuery}
+          readOnly={firmLocked}
+          aria-describedby={firmLocked ? 'setupFirmHint' : undefined}
           placeholder="Type or choose a firm"
           onChange={(e) => {
             setFirmQuery(e.target.value);
@@ -816,7 +859,7 @@ function PrivacyModal({ onClose }: { onClose: () => void }): JSX.Element {
 
 // ─── Authenticated portal ───────────────────────────────────────────────────
 
-type PortalScreen = 'landing' | 'assign' | 'outreach' | 'whylink' | 'team' | 'results';
+type PortalScreen = 'landing' | 'assign' | 'outreach' | 'whylink' | 'team' | 'results' | 'report';
 
 function Portal({
   session,
@@ -830,6 +873,8 @@ function Portal({
   const [seats, setSeats] = useState<SeatAssignment[] | null>(null);
   const [errorKind, setErrorKind] = useState<ErrorStateKind | null>(null);
   const [seatNote, setSeatNote] = useState<string | null>(null);
+  // Whether CIS has released this firm's report — nothing of it shows before.
+  const [released, setReleased] = useState(false);
 
   async function load(): Promise<void> {
     try {
@@ -839,6 +884,15 @@ function Portal({
       ]);
       setMe(meResult);
       setSeats(seatsResult);
+      const editionId = meResult.currentEdition?.id;
+      setReleased(
+        editionId
+          ? await portalClient
+              .getReport(session.token, editionId)
+              .then((r) => r.released)
+              .catch(() => false)
+          : false,
+      );
     } catch (e) {
       if (e instanceof ApiError && e.statusCode === 401) {
         setErrorKind('expired_link');
@@ -914,6 +968,8 @@ function Portal({
             onOutreach={() => go('outreach')}
             onTeam={() => go('team')}
             onResults={() => go('results')}
+            released={released}
+            onReport={() => go('report')}
           />
         )}
         {screen === 'assign' && (
@@ -936,6 +992,14 @@ function Portal({
         {screen === 'whylink' && <WhyLinkView onBack={() => go('outreach')} />}
         {screen === 'team' && (
           <TeamView session={session} onBack={() => go('landing')} onReload={load} me={me} />
+        )}
+        {screen === 'report' && me.currentEdition && (
+          <div className="portal-report">
+            <FirmReport
+              source={portalFirmSource(session.token, me.currentEdition.id)}
+              onBack={() => go('landing')}
+            />
+          </div>
         )}
         {screen === 'results' && (
           <ResultsView
@@ -962,6 +1026,8 @@ function PortalLanding({
   onOutreach,
   onTeam,
   onResults,
+  released,
+  onReport,
 }: {
   firm: string;
   phase: 'setup' | 'running' | 'closed';
@@ -971,6 +1037,8 @@ function PortalLanding({
   onOutreach: () => void;
   onTeam: () => void;
   onResults: () => void;
+  released: boolean;
+  onReport: () => void;
 }): JSX.Element {
   const assigned = seats.filter((s) => s.state !== 'empty').length;
   const complete = seats.filter((s) => s.state === 'complete').length;
@@ -1064,23 +1132,39 @@ function PortalLanding({
         </>
       )}
 
-      {phase === 'closed' && (
+      {released && (
         <div className="resultcard">
-          <p className="eyebrow">Results</p>
-          <h2>Your results are ready.</h2>
+          <p className="eyebrow">Your report</p>
+          <h2>Your firm report is ready.</h2>
           <p>
-            How your firm compares with the industry, across every measure in the study. Yours alone
-            — no other firm is named.
+            How your firm compares with the industry, across every measure in the study, with your
+            own investors’ view of your service. Yours alone — no other firm is named. Read it here
+            or download the PDF.
           </p>
           <div className="actions">
-            <button type="button" className="btn" onClick={onResults}>
-              Open your results
+            <button type="button" className="btn" onClick={onReport}>
+              Read your report
+            </button>
+            <button type="button" className="btn-2" onClick={onResults}>
+              Your results at a glance
             </button>
           </div>
         </div>
       )}
 
-      {allAssigned && mine && phase !== 'closed' && (
+      {!released && phase === 'closed' && (
+        <div className="resultcard">
+          <p className="eyebrow">Your report</p>
+          <h2>Your firm report is being prepared.</h2>
+          <p>
+            Collection has closed. CIS checks and approves each firm’s report, and releases it once
+            the national results are approved. Your coordinators will get an email the moment yours
+            is here.
+          </p>
+        </div>
+      )}
+
+      {allAssigned && mine && phase !== 'closed' && !released && (
         <div className="resultcard" style={{ marginTop: 16 }}>
           <p className="eyebrow">Your survey</p>
           <h2>Your {mine.roleLabel.toLowerCase()} survey is waiting.</h2>

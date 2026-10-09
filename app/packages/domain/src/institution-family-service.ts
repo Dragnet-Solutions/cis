@@ -53,6 +53,13 @@ export function instrumentCodeForFamily(familyCode: InstrumentFamilyCode): strin
   return FAMILY_META[familyCode].instrumentCode;
 }
 
+/** Whether an instrument is one of the institution-family (regulator /
+ *  market-infrastructure) reviews. These are answered only through the
+ *  named-contact link issued from the Regulators screen, never self-started. */
+export function isRegulatorInstrument(instrumentCode: string): boolean {
+  return Object.values(FAMILY_META).some((f) => f.instrumentCode === instrumentCode);
+}
+
 /**
  * The common controlled introduction paragraph, parameterised by
  * {INSTITUTION_NAME} and {INSTITUTIONAL_RELATIONSHIP}. This is NEW render-time

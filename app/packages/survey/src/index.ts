@@ -12,6 +12,7 @@ export {
   scaleColumns,
   isAnswered,
   outstanding,
+  describeAnswer,
   sharedItems,
   perFirmItems,
   requiresConsent,

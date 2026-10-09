@@ -13,7 +13,9 @@ import {
   handOverLead,
   removeCoordinator,
   listCoordinators,
+  importFirmDirectory,
 } from '@cis/domain';
+import { loadRbacContext } from '@cis/auth';
 
 const CoordinatorSchema = z.object({
   id: z.string().uuid(),
@@ -49,6 +51,35 @@ export const firmTeamRoutes: FastifyPluginAsyncZod = async (app) => {
         .map((o) => ({ id: o.id, displayName: o.displayName, slug: o.slug })),
     });
   });
+
+  // Import the firm directory from a CSV (header `name`, optional `slug`).
+  // `dryRun` previews what would be added, skipped as a duplicate, or refused,
+  // and writes nothing; the real import adds every new firm in one go, or
+  // nothing if the file has an error. Needs the "Change the setup" right.
+  app.post(
+    '/firms/import',
+    {
+      preHandler: [app.authenticate],
+      schema: {
+        body: z.object({
+          csv: z.string().min(1).max(1_000_000),
+          dryRun: z.boolean(),
+        }),
+      },
+    },
+    async (request, reply) => {
+      const pool = getPool();
+      const rbac = await loadRbacContext(pool, request.session.sub);
+      const result = await importFirmDirectory(
+        pool,
+        rbac,
+        request.body.csv,
+        { dryRun: request.body.dryRun },
+        { ipAddress: request.ip, userAgent: request.headers['user-agent'] ?? null },
+      );
+      return reply.status(request.body.dryRun ? 200 : 201).send(result);
+    },
+  );
 
   app.get(
     '/firms/:orgId/coordinators',

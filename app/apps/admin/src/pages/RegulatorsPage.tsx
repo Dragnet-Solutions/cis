@@ -74,6 +74,22 @@ function phoneDigits(v: string): number {
 
 const EMPTY_DRAFT: RegulatorContact = { who: '', role: '', email: '', phone: '', how: '' };
 
+/**
+ * What a contact still needs before it can be saved. Every detail is required,
+ * the mobile included: the survey link and every reminder go by email AND text,
+ * and a text-only reminder exists for when email goes unread. The server applies
+ * the same rules (regulator-engagement-service `validateContact`).
+ */
+export function contactGaps(c: RegulatorContact): string[] {
+  const gaps: string[] = [];
+  if (!c.who.trim()) gaps.push('a name');
+  if (!c.role.trim()) gaps.push('a role');
+  if (!EMAIL_RE.test(c.email.trim())) gaps.push('a working email address');
+  if (phoneDigits(c.phone) < 10) gaps.push('a mobile number');
+  if (!c.how.trim()) gaps.push('how we got to them');
+  return gaps;
+}
+
 type Key = { institutionId: string; familyCode: RegulatorFamilyCode };
 
 export function RegulatorsPage({
@@ -228,8 +244,8 @@ function RegulatorDetail({
 
   const okMail = EMAIL_RE.test(draft.email.trim());
   const okPhone = phoneDigits(draft.phone) >= 10;
-  const draftValid =
-    !!draft.who.trim() && !!draft.role.trim() && okMail && okPhone && !!draft.how.trim();
+  const draftGaps = contactGaps(draft);
+  const draftValid = draftGaps.length === 0;
   const draftError =
     draft.email.length && !okMail
       ? 'That is not a working email address.'
@@ -275,6 +291,7 @@ function RegulatorDetail({
           if (ok) setEditing(false);
         }}
         valid={draftValid}
+        gaps={draftGaps}
         validationError={draftError}
       />
 
@@ -314,6 +331,7 @@ function ContactSection(props: {
   cancelEdit: () => void;
   save: () => void;
   valid: boolean;
+  gaps: string[];
   validationError: string;
 }): JSX.Element {
   const { r, editing, draft, setDraft } = props;
@@ -352,9 +370,17 @@ function ContactSection(props: {
               {field('who', 'Name')}
               {field('role', 'Role')}
             </div>
+            <p className="hint">
+              Every detail is needed. The survey link and reminders go by email and by text, so the
+              mobile number is required too.
+            </p>
             <div className="two">
               {field('email', 'Email')}
-              {field('phone', 'Mobile')}
+              {field(
+                'phone',
+                'Mobile',
+                'Needed for the text that goes with every link and reminder.',
+              )}
             </div>
             {field('how', 'How we got to them', 'A note for whoever picks this up next.')}
             {props.validationError ? (
@@ -375,6 +401,9 @@ function ContactSection(props: {
                 Cancel
               </button>
             </div>
+            {!props.valid && !props.validationError && (
+              <p className="hint">Still needed before saving: {props.gaps.join(', ')}.</p>
+            )}
           </>
         ) : r.contact ? (
           <>
@@ -587,8 +616,20 @@ function HistorySection(props: {
             <p>Nothing recorded yet.</p>
           ) : (
             props.r.history.map((x) => (
-              <div className="hitem" key={x.id}>
-                <span className="when">{fmtWhen(x.createdAt)}</span>
+              <div
+                className="hitem"
+                key={x.id}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '64px minmax(0, 1fr)',
+                  gap: 12,
+                  padding: '6px 0',
+                  borderBottom: '1px solid var(--line, #d9d9d9)',
+                }}
+              >
+                <span className="when" style={{ color: 'var(--fg-3, #6a6a6a)' }}>
+                  {fmtWhen(x.createdAt)}
+                </span>
                 <span>{x.entry}</span>
               </div>
             ))

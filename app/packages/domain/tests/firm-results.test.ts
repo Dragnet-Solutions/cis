@@ -20,6 +20,8 @@ import {
   createRespondent,
   insertResponse,
   updateEditionStatus,
+  createFirmReport,
+  setReleaseState,
 } from '@cis/db';
 import {
   seedReferenceData,
@@ -29,6 +31,7 @@ import {
   standing,
   isGapIndex,
   FirmResultsAccessError,
+  FirmResultsError,
 } from '../src';
 import { getTestPool, runMigrations, truncateAllTables, closeTestPool } from '../../db/tests/setup';
 
@@ -83,11 +86,24 @@ async function signedRun(): Promise<string> {
   await approveSignoff(pool, { signoffId: so.id, approvedBy: 'checker' });
   return run.id;
 }
+/** The firm's report, released — a firm sees its results only from then on. */
+async function release(runId: string, firmId: string): Promise<void> {
+  const report = await createFirmReport(pool, {
+    editionId,
+    organizationId: firmId,
+    scoringRunId: runId,
+    retailN: 0,
+    cutState: 'none',
+    generationState: 'generated',
+  });
+  await setReleaseState(pool, report.id, 'released');
+}
 async function seedFirmScores(
   runId: string,
   firmId: string,
   scores: Record<string, number>,
 ): Promise<void> {
+  await release(runId, firmId);
   for (const [metricCode, value] of Object.entries(scores)) {
     await insertCalculatedResult(pool, {
       calculationRunId: runId,
@@ -290,5 +306,19 @@ describe('Coordinator-only access (interim default)', () => {
     await expect(
       getFirmResults(pool, { editionId, firmId: a, coordinatorAccessCode: 'CODE-B' }),
     ).rejects.toMatchObject({ code: 'ACCESS_DENIED' });
+  });
+});
+
+describe('Results wait for the firm report', () => {
+  it('shows a firm nothing until CIS has released its report', async () => {
+    const f = await firm('unreleased');
+    await coordinatorFor(f, 'UNREL-1');
+    const runId = await signedRun();
+    const ask = () =>
+      getFirmResults(pool, { editionId, firmId: f, coordinatorAccessCode: 'UNREL-1' });
+    await expect(ask()).rejects.toBeInstanceOf(FirmResultsError);
+    await expect(ask()).rejects.toThrow(/released/);
+    await release(runId, f);
+    await expect(ask()).resolves.toBeTruthy();
   });
 });

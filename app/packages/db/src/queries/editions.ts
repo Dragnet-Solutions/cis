@@ -60,6 +60,25 @@ export async function getEditionById(pool: Pool, id: string): Promise<Edition | 
   return row ? mapEdition(row) : null;
 }
 
+/**
+ * An edition's status, read with a FOR SHARE row lock when `forShare` is set.
+ * Inside a transaction that lock makes a concurrent lock/archive (an UPDATE of
+ * the same row) wait for this transaction to finish, so a submission can never
+ * land in an edition that locked while it was being written.
+ */
+export async function getEditionStatus(
+  pool: Pool,
+  id: string,
+  opts: { forShare?: boolean } = {},
+): Promise<EditionStatus | null> {
+  const result = await query<{ status: EditionStatus }>(
+    pool,
+    `SELECT status FROM editions WHERE id = $1${opts.forShare ? ' FOR SHARE' : ''}`,
+    [id],
+  );
+  return result.rows[0]?.status ?? null;
+}
+
 export async function getEditionByLabel(pool: Pool, label: string): Promise<Edition | null> {
   const result = await query<RawEditionRow>(pool, 'SELECT * FROM editions WHERE label = $1', [
     label,

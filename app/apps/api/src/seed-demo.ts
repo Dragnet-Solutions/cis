@@ -40,11 +40,17 @@ import {
   getResumeByToken,
   listRegulators,
 } from '@cis/domain';
+import { randomBytes } from 'node:crypto';
+import { Pool } from 'pg';
 import { hashPassword } from '@cis/auth';
 import { buildJourneySequence, isAnswered, type SurveyItem } from '@cis/survey';
 
 const API = process.env['DEMO_API_URL'] ?? 'http://localhost:3200';
-const PASSWORD = process.env['CIS_DEV_OPERATOR_PASSWORD'];
+// The seed signs in with a one-off random password, then hands the operators
+// their real ones: copied, as hashes, from PASSWORD_SOURCE_DATABASE_URL (your
+// dev database) when set. No plaintext password is read from anywhere.
+const PASSWORD = randomBytes(24).toString('base64url');
+const PASSWORD_SOURCE = process.env['PASSWORD_SOURCE_DATABASE_URL'];
 const MAKER = 'adaeze.okoro@cis.example';
 const CHECKER = 'segun.oyegbesan@dragnet.example';
 
@@ -211,7 +217,6 @@ const log = (msg: string): void => {
 // ─── Main ──────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  if (!PASSWORD) throw new Error('Set CIS_DEV_OPERATOR_PASSWORD (it is in .env).');
   initializePool();
   const pool = getPool();
 
@@ -219,7 +224,7 @@ async function main(): Promise<void> {
     throw new Error('This database already has an edition — run the demo seed on an EMPTY one.');
   }
   const { editionId } = await seedReferenceData(pool);
-  // Same sign-in as the dev database, so one password works everywhere locally.
+  // A one-off password for the seed's own sign-ins; replaced at the end.
   const hash = await hashPassword(PASSWORD);
   await pool.query('UPDATE users SET password_hash = $1 WHERE email = ANY($2)', [
     hash,
@@ -417,7 +422,9 @@ async function main(): Promise<void> {
   await api(`/national-reports/${reportId}/open`, 'POST', maker);
   log('National report generated and its draft opened.');
 
-  // Firm reports, each approved.
+  // Firm reports: generated, each opened by the maker, and their release
+  // requested. Releasing is two-person — the checker approves it once the
+  // national report is approved.
   await api(`/editions/${editionId}/firm-reports/generate`, 'POST', maker, {
     scoringRunId: run.id,
   });
@@ -426,11 +433,55 @@ async function main(): Promise<void> {
     'GET',
     maker,
   );
-  for (const r of reports) await api(`/firm-reports/${r.id}/approve`, 'POST', maker);
-  log(`${reports.length} firm reports generated and approved.`);
+  for (const r of reports) await api(`/firm-reports/${r.id}/open`, 'POST', maker);
+  if (reports.length > 0) {
+    await api(`/editions/${editionId}/firm-reports/release/request`, 'POST', maker, {
+      reason: 'Demo: every firm report generated and read',
+    });
+  }
+  log(`${reports.length} firm reports generated, opened and their release requested.`);
 
+  await handOverPasswords(pool, hash);
   await closePool();
   log('Demo edition ready.');
+}
+
+/**
+ * Give the operators their real passwords: the hashes from the dev database, so
+ * one password works everywhere locally. Without a source database the one-off
+ * seed password is replaced by an unusable one — set a real password with
+ * `pnpm --filter @cis/api set-password <email>`.
+ */
+async function handOverPasswords(
+  pool: ReturnType<typeof getPool>,
+  seedHash: string,
+): Promise<void> {
+  if (PASSWORD_SOURCE) {
+    const source = new Pool({ connectionString: PASSWORD_SOURCE });
+    try {
+      const { rows } = await source.query<{ email: string; password_hash: string }>(
+        'SELECT email, password_hash FROM users WHERE email = ANY($1)',
+        [[MAKER, CHECKER]],
+      );
+      for (const r of rows) {
+        await pool.query('UPDATE users SET password_hash = $1 WHERE email = $2', [
+          r.password_hash,
+          r.email,
+        ]);
+      }
+      log(`Operator passwords copied from the source database (${rows.length}).`);
+      if (rows.length === 2) return;
+    } finally {
+      await source.end();
+    }
+  }
+  // Whoever still has the one-off seed password gets an unusable one instead.
+  const unusable = await hashPassword(randomBytes(32).toString('base64url'));
+  await pool.query('UPDATE users SET password_hash = $1 WHERE password_hash = $2', [
+    unusable,
+    seedHash,
+  ]);
+  log('Set the operators’ passwords with: pnpm --filter @cis/api set-password <email>');
 }
 
 main().catch(async (err) => {

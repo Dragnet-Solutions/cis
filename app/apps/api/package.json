@@ -9,7 +9,8 @@
     "seed": "tsx src/seed.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src/",
-    "seed:demo": "tsx src/seed-demo.ts"
+    "seed:demo": "tsx src/seed-demo.ts",
+    "set-password": "tsx src/set-password.ts"
   },
   "dependencies": {
     "@cis/audit": "workspace:*",
@@ -18,19 +19,20 @@
     "@cis/domain": "workspace:*",
     "@cis/shared-types": "workspace:*",
     "@cis/survey": "workspace:*",
-    "@fastify/helmet": "^13.0.0",
-    "@fastify/jwt": "^10.0.0",
-    "@fastify/rate-limit": "^11.0.0",
-    "fastify": "^5.0.0",
+    "@fastify/helmet": "^13.1.2",
+    "@fastify/jwt": "^10.2.4",
+    "@fastify/rate-limit": "^11.2.1",
+    "fastify": "^5.12.5",
     "fastify-type-provider-zod": "^4.0.2",
     "ioredis": "^5.11.1",
-    "nodemailer": "^6.10.1",
+    "nodemailer": "^10.0.16",
+    "pg": "^8.23.0",
     "puppeteer-core": "^25.12.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^22.5.0",
-    "@types/nodemailer": "^6.4.24",
+    "@types/pg": "^8.23.1",
     "tsx": "^4.19.0",
     "typescript": "*"
   }

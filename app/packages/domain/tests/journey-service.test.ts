@@ -259,7 +259,9 @@ describe('Attribution: referral / colleague never inherit source firm', () => {
   it('a colleague invite carries institution name only, with no inviter link and no firm', async () => {
     const colleague = await createColleagueInvite(pool, {
       editionId,
-      instrumentCode: 'I-SEC',
+      // An institutional investor's colleague — the regulator reviews open
+      // only through their issued link and never take a colleague invite.
+      instrumentCode: 'S5a',
       institutionName: 'Acme Capital',
     });
     const fresh = await getRespondentById(pool, colleague.id);

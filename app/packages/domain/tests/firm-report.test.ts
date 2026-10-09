@@ -7,6 +7,9 @@
  *  - Immutability: a released report cannot be edited or recalled; a correction
  *    is a new version.
  *  - Zero participating firms is a distinct "nothing to produce" state.
+ *  - Release is a critical action (maker-checker): one person requests it with
+ *    a reason, a DIFFERENT person approves, every covered report opened by one
+ *    of the two first; approving releases. No one approves a report alone.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { Pool } from 'pg';
@@ -19,25 +22,42 @@ import {
   approveNationalReport,
   listReleaseHistory,
   getFirmReport,
+  insertReportNarrative,
+  createCoordinator,
 } from '@cis/db';
+import { loadRbacContext, MakerCheckerViolationError, type RbacContext } from '@cis/auth';
 import {
   seedReferenceData,
   getRetailCutThresholds,
   cutStateFor,
   generateFirmReports,
-  approveFirmReport,
+  openFirmReport,
+  requestFirmReportRelease,
+  decideFirmReportRelease,
+  getPendingFirmReportRelease,
   regenerateFirmReport,
   releaseFirmReports,
   correctFirmReport,
   buildEvidencePack,
   requestSignoff,
   approveSignoff,
+  getFirmNarrative,
+  generateFirmNarrative,
+  getReleasedFirmReport,
+  queueReleaseNotices,
+  publishIndustryReport,
+  generateIndustryNarrative,
+  getPublishedIndustryReport,
+  type NarrativeModel,
+  type ReleaseOptions,
 } from '../src';
 import { getTestPool, runMigrations, truncateAllTables, closeTestPool } from '../../db/tests/setup';
 
 let pool: Pool;
 let editionId: string;
 let scoringRunId: string;
+let maker: RbacContext;
+let checker: RbacContext;
 
 beforeAll(async () => {
   pool = getTestPool();
@@ -45,7 +65,10 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   await truncateAllTables(pool);
-  editionId = (await seedReferenceData(pool)).editionId;
+  const seed = await seedReferenceData(pool);
+  editionId = seed.editionId;
+  maker = await loadRbacContext(pool, seed.makerUserId);
+  checker = await loadRbacContext(pool, seed.checkerUserId);
   const run = await createCalculationRun(pool, {
     editionId,
     runType: 'scoring',
@@ -87,6 +110,24 @@ async function participatingFirm(slug: string) {
 async function approveNationalFor() {
   const nr = await createNationalReport(pool, { editionId, scoringRunId });
   await approveNationalReport(pool, nr.id, 'checker');
+}
+/** The only way a firm report is approved: the maker opens the reports and
+ *  requests release with a reason; the checker approves, which releases. */
+async function releaseViaMakerChecker(reportIds: string[], options?: ReleaseOptions) {
+  for (const id of reportIds) await openFirmReport(pool, id, maker.userId);
+  const action = await requestFirmReportRelease(pool, maker, editionId, {
+    reason: 'Every report read; national report approved',
+    reportIds,
+  });
+  return decideFirmReportRelease(
+    pool,
+    checker,
+    editionId,
+    action.id,
+    { approved: true },
+    {},
+    options,
+  );
 }
 
 describe('FRM_04 three-state threshold (governed, provisional)', () => {
@@ -153,12 +194,12 @@ describe('Atomic per-report release', () => {
       scoringRunId,
       failFor: [b.id],
     });
-    // Approve the one that generated.
+    // Approve (and so release) the one that generated.
     const okReport = gen.reports.find((r) => r.organizationId === a.id)!;
-    await approveFirmReport(pool, okReport.id);
     await approveNationalFor();
 
-    const result = await releaseFirmReports(pool, editionId);
+    const { release: result } = await releaseViaMakerChecker([okReport.id]);
+    if (!result) throw new Error('approval should have released');
     expect(result.released.map((r) => r.organizationId)).toEqual([a.id]);
     expect(result.held.map((h) => h.report.organizationId)).toContain(b.id);
     // The held one is held, not excluded — recorded in the permanent history.
@@ -172,8 +213,13 @@ describe('Release ordering', () => {
   it('release is blocked until the national report is approved', async () => {
     const a = await participatingFirm('firm-order');
     const gen = await generateFirmReports(pool, { editionId, scoringRunId });
-    await approveFirmReport(pool, gen.reports.find((r) => r.organizationId === a.id)!.id);
-    // No approved national report yet.
+    const report = gen.reports.find((r) => r.organizationId === a.id)!;
+    // No approved national report yet: neither approving the release nor a
+    // direct release goes through, and the report stays unapproved.
+    await expect(releaseViaMakerChecker([report.id])).rejects.toMatchObject({
+      code: 'NATIONAL_NOT_APPROVED',
+    });
+    expect((await getFirmReport(pool, report.id))?.approvalState).toBe('pending');
     await expect(releaseFirmReports(pool, editionId)).rejects.toMatchObject({
       code: 'NATIONAL_NOT_APPROVED',
     });
@@ -185,10 +231,9 @@ describe('Immutability of a released report', () => {
     const a = await participatingFirm('firm-immutable');
     const gen = await generateFirmReports(pool, { editionId, scoringRunId });
     const report = gen.reports.find((r) => r.organizationId === a.id)!;
-    await approveFirmReport(pool, report.id);
     await approveNationalFor();
-    const { released } = await releaseFirmReports(pool, editionId);
-    const releasedReport = released[0]!;
+    const { release } = await releaseViaMakerChecker([report.id]);
+    const releasedReport = release!.released[0]!;
 
     // The DB blocks any update/delete to a released row.
     await expect(
@@ -226,15 +271,266 @@ describe('Regeneration — retrying a failed report, never a released one', () =
     const a = await participatingFirm('firm-released-retry');
     const gen = await generateFirmReports(pool, { editionId, scoringRunId });
     const report = gen.reports.find((r) => r.organizationId === a.id)!;
-    await approveFirmReport(pool, report.id);
     await approveNationalFor();
-    const { released } = await releaseFirmReports(pool, editionId);
-    const releasedReport = released[0]!;
+    const { release } = await releaseViaMakerChecker([report.id]);
+    const releasedReport = release!.released[0]!;
 
     await expect(regenerateFirmReport(pool, releasedReport.id)).rejects.toMatchObject({
       code: 'ALREADY_RELEASED',
     });
     // Never even reached the DB's own trigger — the release state is unchanged.
     expect((await getFirmReport(pool, releasedReport.id))?.releaseState).toBe('released');
+  });
+});
+
+describe('Delivery: what leaves CIS, frozen as it left', () => {
+  const draftFor = (firmId: string, text: string) =>
+    insertReportNarrative(pool, {
+      editionId,
+      kind: 'firm',
+      subjectId: firmId,
+      sentences: [
+        { section: 'SUMMARY', text, factIds: ['X'], finding: null },
+        {
+          section: 'SUMMARY',
+          text: 'A sentence the checker held back.',
+          factIds: ['X'],
+          finding: { kind: 'SPECULATIVE', why: 'test' },
+        },
+      ],
+      facts: [],
+      model: 'fake-model',
+      createdBy: 'op@cis.example',
+    });
+
+  it('releases a report only with its analysis, frozen; one that cannot be prepared is held', async () => {
+    const a = await participatingFirm('firm-prepared');
+    const b = await participatingFirm('firm-unprepared');
+    const gen = await generateFirmReports(pool, { editionId, scoringRunId });
+    await approveNationalFor();
+    const drafted = await draftFor(a.id, 'The analysis as released.');
+
+    // Approving the release (two people) runs it, with the analysis prepared.
+    const { release: result } = await releaseViaMakerChecker(
+      gen.reports.map((r) => r.id),
+      {
+        releasedBy: 'op@cis.example',
+        prepare: async (r) => {
+          if (r.organizationId === b.id) throw new Error('the model is unavailable');
+          return { narrativeId: drafted.id };
+        },
+      },
+    );
+    if (!result) throw new Error('approval should have released');
+    expect(result.released.map((r) => r.organizationId)).toEqual([a.id]);
+    expect(result.held[0]?.report.organizationId).toBe(b.id);
+    expect(result.held[0]?.reason).toMatch(/written analysis could not be prepared/);
+
+    // A later draft never changes what the firm was given, and cannot be made.
+    await draftFor(a.id, 'A later redraft.');
+    expect((await getFirmNarrative(pool, editionId, a.id))?.id).toBe(drafted.id);
+    const model: NarrativeModel = { name: 'fake', complete: async () => '{}' };
+    await expect(
+      generateFirmNarrative(pool, editionId, a.id, model, 'op@cis.example'),
+    ).rejects.toMatchObject({ code: 'ALREADY_PUBLISHED' });
+
+    // The firm sees its released report: passed sentences only, no drafter.
+    const released = await getReleasedFirmReport(pool, editionId, a.id);
+    expect(released?.narrative?.sentences.map((x) => x.text)).toEqual([
+      'The analysis as released.',
+    ]);
+    expect(JSON.stringify(released)).not.toContain('op@cis.example');
+    // The held firm sees nothing.
+    expect(await getReleasedFirmReport(pool, editionId, b.id)).toBeNull();
+  });
+
+  it('tells each released firm’s coordinators where to find it — and nothing else', async () => {
+    const a = await participatingFirm('firm-notice');
+    await createCoordinator(pool, {
+      organizationId: a.id,
+      name: 'Ngozi',
+      email: 'ngozi@firm-notice.example',
+      accessCode: 'NOTICE-1',
+      isLead: true,
+    });
+    const gen = await generateFirmReports(pool, { editionId, scoringRunId });
+    await approveNationalFor();
+    const { release } = await releaseViaMakerChecker(gen.reports.map((r) => r.id));
+    const released = release!.released;
+
+    expect(await queueReleaseNotices(pool, released, 'https://cis.example/firm')).toBe(1);
+    const { rows } = await pool.query<{ to_address: string; body_text: string; status: string }>(
+      'SELECT to_address, body_text, status FROM email_outbox',
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.to_address).toBe('ngozi@firm-notice.example');
+    expect(rows[0]!.status).toBe('queued');
+    expect(rows[0]!.body_text).toContain('https://cis.example/firm');
+    expect(rows[0]!.body_text).toContain('FIRM-NOTICE');
+  });
+
+  it('publishes the Industry report only once the national report is approved, then freezes it', async () => {
+    const model: NarrativeModel = {
+      name: 'fake-model',
+      complete: async () =>
+        JSON.stringify({
+          sections: { EXEC: [{ text: 'The published analysis.', factIds: ['PART.firm'] }] },
+        }),
+    };
+    await expect(
+      publishIndustryReport(pool, editionId, () => model, 'op@cis.example'),
+    ).rejects.toMatchObject({ code: 'NATIONAL_NOT_APPROVED' });
+    await expect(getPublishedIndustryReport(pool, editionId)).rejects.toMatchObject({
+      code: 'NOT_PUBLISHED',
+    });
+
+    await approveNationalFor();
+    const first = await publishIndustryReport(pool, editionId, () => model, 'op@cis.example');
+    const again = await publishIndustryReport(pool, editionId, () => model, 'op@cis.example');
+    expect(again.id).toBe(first.id);
+
+    const published = await getPublishedIndustryReport(pool, editionId);
+    expect(published.narrative?.sentences.map((x) => x.text)).toEqual(['The published analysis.']);
+    await expect(
+      generateIndustryNarrative(pool, editionId, model, 'op@cis.example'),
+    ).rejects.toMatchObject({ code: 'ALREADY_PUBLISHED' });
+  });
+});
+
+describe('Releasing the firm reports is two-person (maker-checker)', () => {
+  async function twoGeneratedReports() {
+    const a = await participatingFirm('firm-mc-a');
+    const b = await participatingFirm('firm-mc-b');
+    const gen = await generateFirmReports(pool, { editionId, scoringRunId });
+    const ra = gen.reports.find((r) => r.organizationId === a.id)!;
+    const rb = gen.reports.find((r) => r.organizationId === b.id)!;
+    return { ra, rb };
+  }
+
+  it('one request covers every generated report; the checker approves and they release', async () => {
+    const { ra, rb } = await twoGeneratedReports();
+    await approveNationalFor();
+    // The maker reads one, the checker reads the other — between them, both.
+    await openFirmReport(pool, ra.id, maker.userId);
+    const action = await requestFirmReportRelease(pool, maker, editionId, {
+      reason: 'Both reports read; figures match the signed run',
+    });
+    expect(action.status).toBe('pending');
+    expect((action.payload['reportIds'] as string[]).sort()).toEqual([ra.id, rb.id].sort());
+    expect((await getPendingFirmReportRelease(pool, editionId))?.id).toBe(action.id);
+    await openFirmReport(pool, rb.id, checker.userId);
+
+    const result = await decideFirmReportRelease(pool, checker, editionId, action.id, {
+      approved: true,
+    });
+    expect(result.action.status).toBe('approved');
+    expect(result.action.approvedBy).toBe(checker.userId);
+    expect(result.release?.released.map((r) => r.id).sort()).toEqual([ra.id, rb.id].sort());
+    for (const id of [ra.id, rb.id]) {
+      const r = await getFirmReport(pool, id);
+      expect(r?.approvalState).toBe('approved');
+      expect(r?.releaseState).toBe('released');
+    }
+    // Recorded in the audit log: the request and the approval.
+    const audit = await pool.query<{ action_type: string; actor_id: string }>(
+      `SELECT action_type, actor_id FROM audit_log WHERE entity_id = $1 ORDER BY occurred_at`,
+      [action.id],
+    );
+    expect(audit.rows.map((r) => r.action_type)).toEqual([
+      'critical_action.requested',
+      'critical_action.approved',
+    ]);
+  });
+
+  it('a maker can never approve their own request', async () => {
+    const { ra } = await twoGeneratedReports();
+    await approveNationalFor();
+    await openFirmReport(pool, ra.id, maker.userId);
+    const action = await requestFirmReportRelease(pool, maker, editionId, {
+      reason: 'Read and ready',
+      reportIds: [ra.id],
+    });
+    await expect(
+      decideFirmReportRelease(pool, maker, editionId, action.id, { approved: true }),
+    ).rejects.toBeInstanceOf(MakerCheckerViolationError);
+    expect((await getFirmReport(pool, ra.id))?.approvalState).toBe('pending');
+    expect((await getFirmReport(pool, ra.id))?.releaseState).toBe('unreleased');
+    // The database refuses it too, even by direct SQL.
+    await expect(
+      pool.query(`UPDATE critical_actions SET status='approved', approved_by=$1 WHERE id=$2`, [
+        maker.userId,
+        action.id,
+      ]),
+    ).rejects.toThrow(/maker_checker_no_self_approval/);
+  });
+
+  it('a request needs a reason', async () => {
+    await twoGeneratedReports();
+    await expect(
+      requestFirmReportRelease(pool, maker, editionId, { reason: '  ' }),
+    ).rejects.toMatchObject({ code: 'INVALID_REASON' });
+    await expect(
+      requestFirmReportRelease(pool, maker, editionId, { reason: 'ok' }),
+    ).rejects.toMatchObject({ code: 'INVALID_REASON' });
+    expect(await getPendingFirmReportRelease(pool, editionId)).toBeNull();
+  });
+
+  it('approval needs every covered report opened by the requester or the approver', async () => {
+    const { ra, rb } = await twoGeneratedReports();
+    await approveNationalFor();
+    await openFirmReport(pool, ra.id, maker.userId);
+    const action = await requestFirmReportRelease(pool, maker, editionId, {
+      reason: 'Release both',
+    });
+    // rb has been opened by nobody: refused, nothing approved or released.
+    await expect(
+      decideFirmReportRelease(pool, checker, editionId, action.id, { approved: true }),
+    ).rejects.toMatchObject({ code: 'NOT_OPENED', message: expect.stringMatching(/FIRM-MC-B/) });
+    expect((await getFirmReport(pool, ra.id))?.approvalState).toBe('pending');
+    expect((await getFirmReport(pool, rb.id))?.approvalState).toBe('pending');
+    // Once the checker opens it, the same request can be approved.
+    await openFirmReport(pool, rb.id, checker.userId);
+    const result = await decideFirmReportRelease(pool, checker, editionId, action.id, {
+      approved: true,
+    });
+    expect(result.release?.released).toHaveLength(2);
+  });
+
+  it('a rejection approves nothing and frees the edition for a fresh request', async () => {
+    const { ra } = await twoGeneratedReports();
+    const action = await requestFirmReportRelease(pool, maker, editionId, {
+      reason: 'Release both',
+    });
+    await expect(
+      requestFirmReportRelease(pool, maker, editionId, { reason: 'Again' }),
+    ).rejects.toMatchObject({ code: 'CRITICAL_ACTION_STATE' });
+    const result = await decideFirmReportRelease(pool, checker, editionId, action.id, {
+      approved: false,
+      rejectionReason: 'Beta figures look wrong',
+    });
+    expect(result.action.status).toBe('rejected');
+    expect(result.release).toBeNull();
+    expect((await getFirmReport(pool, ra.id))?.approvalState).toBe('pending');
+    expect(await getPendingFirmReportRelease(pool, editionId)).toBeNull();
+  });
+
+  it('requesting and approving need the critical-action rights', async () => {
+    const { ra } = await twoGeneratedReports();
+    const noRights: RbacContext = { userId: maker.userId, permissions: [] };
+    await expect(
+      requestFirmReportRelease(pool, noRights, editionId, { reason: 'Release' }),
+    ).rejects.toMatchObject({ name: 'PermissionDeniedError' });
+    await approveNationalFor();
+    await openFirmReport(pool, ra.id, maker.userId);
+    const action = await requestFirmReportRelease(pool, maker, editionId, { reason: 'Release' });
+    await expect(
+      decideFirmReportRelease(
+        pool,
+        { userId: checker.userId, permissions: [] },
+        editionId,
+        action.id,
+        { approved: true },
+      ),
+    ).rejects.toMatchObject({ name: 'PermissionDeniedError' });
   });
 });

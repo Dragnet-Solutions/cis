@@ -243,6 +243,16 @@ export interface FirmSummary {
   slug: string;
 }
 
+/** What a firm directory import would do (dry run) or did. */
+export interface FirmImportResult {
+  dryRun: boolean;
+  totalRows: number;
+  added: number;
+  toAdd: Array<{ line: number; name: string; slug: string }>;
+  duplicates: Array<{ line: number; name: string; slug: string; reason: string }>;
+  errors: Array<{ line: number; message: string }>;
+}
+
 // ─── National report (UX-ADM-005) ───────────────────────────────────────────
 
 export type NationalReportSectionId =
@@ -287,10 +297,40 @@ export interface NationalReportSection {
 export interface NationalApprovalPreconditions {
   signedScoringRun: boolean;
   draftOpened: boolean;
+  /** A written draft (the AI narrative) has been recorded for review. */
+  draftReviewable?: boolean;
   allFindingsDisposed: boolean;
   checkerHealthy: boolean;
   ok: boolean;
   reasons: string[];
+}
+
+/** The sentence-level review of the national report's draft (the AI narrative). */
+export interface NationalReview {
+  narrativeId: string | null;
+  model: string | null;
+  draftedAt: string | null;
+  items: Array<{
+    sentenceId: string;
+    narrativeIndex: number;
+    section: string | null;
+    text: string;
+    factIds: string[];
+    finding: { id: string; kind: string; why: string } | null;
+    disposition: {
+      disposition: 'ACCEPT_AND_EDIT' | 'REJECT_WITH_REASON' | 'SUPPRESS_CLAIM';
+      reason: string | null;
+      disposedBy: string;
+      disposedAt: string;
+    } | null;
+  }>;
+  health: {
+    seededTotal: number;
+    detected: number;
+    thresholdRate: number;
+    healthy: boolean;
+    checkedAt: string;
+  } | null;
 }
 
 export interface NationalReportDetailResponse {
@@ -320,6 +360,17 @@ export interface FirmReport {
   approvalState: FirmReportApprovalState;
   releaseState: FirmReportReleaseState;
   heldReason: string | null;
+}
+
+/** A request to release firm reports, awaiting a second person. */
+export interface PendingFirmReportRelease extends PendingAction {
+  reportIds: string[];
+}
+
+export interface FirmReportReleaseDecision extends Partial<ReleaseFirmReportsResult> {
+  status: 'approved' | 'rejected';
+  /** Set when the reports were approved but the release then failed. */
+  releaseError: string | null;
 }
 
 export interface ReleaseFirmReportsResult {
@@ -431,6 +482,8 @@ export interface DependencyRow {
   enabled: boolean;
   displayState: DependencyDisplayState;
   note: string;
+  /** Regulator-dependent outputs only: regulators that have responded, of those required. */
+  regulators?: { confirmed: number; required: number };
 }
 
 export interface ResponsesMonitor {
@@ -462,6 +515,9 @@ export interface UnfinishedStats {
 
 export interface DropoffBucket {
   questionId: string;
+  /** The question's wording, or a plain description — never the raw code. */
+  label: string;
+  surveyName: string | null;
   count: number;
   peak: boolean;
 }
@@ -527,6 +583,22 @@ export interface ReportPending {
   note: string;
 }
 
+/** One institution's reading, in one of its roles (Institutional Perspectives). */
+export interface InstitutionalReading {
+  key: string;
+  role: string;
+  code: string;
+  familyCode: string;
+  vantage: string;
+  responses: number;
+  topIssues: ReportShare[];
+  issue: { greatest: string | null; others: string[] };
+  frequency: string | null;
+  marks: string[];
+  consequence: { greatest: string | null; others: string[] };
+  capability: string | null;
+}
+
 /** The AI-drafted narrative in force for a report document. */
 export interface ReportNarrativeView {
   model: string;
@@ -573,13 +645,9 @@ export interface IndustryReportContent {
     rows: Array<{ comparator: string; better: number; same: number; worse: number; n: number }>;
   } | null;
   selfVsInvestors: { firmSelfBelief: ReportRating; investorExperience: ReportRating };
-  institutional: Array<{
-    role: string;
-    familyCode: string;
-    responses: number;
-    topIssues: ReportShare[];
-    capability: string | null;
-  }>;
+  institutional: InstitutionalReading[];
+  institutionalParticipation: { invited: number; contributed: number };
+  institutionalThemes: { themes: Array<{ theme: string; codes: string[] }>; standsApart: string[] };
   narrative: ReportNarrativeView | null;
   /** When the document left CIS (released to its firm / published); then final. */
   publishedAt?: string | null;

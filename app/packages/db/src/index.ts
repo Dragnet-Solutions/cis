@@ -67,3 +67,4 @@ export type {
 } from './seed/register-ingestion';
 export * from './queries/report-content';
 export * from './queries/email-outbox';
+export * from './queries/national-review';

@@ -18,6 +18,7 @@ import type { EditionPhase } from '../editionPhase';
  *   - No dismissal control — a card auto-clears when its condition stops holding.
  *   - Remediation is always a bulk cohort handed to UX-OPS-002.
  *   - Rail is phase-aware: not-yet-relevant sections are disabled, not hidden.
+ *     A section the person holds no right to (Dragnet analysis) is hidden.
  */
 
 /** The shell tab each rail shortcut opens — every value is a real nav tab. */
@@ -30,6 +31,8 @@ interface RailSection {
   target: RailTarget;
   built: boolean;
   phases: EditionPhase[];
+  /** Shown only to someone holding the Dragnet right (the nav tab is too). */
+  requiresDragnetRight?: boolean;
 }
 
 // Written fresh for this screen — not the brief's own severity-classification
@@ -73,6 +76,7 @@ export const RAIL: RailSection[] = [
     target: 'dragnet',
     built: true,
     phases: ['closed'],
+    requiresDragnetRight: true,
   },
   {
     key: 'setup',
@@ -83,13 +87,21 @@ export const RAIL: RailSection[] = [
   },
 ];
 
+/** The rail this person sees: a section they hold no right to is hidden, not
+ *  greyed — greying is for sections that are simply not relevant yet. */
+export function railFor(hasDragnetRight: boolean): RailSection[] {
+  return RAIL.filter((s) => !s.requiresDragnetRight || hasDragnetRight);
+}
+
 export function MissionBoardPage({
   client,
   editionId,
+  hasDragnetRight,
   onNavigate,
 }: {
   client: AdminClient;
   editionId: string;
+  hasDragnetRight: boolean;
   onNavigate: (target: RailTarget) => void;
 }): JSX.Element {
   const [cards, setCards] = useState<MissionCard[] | null>(null);
@@ -188,7 +200,7 @@ export function MissionBoardPage({
         </div>
 
         <nav aria-label="Operations" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {RAIL.map((s) => {
+          {railFor(hasDragnetRight).map((s) => {
             const relevant = s.phases.includes(phase);
             return (
               <button

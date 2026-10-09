@@ -40,8 +40,13 @@ export {
   createReferral,
   createColleagueInvite,
   ReviewGapError,
+  CollectionClosedError,
+  RegulatorLinkRequiredError,
+  acceptsResponses,
+  assertCollectionOpen,
+  getPublicConsentContent,
 } from './journey-service';
-export type { ContactInput, ResumeState } from './journey-service';
+export type { ContactInput, ResumeState, PublicConsentContent } from './journey-service';
 
 export {
   createLeadCoordinator,
@@ -53,6 +58,15 @@ export {
   FirmTeamError,
   PinVerificationError,
 } from './firm-team-service';
+
+export {
+  importFirmDirectory,
+  planFirmImport,
+  parseCsv,
+  slugifyFirmName,
+  MAX_IMPORT_ROWS,
+} from './firm-directory-service';
+export type { FirmImportRow, FirmImportPlan, FirmImportResult } from './firm-directory-service';
 
 export {
   claimSpace,
@@ -97,6 +111,7 @@ export {
 // ── Phase 5: scoring, sufficiency, analytics & evidence ──────────────────────
 export {
   segmentForInstrument,
+  isInvestorInstrument,
   institutionRefFor,
   emitCompletedForRespondent,
 } from './funnel-service';
@@ -156,14 +171,25 @@ export {
   getRetailCutThresholds,
   cutStateFor,
   generateFirmReports,
-  approveFirmReport,
+  openFirmReport,
+  requestFirmReportRelease,
+  decideFirmReportRelease,
+  getPendingFirmReportRelease,
+  FIRM_REPORT_RELEASE_ACTION,
   regenerateFirmReport,
   releaseFirmReports,
   correctFirmReport,
   getFirmReports,
   FirmReportError,
 } from './firm-report-service';
-export type { RetailCutThresholds, GenerationResult, ReleaseResult } from './firm-report-service';
+export type {
+  RetailCutThresholds,
+  GenerationResult,
+  ReleaseResult,
+  ReleaseOptions,
+  FirmReportReleaseDecision,
+  FirmReportReleaseDecisionResult,
+} from './firm-report-service';
 
 // ── Phase 7: scoring sign-off (UX-ADM-004) ───────────────────────────────────
 export {
@@ -174,6 +200,7 @@ export {
   approveSignoff,
   rejectSignoff,
   getScoreView,
+  completeFirmsForIndex,
   hasSignedOffRun,
   getAuthoritativeSignoff,
   listSignoffs,
@@ -379,7 +406,11 @@ export {
 } from './regulator-engagement-service';
 
 // ── Phase 19: Institutional instrument families ──────────────────────────────
-export { FAMILY_META, instrumentCodeForFamily } from './institution-family-service';
+export {
+  FAMILY_META,
+  instrumentCodeForFamily,
+  isRegulatorInstrument,
+} from './institution-family-service';
 export type { FamilyMeta } from './institution-family-service';
 
 // ── Phase 16: Dragnet Internal Analysis (UX-ADM-007) ─────────────────────────
@@ -458,8 +489,12 @@ export {
   buildIndustryReportContent,
   buildFirmReportContent,
   ReportContentError,
+  institutionalThemes,
+  withheldSections,
+  ratingByRespondent,
   type IndustryReportContent,
   type FirmReportContent,
+  type InstitutionalReading,
 } from './report-content-service';
 export {
   generateIndustryNarrative,
@@ -469,15 +504,25 @@ export {
   ensureIndustryNarrative,
   ensureFirmNarrative,
   narrativeDue,
+  industryNarrativeFacts,
   industryFacts,
   firmFacts,
   checkNarrativeSentence,
+  sectionFinding,
   parseModelSections,
   buildNarrativePrompt,
   ReportNarrativeError,
   ReportPublicationError,
   type NarrativeModel,
 } from './report-narrative-service';
+export {
+  prepareNationalReview,
+  getNationalReview,
+  decideFinding,
+  plantedErrors,
+  measureChecker,
+  type NationalReview,
+} from './national-review-service';
 export {
   publishIndustryReport,
   getPublishedIndustryReport,

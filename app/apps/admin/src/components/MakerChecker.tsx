@@ -153,9 +153,8 @@ export function CriticalActionReview({
       )}
 
       <p className="owner">
-        A maker can never approve their own request. When the request is your own the decision is
-        not offered — the control is absent, not disabled. The approver may be from either
-        organisation; the only constraint is that it is a different person.
+        Whoever asks for a change cannot also approve it, so there is nothing to decide here on your
+        own request. The approver can be from either organisation, as long as it is someone else.
       </p>
     </div>
   );

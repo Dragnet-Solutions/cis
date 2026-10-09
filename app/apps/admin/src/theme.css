@@ -827,11 +827,6 @@ tr.soft {
   font-size: 14px;
   line-height: 1.5;
 }
-.consent-provisional {
-  font-size: 12px;
-  color: #8a5a00;
-  margin: 4px 0 12px;
-}
 .consent-check {
   margin: 14px 0;
   font-weight: 600;
@@ -860,6 +855,31 @@ tr.soft {
 }
 .review-gaps li {
   margin: 4px 0;
+}
+.review-answers {
+  margin: 14px 0;
+  padding-left: 22px;
+}
+.review-answers li {
+  margin: 0 0 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e2e2df;
+}
+.review-answers .review-q {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+.review-answers .review-firm {
+  color: #6b6b6b;
+}
+.review-answers .review-a {
+  margin: 0 0 4px;
+  font-weight: 600;
+}
+.review-answers .review-c {
+  margin: 0 0 4px;
+  font-size: 13px;
+  color: #6b6b6b;
 }
 .refer-block {
   border-top: 1px solid #e2e2df;

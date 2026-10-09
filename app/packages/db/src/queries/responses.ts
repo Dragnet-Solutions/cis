@@ -243,6 +243,55 @@ export async function insertResponse(
   return mapResponse(row);
 }
 
+/**
+ * Insert a respondent's immutable response rows in ONE statement — the same
+ * rules as `insertResponse` (DB CHECK on scope/rated firm, unique index, no
+ * overwrites), without a database round-trip per answer. Rows come back in
+ * input order.
+ */
+export async function insertResponses(
+  pool: Pool,
+  rows: Array<{
+    editionId: string;
+    respondentId: string;
+    questionId: string;
+    scope: QuestionScope;
+    ratedFirmId: string | null;
+    answer: { a: unknown; c?: string };
+  }>,
+): Promise<Response[]> {
+  if (rows.length === 0) return [];
+  const result = await query<RawResponseRow & { ord: number }>(
+    pool,
+    `INSERT INTO responses (edition_id, respondent_id, question_id, scope, rated_firm_id, answer)
+     SELECT r.edition_id, r.respondent_id, r.question_id, r.scope, r.rated_firm_id, r.answer
+       FROM jsonb_to_recordset($1::jsonb) AS r(
+              edition_id uuid, respondent_id uuid, question_id text, scope text,
+              rated_firm_id uuid, answer jsonb)
+     RETURNING *`,
+    [
+      JSON.stringify(
+        rows.map((d) => ({
+          edition_id: d.editionId,
+          respondent_id: d.respondentId,
+          question_id: d.questionId,
+          scope: d.scope,
+          rated_firm_id: d.ratedFirmId,
+          answer: d.answer,
+        })),
+      ),
+    ],
+  );
+  const byKey = new Map(
+    result.rows.map((r) => [`${r.question_id}::${r.rated_firm_id ?? ''}`, mapResponse(r)]),
+  );
+  return rows.map((d) => {
+    const written = byKey.get(`${d.questionId}::${d.ratedFirmId ?? ''}`);
+    if (!written) throw new Error('Response insert returned no row for an answer');
+    return written;
+  });
+}
+
 export async function getResponsesForRespondent(
   pool: Pool,
   respondentId: string,
