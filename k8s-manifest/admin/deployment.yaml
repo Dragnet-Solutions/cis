@@ -45,7 +45,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: admin
-          image: dragnet.azurecr.io/cis-admin:b3ca104c41ffe86567d7e722dd2c06c9ebdfe0b5
+          image: dragnet.azurecr.io/cis-admin:cacc6e8d66d242214113df0d564260020154eb00
           imagePullPolicy: Always
           ports:
             - name: http
