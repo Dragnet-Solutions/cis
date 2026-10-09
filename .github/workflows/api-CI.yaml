@@ -1,0 +1,311 @@
+name: api-ci
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - dev
+    paths:
+      - 'app/apps/api/**'
+      - 'app/packages/**'
+      - 'app/package.json'
+      # Every workspace manifest feeds the one shared lockfile — a change to any
+      # of them can break this app's frozen install.
+      - 'app/apps/*/package.json'
+      - 'app/packages/*/package.json'
+      - 'app/pnpm-lock.yaml'
+      - 'app/pnpm-workspace.yaml'
+      - 'app/tsconfig.base.json'
+      - 'app/turbo.json'
+      - 'app/vitest.workspace.ts'
+      - 'app/.dockerignore'
+      - '.github/workflows/api-CI.yaml'
+
+permissions:
+  actions: read
+  contents: write
+  security-events: write
+  packages: write
+  id-token: write
+
+concurrency:
+  group: api-ci
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: ./app
+
+env:
+  ACR_NAME: dragnet
+  IMAGE_NAME: cis-api
+  MIGRATE_IMAGE_NAME: cis-api-migrate
+
+jobs:
+  scanning-and-testing:
+    runs-on: ubuntu-latest
+
+    env:
+      DATABASE_URL: postgres://cis:cis_test_password@localhost:5432/cis_test
+      JWT_SECRET: ci-test-secret-at-least-32-characters-long-for-ci
+      NODE_ENV: test
+      # Only the shared-rate-limit test uses Redis; every other test keeps
+      # in-memory limits (REDIS_URL stays unset).
+      TEST_REDIS_URL: redis://localhost:6379
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: cis
+          POSTGRES_PASSWORD: cis_test_password
+          POSTGRES_DB: cis_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U cis -d cis_test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: app/package.json
+
+      - name: Setup Node Environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: app/pnpm-lock.yaml
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm exec eslint apps/api packages
+
+      - name: Typecheck
+        run: pnpm exec turbo run typecheck --filter=@cis/api...
+
+      - name: Build
+        run: pnpm exec turbo run build --filter=@cis/api...
+
+      - name: Run database migrations
+        run: pnpm --filter @cis/db migrate:up
+
+      - name: Run Integration Tests
+        run: pnpm test --project integration
+        continue-on-error: true
+
+      - name: Security Audit
+        run: pnpm audit --audit-level=high
+        continue-on-error: true
+
+      # Secret scanning (repo root — path must be the git checkout, not a subdirectory)
+      - name: Trufflehog Secret Scanning
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          extra_args: --only-verified --exclude-paths=.github/trufflehog-exclude.txt
+
+  build-and-scan-image:
+    if: github.ref == 'refs/heads/dev' && github.event_name == 'push'
+    needs: scanning-and-testing
+    runs-on: ubuntu-latest
+    # The api Dockerfile has two deployable targets: the API itself and the
+    # one-shot migration job (run before each rollout).
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: api
+            image: cis-api
+          - target: migrate
+            image: cis-api-migrate
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image
+        id: build-image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./app
+          file: ./app/apps/api/Dockerfile
+          target: ${{ matrix.target }}
+          push: false
+          load: true
+          tags: ${{ env.ACR_NAME }}.azurecr.io/${{ matrix.image }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+      - name: Scan Image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.ACR_NAME }}.azurecr.io/${{ matrix.image }}:${{ github.sha }}
+          format: 'table'
+          exit-code: '0'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'HIGH,CRITICAL'
+
+      - name: Log in to Azure Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.ACR_NAME }}.azurecr.io
+          username: ${{ secrets.AZURE_CLIENT_ID }}
+          password: ${{ secrets.AZURE_CLIENT_SECRET }}
+
+      - name: Push Docker Image to ACR
+        id: push-step
+        run: |
+          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ matrix.image }}:${{ github.sha }}
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' ${{ env.ACR_NAME }}.azurecr.io/${{ matrix.image }}:${{ github.sha }} | cut -d'@' -f2)
+          echo "IMAGE_DIGEST=$DIGEST" >> $GITHUB_ENV
+
+      #Signing and Pushing Image to ACR
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign Docker Image
+        env:
+          IMAGE: ${{ env.ACR_NAME }}.azurecr.io/${{ matrix.image }}@${{ env.IMAGE_DIGEST }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          KEY_VAULT_NAME: ${{ vars.KEY_VAULT_NAME }}
+          KEY_NAME: ${{ vars.KEY_NAME }}
+        run: |
+          # Strip stray whitespace/CR-LF (e.g. a value pasted from Windows) —
+          # it would otherwise end up inside the Key Vault URL.
+          KEY_VAULT_NAME=$(printf '%s' "$KEY_VAULT_NAME" | tr -d '[:space:]')
+          KEY_NAME=$(printf '%s' "$KEY_NAME" | tr -d '[:space:]')
+          cosign sign --yes \
+            --key "azurekms://${KEY_VAULT_NAME}.vault.azure.net/${KEY_NAME}" \
+            ${IMAGE}
+
+  sync-manifests:
+    if: github.ref == 'refs/heads/dev' && github.event_name == 'push'
+    needs: build-and-scan-image
+    runs-on: ubuntu-latest
+    concurrency:
+      group: k8s-release-sync
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
+    steps:
+      - name: Checkout dev branch
+        uses: actions/checkout@v4
+        with:
+          ref: dev
+          path: dev-repo
+
+      - name: Checkout k8s-release branch
+        uses: actions/checkout@v4
+        with:
+          ref: k8s-release
+          path: release-repo
+
+      - name: Sync k8s-manifest and argocd directories from dev to release
+        run: |
+          # Preserve the image SHAs already pinned in k8s-release so that
+          # copying fresh :latest tags from dev does not overwrite them.
+          IMAGES="cis-api cis-api-migrate cis-admin"
+          declare -A PINNED
+          for img in $IMAGES; do
+            PINNED[$img]=$(grep -rhoP "image: \K[^ ]*/${img}:[^ ]+" release-repo/k8s-manifest 2>/dev/null | head -n1 || true)
+          done
+
+          # Overwrite all structural content from dev
+          rm -rf release-repo/k8s-manifest/ release-repo/argocd/
+          cp -r dev-repo/k8s-manifest/ release-repo/k8s-manifest/
+          if [ -d dev-repo/argocd ]; then
+            cp -r dev-repo/argocd/ release-repo/argocd/
+          fi
+
+          # Restore each pinned SHA in every file that uses that image
+          for img in $IMAGES; do
+            pinned="${PINNED[$img]}"
+            [ -n "$pinned" ] || continue
+            files=$(grep -rlE "image: [^ ]*/${img}:" release-repo/k8s-manifest || true)
+            [ -n "$files" ] || continue
+            sed -i -E "s|image: [^ ]*/${img}:[^ ]*|image: ${pinned}|g" $files
+          done
+
+      - name: Commit and push synchronized manifests
+        run: |
+          cd release-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A .
+
+          if git diff --cached --quiet; then
+            echo "No manifest changes to sync from dev branch."
+          else
+            git commit -m "chore: sync k8s-manifest from dev branch"
+            git pull origin k8s-release --rebase
+            git push origin k8s-release
+          fi
+
+  update-k8s-manifest:
+    if: github.ref == 'refs/heads/dev' && github.event_name == 'push'
+    needs: sync-manifests
+    runs-on: ubuntu-latest
+    concurrency:
+      group: k8s-release-sync
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: ./
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: k8s-release
+          fetch-depth: 0
+
+      - name: Pin api image SHAs in k8s manifests
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git pull origin k8s-release
+
+          for img in ${{ env.IMAGE_NAME }} ${{ env.MIGRATE_IMAGE_NAME }}; do
+            files=$(grep -rlE "image: [^ ]*/${img}:" k8s-manifest 2>/dev/null || true)
+            if [ -z "$files" ]; then
+              echo "::warning::No manifest under k8s-manifest/ references ${{ env.ACR_NAME }}.azurecr.io/${img} — skipping. Add one to enable propagation."
+              continue
+            fi
+            NEW_IMAGE="${{ env.ACR_NAME }}.azurecr.io/${img}:${{ github.sha }}"
+            sed -i -E "s|image: [^ ]*/${img}:[^ ]*|image: ${NEW_IMAGE}|g" $files
+            git add $files
+          done
+
+          if git diff --cached --quiet; then
+            echo "No manifest changes to commit."
+          else
+            git commit -m "chore: update api images to ${{ github.sha }}"
+            git push origin k8s-release
+          fi

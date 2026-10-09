@@ -1,0 +1,99 @@
+name: update-manifest
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - dev
+    paths:
+      - 'k8s-manifest/**'
+      - 'argocd/**'
+      - '.github/workflows/update-manifest.yaml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-manifest
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0
+
+      # Secret scanning (repo root — path must be the git checkout, not a subdirectory)
+      - name: Trufflehog Secret Scanning
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          extra_args: --only-verified --exclude-paths=.github/trufflehog-exclude.txt
+
+  sync-manifests:
+    needs: scan
+    runs-on: ubuntu-latest
+    concurrency:
+      group: k8s-release-sync
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
+    steps:
+      - name: Checkout dev branch
+        uses: actions/checkout@v4
+        with:
+          ref: dev
+          path: dev-repo
+
+      - name: Checkout k8s-release branch
+        uses: actions/checkout@v4
+        with:
+          ref: k8s-release
+          path: release-repo
+
+      - name: Sync k8s-manifest and argocd directories from dev to release
+        run: |
+          # Preserve the image SHAs already pinned in k8s-release — this
+          # workflow never builds an image, so copying dev's un-pinned
+          # :latest references must not roll a running image back.
+          IMAGES="cis-api cis-api-migrate cis-admin"
+          declare -A PINNED
+          for img in $IMAGES; do
+            PINNED[$img]=$(grep -rhoP "image: \K[^ ]*/${img}:[^ ]+" release-repo/k8s-manifest 2>/dev/null | head -n1 || true)
+          done
+
+          # Overwrite all structural content from dev
+          rm -rf release-repo/k8s-manifest/ release-repo/argocd/
+          cp -r dev-repo/k8s-manifest/ release-repo/k8s-manifest/
+          if [ -d dev-repo/argocd ]; then
+            cp -r dev-repo/argocd/ release-repo/argocd/
+          fi
+
+          # Restore each pinned SHA in every file that uses that image
+          for img in $IMAGES; do
+            pinned="${PINNED[$img]}"
+            [ -n "$pinned" ] || continue
+            files=$(grep -rlE "image: [^ ]*/${img}:" release-repo/k8s-manifest || true)
+            [ -n "$files" ] || continue
+            sed -i -E "s|image: [^ ]*/${img}:[^ ]*|image: ${pinned}|g" $files
+          done
+
+      - name: Commit and push synchronized manifests
+        run: |
+          cd release-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A .
+
+          if git diff --cached --quiet; then
+            echo "No manifest changes to sync from dev branch."
+          else
+            git commit -m "chore: sync k8s-manifest from dev branch (manifest-only update)"
+            git pull origin k8s-release --rebase
+            git push origin k8s-release
+          fi

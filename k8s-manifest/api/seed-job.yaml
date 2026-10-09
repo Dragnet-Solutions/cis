@@ -1,0 +1,132 @@
+# DEV ONLY — do not carry this into a production manifest set.
+#
+# Seeds the reference data after the migration, then sets the seeded operators'
+# passwords from Key Vault. Runs on every ArgoCD sync and is safe to:
+#   - the seed (apps/api/src/seed.ts → seedReferenceData) skips itself once the
+#     2026 edition exists;
+#   - the password step re-applies the Key Vault values, so rotating a password
+#     is: change it in Key Vault, wait for ESO refresh, sync.
+# The seed hard-codes `ChangeMe!2026` and the app has no change-password
+# feature — the second step is what keeps that default from ever being live.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cis-db-seed
+  namespace: dev
+  labels:
+    app.kubernetes.io/name: cis-db-seed
+    app.kubernetes.io/part-of: cis
+    app.kubernetes.io/component: seed
+  annotations:
+    # Wave 3: after the migration hook (wave 2) has completed.
+    argocd.argoproj.io/sync-wave: "3"
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cis-db-seed
+        app.kubernetes.io/part-of: cis
+        app.kubernetes.io/component: seed
+    spec:
+      serviceAccountName: cis-api-sa
+      automountServiceAccountToken: false
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        # Step 1 — reference data (skips itself if the 2026 edition exists)
+        - name: seed
+          image: dragnet.azurecr.io/cis-api:latest
+          imagePullPolicy: Always
+          command: ["node", "apps/api/dist/seed.js"]
+          envFrom:
+            - configMapRef:
+                name: cis-api-config
+            - secretRef:
+                name: cis-api-secrets
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      containers:
+        # Step 2 — set both operators' passwords from Key Vault (cis-seed-secrets)
+        - name: set-operator-passwords
+          image: dragnet.azurecr.io/cis-api:latest
+          imagePullPolicy: Always
+          command:
+            - node
+            - -e
+            - |
+              const { initializePool, getPool, closePool } = require('/app/apps/api/node_modules/@cis/db');
+              const { hashPassword } = require('/app/apps/api/node_modules/@cis/auth');
+              (async () => {
+                initializePool();
+                const operators = [
+                  ['adaeze.okoro@cis.example', process.env.SEED_PASSWORD_MAKER],
+                  ['segun.oyegbesan@dragnet.example', process.env.SEED_PASSWORD_CHECKER],
+                ];
+                for (const [email, password] of operators) {
+                  if (!password || password.length < 12 || password === 'ChangeMe!2026') {
+                    throw new Error(`Password for ${email} is missing, under 12 characters, or the default.`);
+                  }
+                  const res = await getPool().query(
+                    'UPDATE users SET password_hash = $1 WHERE email = $2',
+                    [await hashPassword(password), email],
+                  );
+                  console.log(`${email}: ${res.rowCount === 1 ? 'password set' : 'USER NOT FOUND'}`);
+                  if (res.rowCount !== 1) process.exitCode = 1;
+                }
+                await closePool();
+              })().catch((err) => { console.error(err); process.exit(1); });
+          envFrom:
+            - configMapRef:
+                name: cis-api-config
+            - secretRef:
+                name: cis-api-secrets
+            - secretRef:
+                name: cis-seed-secrets
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

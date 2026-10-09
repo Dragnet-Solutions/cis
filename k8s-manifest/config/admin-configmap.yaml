@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cis-admin-config
+  namespace: dev
+  labels:
+    app.kubernetes.io/name: cis-admin
+    app.kubernetes.io/part-of: cis
+    app.kubernetes.io/component: frontend
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+data:
+  API_UPSTREAM: "http://cis-api"
