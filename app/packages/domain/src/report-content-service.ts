@@ -956,18 +956,24 @@ async function buildIndices(
       (r) => r.subjectType === 'market' && r.subjectId === 'INDUSTRY' && r.metricCode === code,
     );
     const n = row?.n ?? null;
+    let value = round(row?.value ?? null);
     let note: string | null = null;
+    // A public industry figure from too few firms is withheld, never shown as
+    // "indicative": with one firm, the industry score IS that firm's score.
+    const minFirms = firmFloor ?? SUPPRESS_BELOW;
     if (!row || row.value === null) {
       note = row?.reason ?? 'Not calculable from this edition’s responses.';
     } else if ((code === 'OMI' || code === 'DMI') && n !== null) {
-      note =
-        firmFloor !== null && n < firmFloor
-          ? `From ${plural(n, 'firm', 'firms')}, below the ${firmFloor}-firm floor — indicative only.`
-          : `From ${plural(n, 'firm', 'firms')}.`;
+      if (n < minFirms) {
+        value = null;
+        note = `Withheld: from ${plural(n, 'firm', 'firms')}, below the ${minFirms}-firm floor.`;
+      } else {
+        note = `From ${plural(n, 'firm', 'firms')}.`;
+      }
     } else if (n !== null) {
       note = `Pooled from ${plural(n, 'investor', 'investors')} in segments that clear their floor.`;
     }
-    return { code, name, value: round(row?.value ?? null), n, note };
+    return { code, name, value, n, note };
   });
 
   const firm =
@@ -978,13 +984,19 @@ async function buildIndices(
             (r) => r.subjectType === 'firm' && r.subjectId === firmId && r.metricCode === code,
           );
           const n = row?.n ?? null;
+          let value = round(row?.value ?? null);
           let note: string | null = null;
+          // A score built from the firm's investors (IEI, ICI and SEI, which
+          // rests on its investors' IEI) is withheld below ten of them — the
+          // same floor as every other rating in the report.
+          const fromInvestors = code === 'IEI' || code === 'ICI' || code === 'SEI';
           if (!row || row.value === null) {
             note = 'Not calculable from your firm’s responses this edition.';
-          } else if ((code === 'IEI' || code === 'ICI') && n !== null && n < SUPPRESS_BELOW) {
-            note = `From ${plural(n, 'investor rating', 'investor ratings')} — fewer than ten, read with caution.`;
+          } else if (fromInvestors && (n === null || n < SUPPRESS_BELOW)) {
+            value = null;
+            note = `Withheld: fewer than ten of your investors answered (${n ?? 0}).`;
           }
-          return { code, name, value: round(row?.value ?? null), n, note };
+          return { code, name, value, n, note };
         });
 
   const units = await investorSegmentUnitScores(pool, editionId);

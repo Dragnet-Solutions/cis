@@ -62,10 +62,19 @@ export async function registerSecurity(app: FastifyInstance): Promise<void> {
     });
   }
 
+  // Dev/test only: addresses exempt from every rate limit, including the
+  // per-route login limits — for the respondent robot, which plays hundreds of
+  // respondents and coordinators from one machine. Never set it in production.
+  const allowList = rateLimitAllowList(process.env['RATE_LIMIT_ALLOWLIST']);
+  if (allowList.length > 0) {
+    app.log.warn({ allowList }, 'Rate limits are OFF for these addresses (RATE_LIMIT_ALLOWLIST)');
+  }
+
   await app.register(fastifyRateLimit, {
     global: true,
     max: 1000,
     timeWindow: 60_000,
+    ...(allowList.length > 0 ? { allowList } : {}),
     ...(redis ? { redis, nameSpace: 'cis-ratelimit-', skipOnError: true } : {}),
     errorResponseBuilder: (_req, context) => ({
       error: 'TooManyRequests',
@@ -73,4 +82,12 @@ export async function registerSecurity(app: FastifyInstance): Promise<void> {
       statusCode: 429,
     }),
   });
+}
+
+/** RATE_LIMIT_ALLOWLIST: a comma-separated list of client IP addresses. */
+export function rateLimitAllowList(value: string | undefined): string[] {
+  return (value ?? '')
+    .split(',')
+    .map((x) => x.trim())
+    .filter(Boolean);
 }
