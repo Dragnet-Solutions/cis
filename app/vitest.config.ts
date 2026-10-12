@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 const DB_URL =
@@ -45,6 +46,15 @@ export default defineConfig({
           ],
           globals: true,
           environment: 'node',
+        },
+        // Unit tests run before any package is built (admin CI tests, then
+        // builds), so the pure survey logic is read from its source.
+        resolve: {
+          alias: {
+            '@cis/survey': fileURLToPath(
+              new URL('./packages/survey/src/index.ts', import.meta.url),
+            ),
+          },
         },
       },
     ],
