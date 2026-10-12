@@ -51,6 +51,7 @@ import {
   releaseFirmReports,
   firmOmiScores,
   retailIciRelationshipScore,
+  industrySeiFromFirms,
   buildFirmReportContent,
   generateFirmReports,
   requestMethodologyApproval,
@@ -758,5 +759,17 @@ describe('Approving the scoring methodology (two people), then scores in the rep
       expect(x.note).toMatch(/^Withheld: fewer than ten of your investors answered \(4\)/);
     }
     expect(JSON.stringify(indices)).not.toMatch(/caution/);
+  });
+
+  it('derives industry SEI from the run’s own firm SEI, not a previous run', () => {
+    // Ten firms, each with enough investors: calculable from this run alone.
+    const firms = Array.from({ length: 10 }, (_, i) => ({ value: 60 + i, n: 12 }));
+    const sei = industrySeiFromFirms(firms);
+    expect(sei.status).toBe('CALCULABLE');
+    expect(sei.value).toBeCloseTo(64.5, 1);
+    // Firms resting on fewer than ten investors do not count.
+    const thin = industrySeiFromFirms(firms.map((f) => ({ ...f, n: 4 })));
+    expect(thin.status).toBe('NOT_CALCULABLE');
+    expect(thin.reason).toMatch(/Only 0 firms/);
   });
 });

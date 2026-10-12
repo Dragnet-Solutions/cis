@@ -309,6 +309,7 @@ export {
   firmSpecificInvestorAnswers,
   pooledHeadline,
   industrySeiState,
+  industrySeiFromFirms,
   canCompareHeadlinesDirectly,
   computeLikeForLike,
   recordLikeForLikeComparison,
