@@ -1,6 +1,7 @@
 packages:
   - 'apps/*'
   - 'packages/*'
+  - 'tools/*'
 
 # Native builds allowed to run on install.
 onlyBuiltDependencies:

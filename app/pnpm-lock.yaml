@@ -271,6 +271,25 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@22.20.1)(vite@6.4.3(@types/node@22.20.1)(tsx@4.23.12)(yaml@2.9.1))
 
+  tools/respondent-robot:
+    dependencies:
+      '@cis/survey':
+        specifier: workspace:*
+        version: link:../../packages/survey
+    devDependencies:
+      '@types/node':
+        specifier: ^22.5.0
+        version: 22.20.1
+      tsx:
+        specifier: ^4.19.0
+        version: 4.23.12
+      typescript:
+        specifier: '*'
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@types/node@22.20.1)(vite@6.4.3(@types/node@22.20.1)(tsx@4.23.12)(yaml@2.9.1))
+
 packages:
   '@babel/code-frame@7.29.7':
     resolution:
@@ -5043,7 +5062,7 @@ snapshots:
       magic-string: 0.30.21
       obug: 2.2.1
       pathe: 2.0.3
-      picomatch: 4.0.5
+      picomatch: 4.0.7
       std-env: 4.3.0
       tinybench: 2.9.0
       tinyexec: 1.3.1
@@ -5070,7 +5089,7 @@ snapshots:
       magic-string: 0.30.21
       obug: 2.2.1
       pathe: 2.0.3
-      picomatch: 4.0.5
+      picomatch: 4.0.7
       std-env: 4.3.0
       tinybench: 2.9.0
       tinyexec: 1.3.1

@@ -38,7 +38,11 @@ export default defineConfig({
         // where the three confirmed UX-FRM-001 defect fixes are regression-tested.
         test: {
           name: 'unit',
-          include: ['apps/admin/src/**/*.test.ts'],
+          include: [
+            'apps/admin/src/**/*.test.ts',
+            // The respondent robot's pure logic: answers, plan, rounds, state.
+            'tools/respondent-robot/tests/**/*.test.ts',
+          ],
           globals: true,
           environment: 'node',
         },

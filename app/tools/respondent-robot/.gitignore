@@ -1,0 +1,5 @@
+# Local run state: test coordinators' PINs, link tokens, progress. Never commit.
+.state/
+*.state.json
+*.tmp
+regulator-links*.txt
