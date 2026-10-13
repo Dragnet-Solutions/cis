@@ -16,6 +16,7 @@
     "format:check": "prettier --check .",
     "typecheck": "turbo run typecheck",
     "audit:deps": "pnpm audit --audit-level=high",
+    "robot": "pnpm --filter @cis/respondent-robot start",
     "prepare": "cd .. && husky app/.husky"
   },
   "devDependencies": {

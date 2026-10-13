@@ -1,0 +1,20 @@
+{
+  "name": "@cis/respondent-robot",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Plays a full-size live study through the platform's public HTTP API (test data only).",
+  "scripts": {
+    "start": "tsx src/cli.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src/ tests/"
+  },
+  "dependencies": {
+    "@cis/survey": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.0",
+    "tsx": "^4.19.0",
+    "typescript": "*",
+    "vitest": "*"
+  }
+}

@@ -50,6 +50,10 @@ import {
   correctFirmReport,
   releaseFirmReports,
   firmOmiScores,
+  retailIciRelationshipScore,
+  industrySeiFromFirms,
+  buildFirmReportContent,
+  generateFirmReports,
   requestMethodologyApproval,
   decideMethodologyApproval,
   getMethodologyApproval,
@@ -676,9 +680,10 @@ describe('Approving the scoring methodology (two people), then scores in the rep
     const indices = (await buildIndustryReportContent(pool, editionId)).indices;
     expect(indices.state).toBe('reported');
     if (indices.state !== 'reported') return;
+    // D36: one firm's "industry" score is that firm's score — withheld, not shown.
     const omi = indices.industry.find((x) => x.code === 'OMI')!;
-    expect(omi.value).not.toBeNull();
-    expect(omi.note).toMatch(/below the .*floor/);
+    expect(omi.value).toBeNull();
+    expect(omi.note).toMatch(/^Withheld: from 1 firm, below the \d+-firm floor/);
     expect(indices.industry.map((x) => x.code)).toEqual(['OMI', 'DMI', 'IEI', 'ICI', 'SEI']);
   });
 
@@ -708,5 +713,63 @@ describe('Approving the scoring methodology (two people), then scores in the rep
     if (indices.state !== 'reported') throw new Error('expected reported indices');
     expect(indices.tiers?.map((t) => t.firms)).toEqual([3, 3, 3]);
     expect(indices.tiers![0]!.omi).toBeGreaterThan(indices.tiers![2]!.omi);
+  });
+
+  it('scores yes/no answers as the survey stores them (D38a)', () => {
+    // The survey saves {v: 'No'}; the scoring query reads it back as JSON text.
+    const stored = (v: string) => JSON.stringify({ v });
+    const score = retailIciRelationshipScore({
+      q4: '10',
+      q5: stored('No'),
+      q6: stored('No'),
+      q7: stored('Yes'),
+    });
+    // 0.5·N1(10) + 0.5·mean(100, 100, 0)
+    expect(score).toBeCloseTo(0.5 * 100 + 0.5 * (200 / 3), 3);
+  });
+
+  it('withholds a firm score built from fewer than ten of its investors (D37)', async () => {
+    const firmId = await firmWithFirmSideAnswers('firm-few-investors', {
+      'S1-Q2': '8',
+      'S1-Q11': '8',
+      'S2-Q1': '7',
+      'S3-Q2': '0-10%',
+    });
+    for (let i = 0; i < 4; i++) await seedRetailFull(editionId, firmId);
+    await updateEditionStatus(pool, editionId, 'locked');
+    await approveMethodology();
+    const { run } = await triggerScoringRun(pool, { editionId });
+    const so = await requestSignoff(pool, {
+      editionId,
+      calculationRunId: run.id,
+      requestedBy: 'maker',
+      checkedAccount: {
+        populationCountsReviewed: true,
+        floorStatusReviewed: true,
+        dataQualityFlagsReviewed: true,
+      },
+    });
+    await approveSignoff(pool, { signoffId: so.id, approvedBy: 'checker' });
+    await generateFirmReports(pool, { editionId, scoringRunId: run.id });
+    const indices = (await buildFirmReportContent(pool, editionId, firmId)).indices;
+    if (indices.state !== 'reported') throw new Error('expected reported indices');
+    for (const code of ['IEI', 'ICI']) {
+      const x = indices.firm!.find((f) => f.code === code)!;
+      expect(x.value).toBeNull();
+      expect(x.note).toMatch(/^Withheld: fewer than ten of your investors answered \(4\)/);
+    }
+    expect(JSON.stringify(indices)).not.toMatch(/caution/);
+  });
+
+  it('derives industry SEI from the run’s own firm SEI, not a previous run', () => {
+    // Ten firms, each with enough investors: calculable from this run alone.
+    const firms = Array.from({ length: 10 }, (_, i) => ({ value: 60 + i, n: 12 }));
+    const sei = industrySeiFromFirms(firms);
+    expect(sei.status).toBe('CALCULABLE');
+    expect(sei.value).toBeCloseTo(64.5, 1);
+    // Firms resting on fewer than ten investors do not count.
+    const thin = industrySeiFromFirms(firms.map((f) => ({ ...f, n: 4 })));
+    expect(thin.status).toBe('NOT_CALCULABLE');
+    expect(thin.reason).toMatch(/Only 0 firms/);
   });
 });

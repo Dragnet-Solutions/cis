@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 const DB_URL =
@@ -38,9 +39,22 @@ export default defineConfig({
         // where the three confirmed UX-FRM-001 defect fixes are regression-tested.
         test: {
           name: 'unit',
-          include: ['apps/admin/src/**/*.test.ts'],
+          include: [
+            'apps/admin/src/**/*.test.ts',
+            // The respondent robot's pure logic: answers, plan, rounds, state.
+            'tools/respondent-robot/tests/**/*.test.ts',
+          ],
           globals: true,
           environment: 'node',
+        },
+        // Unit tests run before any package is built (admin CI tests, then
+        // builds), so the pure survey logic is read from its source.
+        resolve: {
+          alias: {
+            '@cis/survey': fileURLToPath(
+              new URL('./packages/survey/src/index.ts', import.meta.url),
+            ),
+          },
         },
       },
     ],

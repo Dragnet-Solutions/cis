@@ -1005,9 +1005,20 @@ export async function industrySeiState(pool: Pool, editionId: string): Promise<I
     };
   }
   const results = await listCalculatedResults(pool, signoff.calculationRunId);
-  const seiRows = results.filter((r) => r.subjectType === 'firm' && r.metricCode === 'SEI');
+  return industrySeiFromFirms(
+    results.filter((r) => r.subjectType === 'firm' && r.metricCode === 'SEI'),
+  );
+}
+
+/**
+ * Industry SEI from a set of Firm_SEI values: the mean of firms whose own
+ * Firm_SEI rests on enough investors, provided enough such firms exist.
+ */
+export function industrySeiFromFirms(
+  seiRows: Array<{ value: number | null; n: number | null }>,
+): IndustrySeiState {
   const contributing = seiRows.filter(
-    (r) => r.value !== null && computeSufficiency(r.n) !== 'SUPPRESSED',
+    (r) => r.value !== null && computeSufficiency(r.n ?? 0) !== 'SUPPRESSED',
   );
   const contributingFirms = contributing.length;
   const aggregateSufficiency = computeSufficiency(contributingFirms);
@@ -1216,8 +1227,40 @@ export async function runCandidateScoring(
     });
   }
 
-  // Industry SEI — real derivation from the authoritative run's Firm_SEI.
-  const industrySei = await industrySeiState(pool, editionId);
+  // Firm-side SEI (§10): Firm_SEI_f = 100 - abs(Firm_Expectation_f -
+  // Firm_Investor_IEI_f), now genuinely database-sourced — Firm_Investor_IEI_f
+  // comes from the real §7.4 pipeline (`firmInvestorScores`), never a stub.
+  // Private-report calculable regardless of volume (§10), so REPORTABLE
+  // unconditionally once both inputs exist — this is NOT the public Industry
+  // SEI eligibility gate, which stays untouched (PENDING_VALIDATOR, below).
+  const expectationRows = await getFirmSideItemAnswers(pool, editionId, ['S1-Q11']);
+  const investorScores = await firmInvestorScores(pool, editionId);
+  const investorByFirm = new Map(investorScores.map((s) => [s.firmId, s]));
+  let firmSeiCount = 0;
+  const firmSeiRows: Array<{ value: number; n: number }> = [];
+  for (const row of expectationRows) {
+    const expectation = scoreItem('S1-Q11', row.a);
+    const investor = investorByFirm.get(row.firmId);
+    if (expectation === null || investor === undefined || investor.investorIei === null) continue;
+    const seiValue = 100 - Math.abs(expectation - investor.investorIei);
+    firmSeiRows.push({ value: seiValue, n: investor.nIei });
+    await insertCalculatedResult(pool, {
+      calculationRunId: run.id,
+      subjectType: 'firm',
+      subjectId: row.firmId,
+      metricCode: 'SEI',
+      value: Math.round(seiValue * 10000) / 10000,
+      n: investor.nIei,
+      denominator: investor.nIei,
+      sufficiencyState: 'REPORTABLE',
+    });
+    firmSeiCount += 1;
+  }
+
+  // Industry SEI — from THIS run's own Firm_SEI values (computed just above).
+  // Reading them from the previously signed-off run left a first run with no
+  // industry SEI at all ("no signed-off scoring run exists").
+  const industrySei = industrySeiFromFirms(firmSeiRows);
   if (industrySei.status === 'NOT_CALCULABLE') {
     await insertCalculatedResult(pool, {
       calculationRunId: run.id,
@@ -1241,34 +1284,6 @@ export async function runCandidateScoring(
       denominator: industrySei.contributingFirms,
       sufficiencyState: industrySei.sufficiency ?? 'REPORTABLE',
     });
-  }
-
-  // Firm-side SEI (§10): Firm_SEI_f = 100 - abs(Firm_Expectation_f -
-  // Firm_Investor_IEI_f), now genuinely database-sourced — Firm_Investor_IEI_f
-  // comes from the real §7.4 pipeline (`firmInvestorScores`), never a stub.
-  // Private-report calculable regardless of volume (§10), so REPORTABLE
-  // unconditionally once both inputs exist — this is NOT the public Industry
-  // SEI eligibility gate, which stays untouched (PENDING_VALIDATOR, below).
-  const expectationRows = await getFirmSideItemAnswers(pool, editionId, ['S1-Q11']);
-  const investorScores = await firmInvestorScores(pool, editionId);
-  const investorByFirm = new Map(investorScores.map((s) => [s.firmId, s]));
-  let firmSeiCount = 0;
-  for (const row of expectationRows) {
-    const expectation = scoreItem('S1-Q11', row.a);
-    const investor = investorByFirm.get(row.firmId);
-    if (expectation === null || investor === undefined || investor.investorIei === null) continue;
-    const seiValue = 100 - Math.abs(expectation - investor.investorIei);
-    await insertCalculatedResult(pool, {
-      calculationRunId: run.id,
-      subjectType: 'firm',
-      subjectId: row.firmId,
-      metricCode: 'SEI',
-      value: Math.round(seiValue * 10000) / 10000,
-      n: investor.nIei,
-      denominator: investor.nIei,
-      sufficiencyState: 'REPORTABLE',
-    });
-    firmSeiCount += 1;
   }
 
   // Firm_Investor_IEI / ICI (firm_combined): each firm's own investors, for its
