@@ -1,0 +1,29 @@
+# Repository root. The application's own ignores are in app/.gitignore; these
+# keep secrets and local state out of git wherever they sit in the repo.
+
+# Environment and secrets — every .env variant at any depth
+.env
+.env.*
+**/.env
+**/.env.*
+*env*.zip
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Dependencies and build output
+node_modules/
+dist/
+.turbo/
+coverage/
+
+# Local tool settings
+.claude/
+
+# OS and editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json

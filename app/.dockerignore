@@ -1,0 +1,26 @@
+# Never send secrets or local state into the build context.
+.env
+.env.*
+**/.env
+**/.env.*
+
+# Installed / generated output — the image builds its own.
+**/node_modules
+**/dist
+**/coverage
+**/.turbo
+**/*.tsbuildinfo
+**/*.log
+
+# Developer tooling, not needed in any image.
+.git
+.husky
+.claude
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+**/Dockerfile
+.dockerignore
+docker-compose*.yml
+README.md

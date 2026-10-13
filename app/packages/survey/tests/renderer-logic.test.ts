@@ -14,6 +14,7 @@ import {
   toggleRank,
   sharedItems,
   perFirmItems,
+  describeAnswer,
   type SurveyItem,
 } from '../src';
 
@@ -166,5 +167,49 @@ describe('answer_optional (S4-Q10)', () => {
   it('an optional open item is complete when blank', () => {
     const opt = item({ id: 'S4-Q10', kind: 'open', scope: 'firm_specific', answerOptional: true });
     expect(isAnswered(opt, undefined)).toBe(true);
+  });
+});
+
+describe('describeAnswer — the review step shows each answer readably', () => {
+  it('renders every kind as plain text, never a raw value', () => {
+    expect(describeAnswer(item({ id: 'a', kind: 'scale' }), { a: 7 })).toBe('7');
+    expect(describeAnswer(item({ id: 'b', kind: 'single' }), { a: 'Weekly' })).toBe('Weekly');
+    expect(describeAnswer(item({ id: 'c', kind: 'multi' }), { a: ['Email', 'Phone'] })).toBe(
+      'Email, Phone',
+    );
+    expect(describeAnswer(item({ id: 'd', kind: 'rank' }), { a: ['X', 'Y', 'Z'] })).toBe(
+      '1. X  2. Y  3. Z',
+    );
+    expect(
+      describeAnswer(item({ id: 'e', kind: 'yesno', conditionalDetailOn: 'Yes' }), {
+        a: { v: 'Yes', detail: 'Lost a trade' },
+      }),
+    ).toBe('Yes — Lost a trade');
+    expect(
+      describeAnswer(item({ id: 'f', kind: 'select', selectThenGreatest: true }), {
+        a: { picked: ['A', 'B'], greatest: 'B' },
+      }),
+    ).toBe('A, B. Greatest consequence: B');
+    expect(
+      describeAnswer(
+        item({
+          id: 'g',
+          kind: 'grid',
+          gridRows: ['Bank', 'Apps'],
+          gridDimensions: { Speed: ['Slow', 'Fast'], Cost: ['Low', 'High'] },
+        }),
+        { a: { Bank: { Speed: 'Fast', Cost: 'Low' }, Apps: { Speed: 'Slow', Cost: 'High' } } },
+      ),
+    ).toBe('Bank: Speed: Fast, Cost: Low; Apps: Speed: Slow, Cost: High');
+    expect(describeAnswer(item({ id: 'h', kind: 'open' }), { a: '  Better apps ' })).toBe(
+      'Better apps',
+    );
+  });
+
+  it('is empty for an unanswered (or optional, left blank) item', () => {
+    expect(describeAnswer(item({ id: 'a', kind: 'scale' }), undefined)).toBe('');
+    expect(describeAnswer(item({ id: 'b', kind: 'open', answerOptional: true }), { a: '' })).toBe(
+      '',
+    );
   });
 });

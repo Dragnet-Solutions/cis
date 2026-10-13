@@ -1,7 +1,11 @@
 import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { getPool, getDisplayNamesByIdentifier } from '@cis/db';
+import { loadRbacContext } from '@cis/auth';
 import {
+  getMethodologyApproval,
+  requestMethodologyApproval,
+  decideMethodologyApproval,
   triggerScoringRun,
   listScoringRuns,
   getScoreView,
@@ -20,6 +24,64 @@ import {
  * sign-off. Domain errors carry codes the shared error handler maps to 4xx.
  */
 export const scoringRoutes: FastifyPluginAsyncZod = async (app) => {
+  // ── The scoring methodology's approval (Runbook §5.2) ──────────────────────
+  // Two people: one requests with a reason, a different one approves. Until it
+  // is approved, runs are not official and no report shows an index score.
+  app.get('/scoring-methodology', { preHandler: [app.authenticate] }, async (request, reply) => {
+    const pool = getPool();
+    const state = await getMethodologyApproval(pool);
+    const operatorNames = await getDisplayNamesByIdentifier(pool, [
+      state.approved?.requestedBy ?? '',
+      state.approved?.approvedBy ?? '',
+      state.pending?.requestedBy ?? '',
+    ]);
+    return reply.send({ ...state, viewerId: request.session.sub, operatorNames });
+  });
+
+  app.post(
+    '/scoring-methodology/approval/request',
+    { preHandler: [app.authenticate], schema: { body: z.object({ reason: z.string() }) } },
+    async (request, reply) => {
+      const pool = getPool();
+      const rbac = await loadRbacContext(pool, request.session.sub);
+      const action = await requestMethodologyApproval(
+        pool,
+        rbac,
+        { reason: request.body.reason },
+        { ipAddress: request.ip, userAgent: request.headers['user-agent'] ?? null },
+      );
+      return reply.status(201).send({ criticalActionId: action.id });
+    },
+  );
+
+  app.post(
+    '/scoring-methodology/approval/:actionId/decide',
+    {
+      preHandler: [app.authenticate],
+      schema: {
+        params: z.object({ actionId: z.string().uuid() }),
+        body: z.object({ approved: z.boolean(), rejectionReason: z.string().optional() }),
+      },
+    },
+    async (request, reply) => {
+      const pool = getPool();
+      const rbac = await loadRbacContext(pool, request.session.sub);
+      const action = await decideMethodologyApproval(
+        pool,
+        rbac,
+        request.params.actionId,
+        {
+          approved: request.body.approved,
+          ...(request.body.rejectionReason !== undefined
+            ? { rejectionReason: request.body.rejectionReason }
+            : {}),
+        },
+        { ipAddress: request.ip, userAgent: request.headers['user-agent'] ?? null },
+      );
+      return reply.send({ status: action.status });
+    },
+  );
+
   // Trigger a scoring run — blocked unless the edition is locked.
   app.post(
     '/editions/:id/scoring-runs',

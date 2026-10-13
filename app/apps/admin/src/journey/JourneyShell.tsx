@@ -1,7 +1,9 @@
 import { useMemo, useRef, useState } from 'react';
 import {
   buildJourneySequence,
+  describeAnswer,
   firmContextAt,
+  getCanonical,
   isAnswered,
   outstanding,
   type SurveyItem,
@@ -202,8 +204,40 @@ export function JourneyShell({
             </ul>
           </>
         ) : (
-          <p className="lede">Everything is answered. You can send your responses now.</p>
+          <p className="lede">Everything is answered. Check your answers below, then send them.</p>
         )}
+        <ol className="review-answers">
+          {sequence.map((s, i) => {
+            const v = answers[key(s.item.id, s.ratedFirmId)];
+            const shown = describeAnswer(s.item, v);
+            const comment = getCanonical(v).c.trim();
+            const firm =
+              s.ratedFirmId && firmsById[s.ratedFirmId]
+                ? firmsById[s.ratedFirmId]!.displayName
+                : null;
+            return (
+              <li key={key(s.item.id, s.ratedFirmId)}>
+                <p className="review-q">
+                  {firm && <span className="review-firm">{firm} · </span>}
+                  {s.item.text}
+                </p>
+                <p className="review-a">{shown || <em>No answer</em>}</p>
+                {comment && <p className="review-c">Your comment: {comment}</p>}
+                <button
+                  type="button"
+                  className="textlink"
+                  onClick={() => {
+                    setReviewing(false);
+                    setStep(i);
+                  }}
+                  disabled={submitting}
+                >
+                  Change
+                </button>
+              </li>
+            );
+          })}
+        </ol>
         {error && <div className="err">{error}</div>}
         <div className="actions">
           <button type="button" className="btn-2" onClick={goBack} disabled={submitting}>

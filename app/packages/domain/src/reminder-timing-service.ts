@@ -6,10 +6,13 @@ import {
   getInProgressResponses,
   listReminderSteps,
   recordReminderSend,
+  getPublicVisibleQuestions,
+  listDrgOpsQuestionSummary,
+  INSTRUMENT_META,
   type InProgressResponse,
   type ReminderSend,
 } from '@cis/db';
-import { segmentForInstrument } from './funnel-service';
+import { isInvestorInstrument } from './funnel-service';
 import { DomainError } from './errors';
 
 /**
@@ -151,9 +154,11 @@ export function nextDueReminder(params: {
 // ─── Eligibility ────────────────────────────────────────────────────────────────
 
 /** Investor-side, in-progress, reachable responses — the only reminder cohort.
- *  Firm-side seat responses (S1/S2/S3) and unreachable participants are excluded. */
+ *  Firm-side seat responses (S1/S2/S3), regulators (chased from the Regulators
+ *  screen, never by the investor schedule) and unreachable participants are
+ *  excluded. */
 function eligibleInvestorResponses(rows: InProgressResponse[]): InProgressResponse[] {
-  return rows.filter((r) => segmentForInstrument(r.instrumentCode) !== 'firm' && r.reachable);
+  return rows.filter((r) => isInvestorInstrument(r.instrumentCode) && r.reachable);
 }
 
 // ─── The scheduling run (persists sends; never touches response state) ──────────
@@ -211,7 +216,7 @@ export interface UnfinishedStats {
 
 export async function getUnfinishedStats(pool: Pool, editionId: string): Promise<UnfinishedStats> {
   const rows = await getInProgressResponses(pool, editionId);
-  const investor = rows.filter((r) => segmentForInstrument(r.instrumentCode) !== 'firm');
+  const investor = rows.filter((r) => isInvestorInstrument(r.instrumentCode));
   const reachable = investor.filter((r) => r.reachable).length;
   return {
     unfinished: investor.length,
@@ -224,18 +229,62 @@ export async function getUnfinishedStats(pool: Pool, editionId: string): Promise
 
 export interface DropoffBucket {
   questionId: string;
+  /** What an operator reads for the question: its wording, or — for a Dragnet
+   *  operational question, whose wording is never shown outside Dragnet — a
+   *  plain description. Never the raw question code. */
+  label: string;
+  /** The survey the question belongs to, when known. */
+  surveyName: string | null;
   count: number;
   /** The single largest cluster — a question doing damage. */
   peak: boolean;
 }
 
+/** Operator-readable labels for question codes. Public wording comes only from
+ *  the sanctioned `getPublicVisibleQuestions`; Dragnet operational questions
+ *  get a description, not their wording. */
+async function questionLabels(
+  pool: Pool,
+): Promise<Map<string, { label: string; surveyName: string | null }>> {
+  const [visible, drgOps] = await Promise.all([
+    getPublicVisibleQuestions(pool),
+    listDrgOpsQuestionSummary(pool),
+  ]);
+  const out = new Map<string, { label: string; surveyName: string | null }>();
+  for (const q of visible) out.set(q.questionCode, { label: q.promptText, surveyName: null });
+  for (const q of drgOps) {
+    out.set(q.questionCode, {
+      label: 'A Dragnet operational question (wording shown to Dragnet only)',
+      surveyName: q.instrumentName,
+    });
+  }
+  return out;
+}
+
 export async function getDropoffHistogram(pool: Pool, editionId: string): Promise<DropoffBucket[]> {
   const rows = await getInProgressResponses(pool, editionId);
-  const investor = rows.filter((r) => segmentForInstrument(r.instrumentCode) !== 'firm');
+  const investor = rows.filter((r) => isInvestorInstrument(r.instrumentCode));
   const counts = new Map<string, number>();
-  for (const r of investor) counts.set(r.lastQuestionId, (counts.get(r.lastQuestionId) ?? 0) + 1);
+  const instrumentOf = new Map<string, string>();
+  for (const r of investor) {
+    counts.set(r.lastQuestionId, (counts.get(r.lastQuestionId) ?? 0) + 1);
+    instrumentOf.set(r.lastQuestionId, r.instrumentCode);
+  }
+  const labels = await questionLabels(pool);
+  const surveyNames = new Map(INSTRUMENT_META.map((m) => [m.code, m.name]));
   const max = Math.max(0, ...counts.values());
   return Array.from(counts.entries())
-    .map(([questionId, count]) => ({ questionId, count, peak: count === max && max > 0 }))
+    .map(([questionId, count]) => {
+      const known = labels.get(questionId);
+      const surveyName =
+        known?.surveyName ?? surveyNames.get(instrumentOf.get(questionId) ?? '') ?? null;
+      return {
+        questionId,
+        label: known?.label ?? 'A question no longer in the survey',
+        surveyName,
+        count,
+        peak: count === max && max > 0,
+      };
+    })
     .sort((a, b) => b.count - a.count || a.questionId.localeCompare(b.questionId));
 }

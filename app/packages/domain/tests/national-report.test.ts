@@ -34,6 +34,13 @@ import {
   requestSignoff,
   approveSignoff,
   NationalReportError,
+  prepareNationalReview,
+  getNationalReview,
+  decideFinding,
+  measureChecker,
+  getIndustryNarrative,
+  generateIndustryNarrative,
+  type NarrativeModel,
   type SufficiencyContext,
   type DraftFact,
   type SeededClaim,
@@ -376,5 +383,154 @@ describe('getLatestNationalReportForEdition (ADM-005 live-wiring)', () => {
     const found = await getLatestNationalReportForEdition(pool, editionId);
     expect(found?.id).toBe(second.id);
     expect(found?.id).not.toBe(first.id);
+  });
+});
+
+describe('Reviewing the AI narrative as the national draft (D23)', () => {
+  // A draft with one sentence that passes and one the checker holds back.
+  const model = (
+    text = 'The study was designed around 80 participating firms.',
+  ): NarrativeModel => ({
+    name: 'fake-model',
+    complete: async () =>
+      JSON.stringify({
+        sections: {
+          EXEC: [
+            { text, factIds: ['PART.firm'] },
+            { text: 'Firms joined because the study matters.', factIds: ['PART.firm'] },
+          ],
+        },
+      }),
+  });
+
+  async function reportReadyToReview() {
+    const { report } = await generateNationalReport(pool, {
+      editionId,
+      scoringRunId,
+      context: fullContext(),
+    });
+    return report;
+  }
+
+  it('records the narrative for review, with the held-back sentence as a finding', async () => {
+    const report = await reportReadyToReview();
+    // Nothing drafted yet: there is no draft to review.
+    expect((await nationalApprovalPreconditions(pool, report.id)).reasons).toContain(
+      'There is no written draft to review yet.',
+    );
+
+    const review = await prepareNationalReview(pool, report.id, () => model(), 'op@cis.example');
+    expect(review.items).toHaveLength(2);
+    expect(review.items.filter((i) => i.finding)).toHaveLength(1);
+    expect(review.health?.healthy).toBe(true);
+
+    // Preparing again changes nothing (no redraft, no duplicate rows).
+    const again = await prepareNationalReview(
+      pool,
+      report.id,
+      () => {
+        throw new Error('no model call expected');
+      },
+      'op@cis.example',
+    );
+    expect(again.items).toHaveLength(2);
+  });
+
+  it('can be approved once opened, every finding decided and the checker proven', async () => {
+    const report = await reportReadyToReview();
+    await prepareNationalReview(pool, report.id, () => model(), 'op@cis.example');
+    await openDraft(pool, report.id);
+
+    let pre = await nationalApprovalPreconditions(pool, report.id);
+    expect(pre.draftReviewable).toBe(true);
+    expect(pre.checkerHealthy).toBe(true);
+    expect(pre.allFindingsDisposed).toBe(false);
+    expect(pre.ok).toBe(false);
+
+    const finding = (await getNationalReview(pool, report.id)).items.find((i) => i.finding)!;
+    await decideFinding(pool, {
+      reportId: report.id,
+      findingId: finding.finding!.id,
+      disposition: 'SUPPRESS_CLAIM',
+      reason: null,
+      decidedBy: 'reviewer@cis.example',
+    });
+    await expect(
+      decideFinding(pool, {
+        reportId: report.id,
+        findingId: finding.finding!.id,
+        disposition: 'SUPPRESS_CLAIM',
+        reason: null,
+        decidedBy: 'reviewer@cis.example',
+      }),
+    ).rejects.toMatchObject({ code: 'DECIDED' });
+
+    pre = await nationalApprovalPreconditions(pool, report.id);
+    expect(pre.ok).toBe(true);
+    await requestNationalApproval(pool, report.id, {
+      requestedBy: 'maker@cis.example',
+      reason: 'Read every section and decided the one finding.',
+    });
+    expect((await approveNational(pool, report.id, 'checker@dragnet.example')).status).toBe(
+      'approved',
+    );
+  });
+
+  it('puts a sentence back when a reviewer rejects its finding with a reason', async () => {
+    const report = await reportReadyToReview();
+    await prepareNationalReview(pool, report.id, () => model(), 'op@cis.example');
+    const finding = (await getNationalReview(pool, report.id)).items.find((i) => i.finding)!;
+    await expect(
+      decideFinding(pool, {
+        reportId: report.id,
+        findingId: finding.finding!.id,
+        disposition: 'REJECT_WITH_REASON',
+        reason: null,
+        decidedBy: 'reviewer@cis.example',
+      }),
+    ).rejects.toBeInstanceOf(NationalReportError);
+    await decideFinding(pool, {
+      reportId: report.id,
+      findingId: finding.finding!.id,
+      disposition: 'REJECT_WITH_REASON',
+      reason: 'The respondents themselves give this as their reason.',
+      decidedBy: 'reviewer@cis.example',
+    });
+    const shown = (await getIndustryNarrative(pool, editionId))!.sentences.filter(
+      (x) => x.finding === null,
+    );
+    expect(shown.map((x) => x.text)).toContain('Firms joined because the study matters.');
+  });
+
+  it('starts a fresh review when the narrative is redrafted', async () => {
+    const report = await reportReadyToReview();
+    await prepareNationalReview(pool, report.id, () => model(), 'op@cis.example');
+    await openDraft(pool, report.id);
+    await generateIndustryNarrative(pool, editionId, model('A redraft.'), 'op@cis.example');
+    const pre = await nationalApprovalPreconditions(pool, report.id);
+    expect(pre.draftReviewable).toBe(false);
+    const review = await prepareNationalReview(pool, report.id, () => model(), 'op@cis.example');
+    expect(review.items.map((i) => i.text)).toContain('A redraft.');
+  });
+
+  it('measures the checker against errors planted in the draft’s own facts', () => {
+    const facts = [
+      {
+        id: 'A',
+        state: 'REPORTABLE',
+        statement: '33% of firms (5 of 15) cite X.',
+        numbers: [33, 5, 15],
+      },
+      { id: 'B', state: 'BANDED', statement: 'The SEC names X.', numbers: [] },
+      {
+        id: 'C',
+        state: 'REPORTABLE',
+        statement: 'Firms 60/100, investors 56/100 — a gap of 4 points, firms higher.',
+        numbers: [60, 56, 4, 100],
+      },
+    ];
+    const { seeded, detected } = measureChecker(facts);
+    expect(seeded).toBe(8);
+    expect(detected).toBe(8);
   });
 });

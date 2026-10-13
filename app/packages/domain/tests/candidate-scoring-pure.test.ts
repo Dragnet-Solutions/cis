@@ -375,8 +375,8 @@ describe('Mission board — Industry SEI methodology block', () => {
     // board (chasing respondents does resolve it, unlike the old permanent
     // methodology gate).
     expect(block!.recommendedAction).toBeNull();
-    expect(block!.evidence.join(' ')).toContain('3 firm(s)');
-    expect(block!.consequence.join(' ')).toContain('not be produced yet');
+    expect(block!.evidence.join(' ')).toContain('3 firms have');
+    expect(block!.consequence.join(' ')).toContain('cannot be produced yet');
   });
 
   it('omits the block card once Industry SEI is calculable', () => {

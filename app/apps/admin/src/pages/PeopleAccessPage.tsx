@@ -12,7 +12,7 @@ import {
  * UX-OPS-006 — People & Access (RBAC admin), live-wired to the real evaluator
  * (`@cis/domain` people-access-service, via `apps/api/src/routes/people.ts`).
  * This surface manages WHO holds the seven access rights, including the
- * request/approve rights that gate the six critical actions — it adds no
+ * request/approve rights that gate the critical actions — it adds no
  * seventh action and changes none of the six's own logic.
  *
  * Every rule this UI hints at is enforced server-side, which is the actual
@@ -392,7 +392,7 @@ function MainView({
 
       <section className="stage" style={{ marginTop: 22 }}>
         <div className="stagehead">
-          <h2>The six critical actions</h2>
+          <h2>The critical actions</h2>
         </div>
         <div className="stagebody">
           <p>

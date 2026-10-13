@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { MethodologyApproval } from './MethodologyApproval';
 import type { AdminClient } from '../api/client';
 import {
   ApiError,
@@ -8,6 +9,7 @@ import {
   type ScoringSignoff,
 } from '../api/types';
 import { isViewer, operatorName } from '../shared/operatorName';
+import { plural } from '../shared/plural';
 
 /**
  * UX-ADM-004 — Setup: Results, Scores (sign-off). The maker-checker gate on
@@ -29,9 +31,12 @@ import { isViewer, operatorName } from '../shared/operatorName';
  */
 
 const CHECKLIST = [
-  { key: 'populationCountsReviewed', label: 'Per-index effective population counts reviewed' },
-  { key: 'floorStatusReviewed', label: 'Floor-clear / sub-floor status reviewed for every index' },
-  { key: 'dataQualityFlagsReviewed', label: 'Known data-quality flags reviewed' },
+  {
+    key: 'populationCountsReviewed',
+    label: 'How many firms or respondents each index is based on',
+  },
+  { key: 'floorStatusReviewed', label: 'Which indices are above or below their floor' },
+  { key: 'dataQualityFlagsReviewed', label: 'The known data-quality issues' },
 ] as const;
 
 type View = 'main' | 'request' | 'review';
@@ -135,6 +140,8 @@ export function ScoresSignoffPage({
 
       {error && <div className="err">{error}</div>}
 
+      <MethodologyApproval client={client} onChange={() => void load()} />
+
       {!currentRun ? (
         <div className="warnbox">
           <b>No scoring run exists yet for this edition.</b>
@@ -155,11 +162,12 @@ export function ScoresSignoffPage({
       ) : (
         <>
           <div className="note">
-            <h3>Weighting is configuration, not code</h3>
+            <h3>The weighting is still being validated</h3>
             <p>
-              Index composition is fixed by the Reporting Specification. The weighting within each
-              index is Dragnet methodology and is <b>pending validation</b> by the methodology
-              partner — so it is held as configuration and can change without a rebuild.
+              Which questions make up each index is fixed by the Reporting Specification. How they
+              are weighted within each index is Dragnet&apos;s methodology and is{' '}
+              <b>pending validation</b> by the methodology partner, so it can still be updated
+              before the results are final.
             </p>
           </div>
 
@@ -185,7 +193,11 @@ export function ScoresSignoffPage({
                     </td>
                     <td>
                       {i.score === null ? (
-                        <span className="tag wait">Pending validation</span>
+                        currentRun?.methodologyStatus === 'APPROVED' ? (
+                          <span className="tag soft">Not calculable</span>
+                        ) : (
+                          <span className="tag wait">Pending validation</span>
+                        )
                       ) : (
                         <>
                           {i.score} <span className="muted">/ 100</span>
@@ -211,10 +223,10 @@ export function ScoresSignoffPage({
             <div className="note">
               <p>
                 <b>
-                  {flagged.length} index computed on a population below its floor
-                  {flagged.length > 1 ? 's' : ''}.
+                  {plural(flagged.length, 'index', 'indices')}{' '}
+                  {flagged.length === 1 ? 'was' : 'were'} computed on a population below its floor.
                 </b>{' '}
-                The score exists and is shown — it is flagged, not hidden. What is ultimately
+                The score is still shown here, marked as below the floor. What is ultimately
                 reportable is decided when the national report is prepared, not here.
               </p>
             </div>
@@ -223,7 +235,7 @@ export function ScoresSignoffPage({
           <section className="stage">
             <div className="stagehead">
               <h2>Runs</h2>
-              <span className="pill">{runs.length} kept</span>
+              <span className="pill">{plural(runs.length, 'run')} kept</span>
             </div>
             <div className="stagebody">
               <p>
@@ -319,8 +331,8 @@ export function ScoresSignoffPage({
               </div>
               <div className="stagebody">
                 <p className="muted" style={{ marginTop: 0 }}>
-                  Kept with the run permanently. The person approving reads this. This is a
-                  structured account of what was verified — not a reason for wanting to proceed.
+                  Kept with the run permanently. The person approving reads this. Tick what you
+                  actually checked.
                 </p>
                 {CHECKLIST.map((c) => (
                   <label key={c.key} style={{ display: 'block', margin: '6px 0' }}>
@@ -372,8 +384,8 @@ export function ScoresSignoffPage({
               <div className="stagebody">
                 <p>
                   You requested this sign-off, on{' '}
-                  {new Date(liveSignoff!.requestedAt).toLocaleString()}. A maker can never approve
-                  their own request.
+                  {new Date(liveSignoff!.requestedAt).toLocaleString()}. Someone else has to approve
+                  it.
                 </p>
               </div>
             </section>
@@ -422,7 +434,8 @@ export function ScoresSignoffPage({
                     <div className="field">
                       <label htmlFor="rejectReason">Why</label>
                       <p className="hint">
-                        Kept with the run permanently. Required — a bare rejection is not accepted.
+                        Kept with the run permanently. Required, so the person who asked knows what
+                        to change.
                       </p>
                       <input
                         id="rejectReason"
@@ -456,7 +469,9 @@ export function ScoresSignoffPage({
                     </div>
                   </div>
                 )}
-                <p className="muted">A maker can never approve or reject their own request.</p>
+                <p className="muted">
+                  Whoever asks for a sign-off cannot also approve or reject it.
+                </p>
               </div>
             </section>
           )}

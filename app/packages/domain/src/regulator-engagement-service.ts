@@ -24,6 +24,7 @@ import type {
 import { requirePermission, type RbacContext } from '@cis/auth';
 import { DomainError } from './errors';
 import { FAMILY_META, instrumentCodeForFamily } from './institution-family-service';
+import { assertCollectionOpen } from './journey-service';
 
 /**
  * UX-OPS-007 — Regulator Engagement. One page per (institution, family) role,
@@ -379,6 +380,8 @@ export async function issueSurveyLink(
       'CONTACT_REQUIRED_FIRST',
     );
   }
+  // A link issued after the lock could only ever be refused: issue none.
+  await assertCollectionOpen(pool, editionId);
   const targetDate = parseTargetBy(input.targetBy);
   const instrumentCode = instrumentCodeForFamily(familyCode);
 

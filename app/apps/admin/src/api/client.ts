@@ -8,6 +8,9 @@ import {
   type EditionSummary,
   type FirmReport,
   type FirmSummary,
+  type FirmImportResult,
+  type PendingFirmReportRelease,
+  type FirmReportReleaseDecision,
   type IndexScoreView,
   type InstrumentsResponse,
   type InvitationRequestItem,
@@ -23,6 +26,8 @@ import {
   type PersonAccess,
   type PersonInput,
   type ReleaseFirmReportsResult,
+  type NationalReview,
+  type MethodologyApprovalView,
   type ReminderSchedule,
   type ResponsesMonitor,
   type SampleFloor,
@@ -114,6 +119,13 @@ export interface AdminClient {
   getMissionBoard(id: string): Promise<MissionBoardResponse>;
   // Scoring & sign-off (UX-ADM-004)
   triggerScoringRun(id: string): Promise<{ run: unknown }>;
+  getScoringMethodology(): Promise<MethodologyApprovalView>;
+  requestMethodologyApproval(reason: string): Promise<{ criticalActionId: string }>;
+  decideMethodologyApproval(
+    actionId: string,
+    approved: boolean,
+    rejectionReason?: string,
+  ): Promise<{ status: string }>;
   getScoringRuns(id: string): Promise<ScoringRunsResponse>;
   getScoreView(id: string, runId: string): Promise<{ scores: IndexScoreView[] }>;
   // Who requests/approves/rejects is always the signed-in operator; the server
@@ -140,6 +152,14 @@ export interface AdminClient {
   }>;
   getNationalReport(reportId: string): Promise<NationalReportDetailResponse>;
   openNationalDraft(reportId: string): Promise<{ opened: boolean }>;
+  getNationalReview(reportId: string): Promise<NationalReview>;
+  prepareNationalReview(reportId: string): Promise<NationalReview>;
+  decideNationalFinding(
+    reportId: string,
+    findingId: string,
+    disposition: 'SUPPRESS_CLAIM' | 'REJECT_WITH_REASON',
+    reason?: string,
+  ): Promise<{ decided: boolean }>;
   requestNationalApproval(reportId: string, reason: string): Promise<{ requested: boolean }>;
   approveNationalReport(reportId: string): Promise<{ status: string }>;
   // Firm reports (UX-ADM-006)
@@ -187,6 +207,10 @@ export interface AdminClient {
   getFirmReports(id: string): Promise<{
     reports: FirmReport[];
     notices: Record<string, { sent: number; logged: number; failed: number; queued: number }>;
+    /** Per report: who has opened it. */
+    openedBy: Record<string, Array<{ id: string; displayName: string }>>;
+    /** The release request awaiting a second person, if any. */
+    pendingRelease: PendingFirmReportRelease | null;
   }>;
   publishIndustryReport(id: string): Promise<{ publishedAt: string }>;
   // Report documents — content computed from submitted responses.
@@ -201,9 +225,24 @@ export interface AdminClient {
   ): Promise<{ narrative: ReportNarrativeView | null }>;
   /** The finished report as a PDF file (server-rendered). */
   downloadIndustryPdf(id: string): Promise<Blob>;
+  downloadInstitutionalPdf(id: string): Promise<Blob>;
   downloadFirmPdf(id: string, firmId: string): Promise<Blob>;
   generateFirmReports(id: string, scoringRunId: string): Promise<unknown>;
-  approveFirmReport(reportId: string): Promise<{ approvalState: string }>;
+  /** Record that the signed-in operator opened a report. */
+  openFirmReport(reportId: string): Promise<{ opened: boolean }>;
+  /** Maker step: ask for the generated reports to be released, with a reason. */
+  requestFirmReportRelease(
+    id: string,
+    reason: string,
+    reportIds?: string[],
+  ): Promise<{ criticalActionId: string }>;
+  /** Checker step: approve (which releases) or reject a release request. */
+  decideFirmReportRelease(
+    id: string,
+    actionId: string,
+    approved: boolean,
+    rejectionReason?: string,
+  ): Promise<FirmReportReleaseDecision>;
   regenerateFirmReport(reportId: string): Promise<{ report: FirmReport }>;
   releaseFirmReports(id: string): Promise<ReleaseFirmReportsResult>;
   // Invitations (UX-OPS-002)
@@ -258,6 +297,8 @@ export interface AdminClient {
   ): Promise<{ status: 'approved' | 'rejected'; frozen: boolean }>;
   // Firm coordinator team (UX-FRM-007) — ordinary account admin, not maker-checker.
   listFirms(): Promise<FirmSummary[]>;
+  /** Preview (dryRun) or carry out an import of the firm directory from CSV. */
+  importFirms(csv: string, dryRun: boolean, editionId?: string | null): Promise<FirmImportResult>;
   listCoordinators(orgId: string): Promise<Coordinator[]>;
   createLeadCoordinator(
     orgId: string,
@@ -380,6 +421,19 @@ export function createClient(token: string | null, hooks: SessionHooks = {}): Ad
     getInstruments: (id) => request(`/editions/${id}/instruments`, { token }),
     getMissionBoard: (id) => request(`/editions/${id}/mission-board`, { token }),
     triggerScoringRun: (id) => request(`/editions/${id}/scoring-runs`, { method: 'POST', token }),
+    getScoringMethodology: () => request('/scoring-methodology', { token }),
+    requestMethodologyApproval: (reason) =>
+      request('/scoring-methodology/approval/request', {
+        method: 'POST',
+        body: { reason },
+        token,
+      }),
+    decideMethodologyApproval: (actionId, approved, rejectionReason) =>
+      request(`/scoring-methodology/approval/${actionId}/decide`, {
+        method: 'POST',
+        body: rejectionReason ? { approved, rejectionReason } : { approved },
+        token,
+      }),
     getScoringRuns: (id) => request(`/editions/${id}/scoring-runs`, { token }),
     getScoreView: (id, runId) => request(`/editions/${id}/scoring-runs/${runId}/scores`, { token }),
     requestSignoff: (id, runId, checkedAccount) =>
@@ -409,6 +463,15 @@ export function createClient(token: string | null, hooks: SessionHooks = {}): Ad
     getLatestNationalReport: (id) => request(`/editions/${id}/national-report`, { token }),
     getSufficiency: (id) => request(`/editions/${id}/sufficiency`, { token }),
     getNationalReport: (reportId) => request(`/national-reports/${reportId}`, { token }),
+    getNationalReview: (reportId) => request(`/national-reports/${reportId}/review`, { token }),
+    prepareNationalReview: (reportId) =>
+      request(`/national-reports/${reportId}/review`, { method: 'POST', token }),
+    decideNationalFinding: (reportId, findingId, disposition, reason) =>
+      request(`/national-reports/${reportId}/findings/${findingId}/decision`, {
+        method: 'POST',
+        body: reason ? { disposition, reason } : { disposition },
+        token,
+      }),
     openNationalDraft: (reportId) =>
       request(`/national-reports/${reportId}/open`, { method: 'POST', token }),
     requestNationalApproval: (reportId, reason) =>
@@ -470,6 +533,8 @@ export function createClient(token: string | null, hooks: SessionHooks = {}): Ad
     publishIndustryReport: (id) =>
       request(`/editions/${id}/reports/industry/publish`, { method: 'POST', token }),
     downloadIndustryPdf: (id) => requestBlob(`/editions/${id}/reports/industry/pdf`, token),
+    downloadInstitutionalPdf: (id) =>
+      requestBlob(`/editions/${id}/reports/institutional/pdf`, token),
     downloadFirmPdf: (id, firmId) =>
       requestBlob(`/editions/${id}/firms/${firmId}/report/pdf`, token),
     generateFirmReports: (id, scoringRunId) =>
@@ -478,8 +543,20 @@ export function createClient(token: string | null, hooks: SessionHooks = {}): Ad
         body: { scoringRunId },
         token,
       }),
-    approveFirmReport: (reportId) =>
-      request(`/firm-reports/${reportId}/approve`, { method: 'POST', token }),
+    openFirmReport: (reportId) =>
+      request(`/firm-reports/${reportId}/open`, { method: 'POST', token }),
+    requestFirmReportRelease: (id, reason, reportIds) =>
+      request(`/editions/${id}/firm-reports/release/request`, {
+        method: 'POST',
+        body: reportIds ? { reason, reportIds } : { reason },
+        token,
+      }),
+    decideFirmReportRelease: (id, actionId, approved, rejectionReason) =>
+      request(`/editions/${id}/firm-reports/release/${actionId}/decide`, {
+        method: 'POST',
+        body: rejectionReason ? { approved, rejectionReason } : { approved },
+        token,
+      }),
     regenerateFirmReport: (reportId) =>
       request(`/firm-reports/${reportId}/regenerate`, { method: 'POST', token }),
     releaseFirmReports: (id) =>
@@ -535,6 +612,12 @@ export function createClient(token: string | null, hooks: SessionHooks = {}): Ad
         token,
       }),
     listFirms: () => request<{ firms: FirmSummary[] }>('/firms', { token }).then((r) => r.firms),
+    importFirms: (csv, dryRun, editionId) =>
+      request('/firms/import', {
+        method: 'POST',
+        body: editionId ? { csv, dryRun, editionId } : { csv, dryRun },
+        token,
+      }),
     listCoordinators: (orgId) =>
       request<{ coordinators: Coordinator[] }>(`/firms/${orgId}/coordinators`, { token }).then(
         (r) => r.coordinators,

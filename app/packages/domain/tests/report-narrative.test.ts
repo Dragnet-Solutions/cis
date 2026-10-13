@@ -15,6 +15,16 @@ import {
   ensureIndustryNarrative,
   narrativeDue,
   checkNarrativeSentence,
+  sectionFinding,
+  institutionalThemes,
+  ratingByRespondent,
+  withheldSections,
+  industryNarrativeFacts,
+  evaluateSection,
+  NATIONAL_SECTIONS,
+  industryFacts,
+  type InstitutionalReading,
+  type IndustryReportContent,
   parseModelSections,
   firmFacts,
   type NarrativeModel,
@@ -402,5 +412,186 @@ describe('Drafting the narrative by default', () => {
     expect(narrativeDue([fact('Old figure.')], null)).toBe(true);
     // Nothing to write about yet: never drafted.
     expect(narrativeDue([], null)).toBe(false);
+  });
+});
+
+describe('Institutional Perspectives', () => {
+  const reading = (
+    code: string,
+    family: string,
+    issue: string[],
+    consequence: string[],
+  ): InstitutionalReading => ({
+    key: `${family}_${code}`,
+    role: `${code} institution`,
+    code,
+    familyCode: family,
+    vantage: 'Its mandate',
+    responses: 1,
+    topIssues: [],
+    issue: { greatest: issue[0] ?? null, others: issue.slice(1) },
+    frequency: 'Occasionally',
+    marks: ['Operational discipline'],
+    consequence: { greatest: consequence[0] ?? null, others: consequence.slice(1) },
+    capability: 'Adequate',
+  });
+
+  it('finds what institutions share from their own wording, and who stands apart', () => {
+    const { themes, standsApart } = institutionalThemes([
+      reading('SEC', 'A', ['Documentation and record keeping'], ['Internal controls']),
+      reading('CSCS', 'C', ['Reconciliation issues'], ['Documentation deficiencies']),
+      reading('CSCS', 'D', ['Securities-account record mismatches requiring investigation'], []),
+      reading('LCFE', 'B', ['Staff competence'], []),
+    ]);
+    const doc = themes.find((t) => t.theme === 'Documentation and record keeping');
+    // CSCS in two roles is still one institution.
+    expect(doc?.codes).toEqual(['CSCS', 'SEC']);
+    expect(standsApart).toEqual(['LCFE']);
+  });
+
+  it('gives the model each reading as a qualitative fact — never a figure', () => {
+    const readings = [
+      reading('SEC', 'A', ['Documentation and record keeping'], ['Internal controls']),
+      reading('NGX', 'B', ['Manual processes'], ['Late submissions']),
+    ];
+    const content = {
+      participation: [],
+      frictions: null,
+      frustrations: null,
+      participationImpact: null,
+      confidenceLevers: null,
+      localVsForeign: { rows: [] },
+      comparators: null,
+      selfVsInvestors: { firmSelfBelief: { value: null }, investorExperience: { value: null } },
+      institutional: readings,
+      institutionalParticipation: { invited: 2, contributed: 2 },
+      institutionalThemes: institutionalThemes(readings),
+    } as unknown as IndustryReportContent;
+    const facts = industryFacts(content);
+    const sec = facts.find((f) => f.id === 'INST.A_SEC');
+    expect(sec?.state).toBe('BANDED');
+    expect(sec?.numbers).toEqual([]);
+    expect(sec?.statement).toContain('Documentation and record keeping');
+    expect(facts.find((f) => f.id === 'INST.PART')?.numbers).toEqual([2, 2]);
+  });
+
+  it('holds back a quotation in an institution’s reading', () => {
+    expect(sectionFinding('INST_A_SEC', 'The SEC calls records “the weak point”.')?.kind).toBe(
+      'QUOTATION',
+    );
+    expect(
+      sectionFinding('INST_A_SEC', 'The SEC sees record keeping as the weak point.'),
+    ).toBeNull();
+    expect(sectionFinding('EXEC', 'Firms cite "Manual processes".')).toBeNull();
+  });
+});
+
+describe('Withheld means withheld, in every report (E2E 9 Oct)', () => {
+  it('applies the 10-response floor to people, never to ratings (D26, D30, D25)', () => {
+    // 6 investors who rated many firms each: 43 ratings, still 6 people.
+    const points = Array.from({ length: 43 }, (_, i) => ({ respondentId: `r${i % 6}`, value: 60 }));
+    expect(ratingByRespondent(points)).toEqual({ value: null, n: 6 });
+    const ten = Array.from({ length: 10 }, (_, i) => ({
+      respondentId: `r${i}`,
+      value: i < 5 ? 40 : 80,
+    }));
+    expect(ratingByRespondent(ten)).toEqual({ value: 60, n: 10 });
+    // Each person counts once: one investor's 3 high ratings do not outweigh 9 others.
+    const skewed = [
+      ...Array.from({ length: 9 }, (_, i) => ({ respondentId: `r${i}`, value: 50 })),
+      { respondentId: 'x', value: 100 },
+      { respondentId: 'x', value: 100 },
+      { respondentId: 'x', value: 100 },
+    ];
+    expect(ratingByRespondent(skewed)).toEqual({ value: 55, n: 10 });
+  });
+
+  it('draws no agenda — and claims nothing — when the investor ratings are withheld (D28)', () => {
+    const withheld = { value: null, n: 4 };
+    const dims = ['Ease', 'Responsiveness'].map((label) => ({
+      label,
+      firm: withheld,
+      industry: { value: 60, n: 40 },
+    }));
+    expect(buildAgenda(dims, { firm: null, industry: null }, 3)).toEqual([]);
+  });
+
+  it('marks a section not publishable when the report would show nothing in it (D21)', () => {
+    const content = {
+      indices: { state: 'pending_methodology', note: '' },
+      frictions: null,
+      frustrations: { base: 12, items: [] },
+      participationImpact: null,
+      confidenceLevers: null,
+      localVsForeign: { rows: [], localN: 0, foreignN: 0 },
+      comparators: null,
+      selfVsInvestors: {
+        firmSelfBelief: { value: null, n: 1 },
+        investorExperience: { value: 61, n: 6 },
+      },
+      institutional: [],
+    } as unknown as IndustryReportContent;
+    const withheld = withheldSections(content);
+    expect(Object.keys(withheld).sort()).toEqual(
+      [
+        'PUB_01_HEADLINE_INDICES',
+        'PUB_02_SEGMENT_IEI_ICI',
+        'PUB_03_OPERATIONAL_FRICTIONS',
+        'PUB_05_MATURITY_HEATMAP',
+        'PUB_06_CONFIDENCE_AND_PARTICIPATION',
+        'PUB_07_LOCAL_VS_FOREIGN',
+        'PUB_08_CROSS_INDUSTRY_BENCHMARK',
+        'PUB_09_SERVICE_EXCELLENCE_GAP',
+        'PUB_10_INSTITUTIONAL_PERSPECTIVES',
+      ].sort(),
+    );
+    const spec = NATIONAL_SECTIONS.find((x) => x.id === 'PUB_03_OPERATIONAL_FRICTIONS')!;
+    const ctx = { segments: {}, regulatorsEngaged: 3, withheld };
+    expect(evaluateSection(spec, ctx).disposition).toBe('suppressed');
+  });
+
+  it('caveats local vs foreign when both segments clear but are thin (D22)', () => {
+    const spec = NATIONAL_SECTIONS.find((x) => x.id === 'PUB_07_LOCAL_VS_FOREIGN')!;
+    const seg = { meets: true, thin: true };
+    expect(
+      evaluateSection(spec, {
+        segments: { local_institution: seg, foreign_institution: seg },
+        regulatorsEngaged: 3,
+      }).disposition,
+    ).toBe('caveated');
+  });
+
+  it('never gives the model the figures of a suppressed section (D24)', () => {
+    const reading: InstitutionalReading = {
+      key: 'A_SEC',
+      role: 'Securities and Exchange Commission',
+      code: 'SEC',
+      familyCode: 'A',
+      vantage: 'Supervision',
+      responses: 1,
+      topIssues: [],
+      issue: { greatest: 'Client-complaints handling', others: [] },
+      frequency: null,
+      marks: [],
+      consequence: { greatest: null, others: [] },
+      capability: 'Adequate',
+    };
+    const content = {
+      sections: [{ id: 'PUB_10_INSTITUTIONAL_PERSPECTIVES', disposition: 'suppressed' }],
+      participation: [{ segment: 'firm', label: 'Firms', target: 3, achieved: 1, meets: false }],
+      frictions: null,
+      frustrations: null,
+      participationImpact: null,
+      confidenceLevers: null,
+      localVsForeign: { rows: [] },
+      comparators: null,
+      selfVsInvestors: { firmSelfBelief: { value: null }, investorExperience: { value: null } },
+      institutional: [reading],
+      institutionalParticipation: { invited: 2, contributed: 1 },
+      institutionalThemes: institutionalThemes([reading]),
+    } as unknown as IndustryReportContent;
+    const ids = industryNarrativeFacts(content).map((f) => f.id);
+    expect(ids).toContain('PART.firm');
+    expect(ids.some((id) => id.startsWith('INST.'))).toBe(false);
   });
 });

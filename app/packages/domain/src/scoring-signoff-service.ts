@@ -27,6 +27,8 @@ import type {
 } from '@cis/shared-types';
 import { DomainError } from './errors';
 import { runScoring, type ScoringRunResult } from './calculation-service';
+import { runCandidateScoring } from './candidate-scoring-service';
+import { isMethodologyApproved } from './methodology-approval-service';
 
 /**
  * UX-ADM-004 — Setup: Results, Scores (sign-off). The maker-checker gate on the
@@ -109,6 +111,15 @@ export async function triggerScoringRun(
   if (!edition) throw new ScoringSignoffError(`Edition ${input.editionId} not found`, 'NOT_FOUND');
   if (edition.status !== 'locked') {
     throw new ScoringBlockedError(edition.status);
+  }
+  // Once two people have approved the scoring methodology, a run computes the
+  // five indices with it and is marked APPROVED; until then the provisional
+  // placeholder runs, and no index score is reported.
+  if (await isMethodologyApproved(pool)) {
+    const result = await runCandidateScoring(pool, input.editionId, {
+      methodologyStatus: 'APPROVED',
+    });
+    return { run: result.run, results: await listCalculatedResults(pool, result.run.id) };
   }
   return runScoring(pool, input);
 }
@@ -297,17 +308,56 @@ interface PopulationPredicate {
   note?: string;
 }
 
+type SeatMatrix = Array<{ organizationId: string; completeSeats: string[] }>;
+
+/** The firms in a firm-side population: those whose named seats are ALL complete. */
+function firmsWithSeatsComplete(seats: string[], matrix: SeatMatrix): string[] {
+  return matrix
+    .filter((f) => seats.every((s) => f.completeSeats.includes(s)))
+    .map((f) => f.organizationId);
+}
+
+/** Seats each firm-side index needs when its metric definition names none. */
+const DEFAULT_INDEX_SEATS: Record<'OMI' | 'DMI', string[]> = {
+  OMI: ['S1', 'S2', 'S3'],
+  DMI: ['S1', 'S3'],
+};
+
+/**
+ * The OMI-complete / DMI-complete firms — the ONE definition the Scoring page's
+ * effective population, the mission board (conditions 7/8) and the Responses
+ * complete-firm lines all read, so they cannot disagree. It is the index's own
+ * configured population predicate (OMI: S1, S2 and S3 complete; DMI: S1 and S3
+ * complete). `asOf` reads it at an earlier instant (the board's pace window).
+ */
+export async function completeFirmsForIndex(
+  pool: Pool,
+  editionId: string,
+  metricCode: 'OMI' | 'DMI',
+  asOf?: Date,
+): Promise<{ seats: string[]; firmIds: string[] }> {
+  const metric = (await getActiveMetricDefinitions(pool)).find((m) => m.metricCode === metricCode);
+  const predicate = (metric?.config as { population?: PopulationPredicate } | undefined)
+    ?.population;
+  const seats =
+    predicate?.kind === 'firm_seats_complete' && Array.isArray(predicate.seats)
+      ? predicate.seats
+      : DEFAULT_INDEX_SEATS[metricCode];
+  const matrix = await getFirmSeatCompletionMatrix(pool, editionId, asOf);
+  return { seats, firmIds: firmsWithSeatsComplete(seats, matrix) };
+}
+
 /** Describe (and where possible count) an index's population from its config. */
 function describePopulation(
   predicate: PopulationPredicate | undefined,
-  matrix: Array<{ organizationId: string; completeSeats: string[] }>,
+  matrix: SeatMatrix,
 ): { label: string; count: number | null; gap: boolean } {
   if (!predicate) {
     return { label: 'Population not configured', count: null, gap: true };
   }
   if (predicate.kind === 'firm_seats_complete' && Array.isArray(predicate.seats)) {
     const seats = predicate.seats;
-    const count = matrix.filter((f) => seats.every((s) => f.completeSeats.includes(s))).length;
+    const count = firmsWithSeatsComplete(seats, matrix).length;
     const label =
       seats.length === 3
         ? 'Complete firms — all three seats (S1, S2, S3)'
@@ -327,6 +377,11 @@ function describePopulation(
 /** Aggregate a run's per-firm values for a metric into a display score (mean of
  *  the non-null values), rounded to one decimal. Null when nothing scored. */
 function aggregateScore(results: CalculatedResult[], metricCode: string): number | null {
+  // A run under the approved methodology records the industry figure itself.
+  const industry = results.find(
+    (r) => r.subjectType === 'market' && r.subjectId === 'INDUSTRY' && r.metricCode === metricCode,
+  );
+  if (industry) return industry.value === null ? null : Math.round(industry.value * 10) / 10;
   const values = results
     .filter((r) => r.metricCode === metricCode && r.value !== null)
     .map((r) => r.value as number);

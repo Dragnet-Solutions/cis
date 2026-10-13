@@ -98,12 +98,12 @@ Tests run against a **real PostgreSQL** instance (not mocks). Ensure `postgres_t
 
 ```bash
 # All tests
-pnpm vitest run --workspace vitest.workspace.ts
+pnpm vitest run
 
 # Specific package
-pnpm vitest run --workspace vitest.workspace.ts --project db
-pnpm vitest run --workspace vitest.workspace.ts --project audit
-pnpm vitest run --workspace vitest.workspace.ts --project auth
+pnpm vitest run --project db
+pnpm vitest run --project audit
+pnpm vitest run --project auth
 ```
 
 The test database URL defaults to `postgres://cis:cis_test_password@localhost:5433/cis_test`. Override with `DATABASE_URL` env var.
@@ -2209,7 +2209,7 @@ the layer this session's reproduction had to fall back to manual browser automat
 because no automated test covered it.
 
 New `apps/api/tests/edition-instrument-save-flow.test.ts`, added to the existing DB-backed
-`integration` Vitest project (`apps/api/tests/**/*.test.ts` added to `vitest.workspace.ts`) rather
+`integration` Vitest project (`apps/api/tests/**/*.test.ts` added to the `projects` in `vitest.config.ts`) rather
 than as new test infrastructure: calls the real `buildServer()` Fastify app via `app.inject`
 (no listening socket needed) against a real Postgres database. Mirrors the manual reproduction
 exactly — logs in over `/auth/login`, `PATCH`es both dates, then issues a fresh `GET` (the

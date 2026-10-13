@@ -29,7 +29,7 @@ import type {
 } from '@cis/shared-types';
 import { DomainError } from './errors';
 import { createLeadCoordinator, setCoordinatorPin } from './firm-team-service';
-import { startJourney } from './journey-service';
+import { assertCollectionOpen, startJourney } from './journey-service';
 
 /**
  * Firm claim / portal / seats / outreach — UX-FRM-001.
@@ -507,6 +507,8 @@ export async function startSeatEntry(
 ): Promise<{ respondentId: string; editionId: string; seatCode: 'S1' | 'S2' | 'S3' }> {
   const seat = await getSeatByLinkToken(pool, linkToken);
   if (!seat) throw new SeatLinkNotFoundError();
+  // Picking an unfinished seat back up is refused too once collection ends.
+  await assertCollectionOpen(pool, seat.editionId);
   if (seat.state === 'started' && seat.respondentId) {
     return { respondentId: seat.respondentId, editionId: seat.editionId, seatCode: seat.seatCode };
   }

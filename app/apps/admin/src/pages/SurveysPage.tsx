@@ -162,9 +162,11 @@ export function SurveysPage({
         </div>
         <div className="stagebody">
           <p>
-            {drgOps.length} non-scored questions folded into the natural flow of the scored firm and
-            investor instruments. They carry no label a respondent can see, feed no index, and
-            appear in no public or firm output.
+            {drgOps.length === 1
+              ? 'One question that is not scored sits within'
+              : `${drgOps.length} questions that are not scored sit within`}{' '}
+            the scored firm and investor surveys. Respondents see them as ordinary questions; they
+            feed no index and appear in no public or firm output.
           </p>
           <dl className="kv">
             {drgOps.map((q) => (

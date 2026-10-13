@@ -189,3 +189,16 @@ export async function _insertAuditLogEntry(
   if (!row) throw new Error('Audit log insert returned no rows');
   return row.id;
 }
+
+/** Every critical action of one type, newest first (for actions not tied to an edition). */
+export async function listCriticalActionsByType(
+  pool: Pool,
+  actionType: string,
+): Promise<CriticalAction[]> {
+  const res = await query<RawCriticalActionRow>(
+    pool,
+    `SELECT * FROM critical_actions WHERE action_type = $1 ORDER BY requested_at DESC`,
+    [actionType],
+  );
+  return res.rows.map(mapCriticalAction);
+}

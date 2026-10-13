@@ -450,3 +450,57 @@ describe('Remediation mapping — all eight cohorts resolve (§9, Approach 2)', 
     }
   });
 });
+
+// Regression (E2E 2026-10-09, D11): before launch the board recommended "Bulk
+// chase to the named respondents" when no respondent existed yet, and the
+// participating-firm card's consequence only repeated its own title.
+describe('Before launch, every card offers an action that is actually available', () => {
+  const preLaunch = (): BoardContext =>
+    baseContext({
+      attributable: { forecast: 0, actual: 0, required: 80 },
+      beforeLaunch: true,
+    });
+
+  it('the participating-firm card points at the invitations, not a chase', () => {
+    const c14 = evaluateBoard(preLaunch()).find((c) => c.conditionId === 14)!;
+    expect(c14.recommendedAction!.cohort).toBe('before_launch');
+    expect(c14.recommendedAction!.label).toBe(remediationForCohort('before_launch').label);
+    expect(c14.recommendedAction!.label).not.toMatch(/chase|reminder|named respondents/i);
+    expect(c14.recommendedAction!.audienceId).toBe('all');
+  });
+
+  it("the participating-firm card's consequence says what happens, not the title again", () => {
+    const c14 = evaluateBoard(preLaunch()).find((c) => c.conditionId === 14)!;
+    for (const line of c14.consequence) expect(line).not.toBe(c14.whatIsAtRisk);
+    expect(c14.consequence.join(' ')).toMatch(/combined report/);
+  });
+
+  it('once collection is open the usual chase returns', () => {
+    const open = baseContext({ attributable: { forecast: 0, actual: 0, required: 80 } });
+    const c14 = evaluateBoard(open).find((c) => c.conditionId === 14)!;
+    expect(c14.recommendedAction!.cohort).toBe('assigned_outstanding');
+  });
+
+  it('a regulator card is followed up on the Regulators screen, never by a firm mailing', () => {
+    const cards = evaluateBoard(
+      baseContext({
+        beforeLaunch: true,
+        institutions: [
+          {
+            id: 'e1',
+            editionId: 'ed',
+            institutionId: 'sec',
+            familyCode: 'A',
+            institutionName: 'Securities and Exchange Commission',
+            status: 'declined',
+            statusChangedAt: new Date('2026-09-01T00:00:00Z'),
+            targetBy: null,
+          },
+        ],
+      }),
+    );
+    const c16 = cards.find((c) => c.conditionId === 16)!;
+    expect(c16.recommendedAction!.cohort).toBe('regulator_follow_up');
+    expect(c16.recommendedAction!.label).toMatch(/Regulators screen/);
+  });
+});

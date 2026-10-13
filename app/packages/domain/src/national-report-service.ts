@@ -17,6 +17,10 @@ import {
   getLatestAdversaryHealth,
   getCalculationRun,
   hasSignedOffRun,
+  getLatestReportNarrative,
+  getReportPublication,
+  listReviewItems,
+  getNarrativeCheckerHealth,
 } from '@cis/db';
 import type {
   NationalReport,
@@ -129,6 +133,13 @@ export interface SufficiencyContext {
   segments: Record<string, { meets: boolean; thin: boolean }>;
   /** How many of the three regulators (SEC/NGX/CSCS) have engaged (0–3). */
   regulatorsEngaged: number;
+  /**
+   * Sections the report itself will withhold — no reportable figure (every
+   * figure below the 10-response floor) or pending methodology approval — with
+   * the reason. A section is never marked publishable when the report would
+   * show nothing in it (`withheldSections` in report-content-service.ts).
+   */
+  withheld?: Partial<Record<string, string>>;
 }
 
 /**
@@ -141,17 +152,35 @@ export function evaluateSection(
   spec: SectionSpec,
   ctx: SufficiencyContext,
 ): { disposition: SectionSufficiencyDisposition; reason: string | null } {
+  const byRule = evaluateSectionRule(spec, ctx);
+  const withheld = ctx.withheld?.[spec.id];
+  return byRule.disposition !== 'suppressed' && withheld
+    ? { disposition: 'suppressed', reason: withheld }
+    : byRule;
+}
+
+function evaluateSectionRule(
+  spec: SectionSpec,
+  ctx: SufficiencyContext,
+): { disposition: SectionSufficiencyDisposition; reason: string | null } {
   switch (spec.rule) {
     case 'caveat_when_thin': {
       const thin = Object.values(ctx.segments).some((s) => s.thin);
       return thin
-        ? { disposition: 'caveated', reason: 'A thin investor segment is caveated, not dropped.' }
+        ? { disposition: 'caveated', reason: 'an investor segment is below its target sample' }
         : { disposition: 'publishable', reason: null };
     }
     case 'suppress_below_floor': {
       const local = ctx.segments['local_institution'];
       const foreign = ctx.segments['foreign_institution'];
       const bothClear = !!local?.meets && !!foreign?.meets;
+      // Clear but thin is reported like §2: shown, with the caveat stated.
+      if (bothClear && (local?.thin || foreign?.thin)) {
+        return {
+          disposition: 'caveated',
+          reason: 'one or both institutional segments are thin',
+        };
+      }
       return bothClear
         ? { disposition: 'publishable', reason: null }
         : {
@@ -360,6 +389,8 @@ export async function disposeFinding(
 export interface ApprovalPreconditions {
   signedScoringRun: boolean;
   draftOpened: boolean;
+  /** A written draft exists to review (the AI narrative, recorded for review). */
+  draftReviewable: boolean;
   allFindingsDisposed: boolean;
   checkerHealthy: boolean;
   ok: boolean;
@@ -385,28 +416,56 @@ export async function nationalApprovalPreconditions(
     run.status === 'complete' &&
     (await hasSignedOffRun(pool, run.id));
 
-  const findings = await listFindingsForReport(pool, reportId);
-  const dispositions = await listDispositionsForReport(pool, reportId);
-  const disposedIds = new Set(dispositions.map((d) => d.findingId));
-  const allFindingsDisposed = findings.every((f) => disposedIds.has(f.id));
-
-  const health = await getLatestAdversaryHealth(pool, reportId);
-  const checkerHealthy = !!health && health.healthy;
+  // The draft under review is the Industry report's AI narrative in force (the
+  // one frozen at publication, else the latest drafted). Its review — every
+  // sentence, the checker's findings and their dispositions, and the checker's
+  // measured health — belongs to that narrative alone: a redraft starts afresh.
+  const narrativeId = await narrativeUnderReview(pool, report.editionId);
+  let draftReviewable: boolean;
+  let allFindingsDisposed: boolean;
+  let checkerHealthy: boolean;
+  if (narrativeId) {
+    const items = await listReviewItems(pool, reportId, narrativeId);
+    draftReviewable = items.length > 0;
+    allFindingsDisposed = items.every((i) => !i.finding || i.disposition !== null);
+    checkerHealthy = !!(await getNarrativeCheckerHealth(pool, reportId, narrativeId))?.healthy;
+  } else {
+    // No narrative: only a draft saved directly (saveNationalDraft) can be reviewed.
+    const findings = await listFindingsForReport(pool, reportId);
+    const dispositions = await listDispositionsForReport(pool, reportId);
+    const disposedIds = new Set(dispositions.map((d) => d.findingId));
+    draftReviewable = (await listSentences(pool, reportId)).length > 0;
+    allFindingsDisposed = findings.every((f) => disposedIds.has(f.id));
+    checkerHealthy = !!(await getLatestAdversaryHealth(pool, reportId))?.healthy;
+  }
 
   const reasons: string[] = [];
   if (!signedScoringRun) reasons.push('No signed-off scoring run.');
+  if (!draftReviewable) reasons.push('There is no written draft to review yet.');
   if (!report.draftOpened) reasons.push('The draft has not been opened.');
-  if (!allFindingsDisposed) reasons.push('Not every checker finding has a disposition.');
-  if (!checkerHealthy) reasons.push('The checker is below its detection threshold.');
+  if (draftReviewable && !allFindingsDisposed) {
+    reasons.push('Not every checker finding has a decision.');
+  }
+  if (draftReviewable && !checkerHealthy) {
+    reasons.push('The checker has not yet proved it catches planted errors on this draft.');
+  }
 
   return {
     signedScoringRun,
     draftOpened: report.draftOpened,
-    allFindingsDisposed,
-    checkerHealthy,
+    draftReviewable,
+    allFindingsDisposed: draftReviewable && allFindingsDisposed,
+    checkerHealthy: draftReviewable && checkerHealthy,
     ok: reasons.length === 0,
     reasons,
   };
+}
+
+/** The Industry narrative in force for an edition: frozen at publication, else the latest. */
+export async function narrativeUnderReview(pool: Pool, editionId: string): Promise<string | null> {
+  const published = await getReportPublication(pool, editionId, 'industry', null);
+  if (published) return published.narrativeId;
+  return (await getLatestReportNarrative(pool, editionId, 'industry', null))?.id ?? null;
 }
 
 export async function openDraft(pool: Pool, reportId: string): Promise<void> {

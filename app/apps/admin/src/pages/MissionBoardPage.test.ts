@@ -22,7 +22,7 @@
  *  reappearing.
  */
 import { describe, it, expect } from 'vitest';
-import { SEVERITY_LABEL, RAIL } from './MissionBoardPage';
+import { SEVERITY_LABEL, RAIL, railFor } from './MissionBoardPage';
 
 // Implementation-mechanics/internal-rationale phrasing, and the specific
 // brief-table wording previously found, matched broadly rather than as an
@@ -89,5 +89,16 @@ describe('Mission Board rail — every shortcut navigates (QA F7/F8)', () => {
         section.target,
       );
     }
+  });
+});
+
+// Regression (E2E 2026-10-09, D11): a CIS user without the Dragnet right saw a
+// greyed "Dragnet analysis" item on the rail, although the nav hides that tab.
+describe('Mission Board rail — Dragnet analysis only for the Dragnet right', () => {
+  it('is hidden from someone without the right and shown to someone with it', () => {
+    expect(railFor(false).map((s) => s.key)).not.toContain('dragnet');
+    expect(railFor(true).map((s) => s.key)).toContain('dragnet');
+    // Nothing else is hidden by the right.
+    expect(railFor(false)).toHaveLength(RAIL.length - 1);
   });
 });

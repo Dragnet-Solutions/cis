@@ -16,7 +16,9 @@ function privacyLine(instrumentCode: string): string {
     return 'Nobody at your firm, including your coordinator, can see your answers — only that it is complete.';
   }
   if (instrumentCode.startsWith('I-')) {
-    return 'Your institution’s name is never published, and your answers are not linked to any colleague’s.';
+    // Institutional Perspectives reports each institution's reading under its
+    // name — so promise only what holds: the person stays private.
+    return 'Your institution’s view is reported under its name in the Institutional Perspectives section. Your own name and contact details are never published, and your answers are not linked to any colleague’s.';
   }
   return 'They are never shown to the firms you rated.';
 }

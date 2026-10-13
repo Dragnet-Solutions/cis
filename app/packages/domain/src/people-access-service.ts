@@ -21,7 +21,7 @@ import { DomainError } from './errors';
 
 /**
  * UX-OPS-006 — People & Access. Manages WHO holds the seven access rights,
- * including the `request`/`approve` rights that gate the six critical actions.
+ * including the `request`/`approve` rights that gate the critical actions.
  * It adds no new critical action and changes none of the six's own logic — it
  * only manages access to them.
  *
@@ -314,8 +314,7 @@ export async function removePerson(
   });
 }
 
-/** The six critical actions and the seven rights, for the surface to render.
- *  A confirmation of the closed set, never a place to add a seventh action. */
+/** The critical actions and the seven rights, for the surface to render. */
 export const CRITICAL_ACTIONS: ReadonlyArray<{ action: string; where: string; why: string }> = [
   {
     action: 'Freeze the instruments',
@@ -326,6 +325,11 @@ export const CRITICAL_ACTIONS: ReadonlyArray<{ action: string; where: string; wh
     action: 'Lock the results',
     where: 'Edition',
     why: 'Collection ends. Surveys in progress are lost.',
+  },
+  {
+    action: 'Approve the scoring methodology',
+    where: 'Scoring',
+    why: 'Until it is approved, no run is official and no report shows an index score.',
   },
   {
     action: 'Sign off a scoring run',

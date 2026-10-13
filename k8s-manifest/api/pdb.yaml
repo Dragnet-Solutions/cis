@@ -1,0 +1,16 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cis-api-pdb
+  namespace: dev
+  labels:
+    app.kubernetes.io/name: cis-api
+    app.kubernetes.io/part-of: cis
+    app.kubernetes.io/component: api
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cis-api

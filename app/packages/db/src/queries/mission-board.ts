@@ -283,8 +283,10 @@ export async function seedMissionBoardDependencies(pool: Pool): Promise<void> {
     },
     { outputId: 'TOP_INVESTOR_FRUSTRATIONS', dependsOn: ['retail'], rule: 'at_risk(retail)' },
     {
+      // Rests on the regulator roles (SEC, NGX, CSCS), never on the local or
+      // foreign institutional-investor segments.
       outputId: 'INSTITUTIONAL_PERSPECTIVES',
-      dependsOn: ['local_institution', 'foreign_institution'],
+      dependsOn: ['regulators'],
       rule: 'any_institution_late_against_target',
     },
   ];

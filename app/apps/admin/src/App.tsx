@@ -290,7 +290,12 @@ export function App(): JSX.Element {
           )}
         </main>
       ) : tab === 'board' ? (
-        <MissionBoardPage client={client} editionId={editionId} onNavigate={setTab} />
+        <MissionBoardPage
+          client={client}
+          editionId={editionId}
+          hasDragnetRight={!!session.user.hasDragnetRight}
+          onNavigate={setTab}
+        />
       ) : tab === 'responses' ? (
         <ResponsesPage client={client} editionId={editionId} />
       ) : tab === 'unfinished' ? (
@@ -323,7 +328,7 @@ export function App(): JSX.Element {
       ) : tab === 'dragnet' && editionId && session.user.hasDragnetRight ? (
         <DragnetPage client={client} editionId={editionId} />
       ) : (
-        <FirmReportsPage client={client} editionId={editionId} />
+        <FirmReportsPage client={client} editionId={editionId} viewer={session.user} />
       )}
     </div>
   );

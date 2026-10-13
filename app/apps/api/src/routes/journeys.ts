@@ -1,7 +1,13 @@
 import type { FastifyReply } from 'fastify';
 import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { getPool, getActiveEditionParticipants, getConfig, listEditions } from '@cis/db';
+import {
+  getPool,
+  getActiveEditionParticipants,
+  getConfig,
+  getEditionStatus,
+  listEditions,
+} from '@cis/db';
 import {
   startJourney,
   registerContact,
@@ -12,6 +18,8 @@ import {
   createReferral,
   createColleagueInvite,
   stopReminders,
+  acceptsResponses,
+  getPublicConsentContent,
 } from '@cis/domain';
 import { getRespondentByRecoveryToken, setReportDelivery } from '@cis/db';
 import type { AnswerValue } from '@cis/survey';
@@ -31,29 +39,32 @@ const AnswerSchema = z.object({ a: z.unknown(), c: z.string().optional() });
  */
 export const journeyRoutes: FastifyPluginAsyncZod = async (app) => {
   // Public journey context: the edition a respondent is answering (the open
-  // one, else the most recent) and the governed public-results content flag
-  // (UX-PUB-001). No respondent data — safe to serve unauthenticated.
+  // one, else the most recent), whether it is still collecting, and the
+  // governed public-results content flag (UX-PUB-001). No respondent data —
+  // safe to serve unauthenticated.
   app.get('/journeys/context', async (_request, reply) => {
     const pool = getPool();
-    const editions = await listEditions(pool);
+    const [editions, resultsVisible] = await Promise.all([
+      listEditions(pool),
+      getConfig<boolean>(pool, 'public.results_section_visible'),
+    ]);
     const current = editions.find((e) => e.status === 'open') ?? editions[0] ?? null;
-    const resultsVisible = await getConfig<boolean>(pool, 'public.results_section_visible');
     return reply.send({
       editionId: current?.id ?? null,
       editionLabel: current?.label ?? null,
+      editionStatus: current?.status ?? null,
+      // Only an open edition invites new responses; a locked or archived one
+      // has ended collection (and the server refuses any further answers).
+      collectionOpen: current?.status === 'open',
       resultsSectionVisible: resultsVisible ?? false,
     });
   });
 
   // Governed consent copy + parameters for the entry surface. PAT-011 wording is
-  // never hardcoded in the client — it is fetched from here.
+  // never hardcoded in the client — it is fetched from here, reduced to the
+  // respondent-facing fields (internal governance notes never leave the server).
   app.get('/journeys/consent-content', async (_request, reply) => {
-    const pool = getPool();
-    const [consent, ttl] = await Promise.all([
-      getConfig(pool, 'consent.pat011'),
-      getConfig<number>(pool, 'recovery.link_ttl_seconds'),
-    ]);
-    return reply.send({ consent, recoveryTtlSeconds: ttl });
+    return reply.send(await getPublicConsentContent(getPool()));
   });
 
   // The firms a multi-firm respondent may pick — real edition-scoped active
@@ -181,6 +192,14 @@ export const journeyRoutes: FastifyPluginAsyncZod = async (app) => {
       const respondent = await getRespondentByRecoveryToken(pool, request.params.token);
       if (!respondent) return not(reply, 404, 'Not Found', 'No journey for this recovery link');
       if (respondent.withdrawnAt) {
+        return reply.send({ kind: 'participation_closed' });
+      }
+      // Collection has ended for this edition (results locked): an unfinished
+      // link — a regulator's issued link included — can no longer be answered.
+      if (
+        !respondent.submittedAt &&
+        !acceptsResponses(await getEditionStatus(pool, respondent.editionId))
+      ) {
         return reply.send({ kind: 'participation_closed' });
       }
       if (respondent.submittedAt) {

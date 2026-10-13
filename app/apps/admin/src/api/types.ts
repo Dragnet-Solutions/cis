@@ -99,6 +99,9 @@ export interface CalculationRun {
   startedAt: string;
   finishedAt: string | null;
   createdAt: string;
+  /** APPROVED once the run was made under the two-person-approved methodology. */
+  methodologyVersion?: string | null;
+  methodologyStatus?: 'TEST_UNAPPROVED' | 'APPROVED' | null;
 }
 
 export type ScoringSignoffState = 'requested' | 'signed_off' | 'superseded' | 'rejected';
@@ -243,6 +246,19 @@ export interface FirmSummary {
   slug: string;
 }
 
+/** What a firm directory import would do (dry run) or did. */
+export interface FirmImportResult {
+  dryRun: boolean;
+  totalRows: number;
+  added: number;
+  toAdd: Array<{ line: number; name: string; slug: string }>;
+  duplicates: Array<{ line: number; name: string; slug: string; reason: string }>;
+  errors: Array<{ line: number; message: string }>;
+  /** Firms enrolled in the edition (null when no edition was given). */
+  enrolled: number | null;
+  enrolmentNote: string | null;
+}
+
 // ─── National report (UX-ADM-005) ───────────────────────────────────────────
 
 export type NationalReportSectionId =
@@ -287,10 +303,40 @@ export interface NationalReportSection {
 export interface NationalApprovalPreconditions {
   signedScoringRun: boolean;
   draftOpened: boolean;
+  /** A written draft (the AI narrative) has been recorded for review. */
+  draftReviewable?: boolean;
   allFindingsDisposed: boolean;
   checkerHealthy: boolean;
   ok: boolean;
   reasons: string[];
+}
+
+/** The sentence-level review of the national report's draft (the AI narrative). */
+export interface NationalReview {
+  narrativeId: string | null;
+  model: string | null;
+  draftedAt: string | null;
+  items: Array<{
+    sentenceId: string;
+    narrativeIndex: number;
+    section: string | null;
+    text: string;
+    factIds: string[];
+    finding: { id: string; kind: string; why: string } | null;
+    disposition: {
+      disposition: 'ACCEPT_AND_EDIT' | 'REJECT_WITH_REASON' | 'SUPPRESS_CLAIM';
+      reason: string | null;
+      disposedBy: string;
+      disposedAt: string;
+    } | null;
+  }>;
+  health: {
+    seededTotal: number;
+    detected: number;
+    thresholdRate: number;
+    healthy: boolean;
+    checkedAt: string;
+  } | null;
 }
 
 export interface NationalReportDetailResponse {
@@ -320,6 +366,17 @@ export interface FirmReport {
   approvalState: FirmReportApprovalState;
   releaseState: FirmReportReleaseState;
   heldReason: string | null;
+}
+
+/** A request to release firm reports, awaiting a second person. */
+export interface PendingFirmReportRelease extends PendingAction {
+  reportIds: string[];
+}
+
+export interface FirmReportReleaseDecision extends Partial<ReleaseFirmReportsResult> {
+  status: 'approved' | 'rejected';
+  /** Set when the reports were approved but the release then failed. */
+  releaseError: string | null;
 }
 
 export interface ReleaseFirmReportsResult {
@@ -431,6 +488,8 @@ export interface DependencyRow {
   enabled: boolean;
   displayState: DependencyDisplayState;
   note: string;
+  /** Regulator-dependent outputs only: regulators that have responded, of those required. */
+  regulators?: { confirmed: number; required: number };
 }
 
 export interface ResponsesMonitor {
@@ -462,6 +521,9 @@ export interface UnfinishedStats {
 
 export interface DropoffBucket {
   questionId: string;
+  /** The question's wording, or a plain description — never the raw code. */
+  label: string;
+  surveyName: string | null;
   count: number;
   peak: boolean;
 }
@@ -522,9 +584,48 @@ export interface ReportRating {
   n: number;
 }
 
+/** One index score as a report shows it. */
+export interface ReportIndexScore {
+  code: string;
+  name: string;
+  value: number | null;
+  n: number | null;
+  note: string | null;
+}
+
+/** The five indices from the signed run made under the approved methodology. */
+export interface ReportIndicesReported {
+  state: 'reported';
+  methodology: string;
+  runId: string;
+  industry: ReportIndexScore[];
+  firm: ReportIndexScore[] | null;
+  segments: Array<{ segment: string; label: string; iei: ReportRating; ici: ReportRating }>;
+  tiers: Array<{ tier: string; firms: number; omi: number; dmi: number | null }> | null;
+  tiersNote: string | null;
+}
+
+export type ReportIndices = ReportPending | ReportIndicesReported;
+
 export interface ReportPending {
   state: 'pending_methodology';
   note: string;
+}
+
+/** One institution's reading, in one of its roles (Institutional Perspectives). */
+export interface InstitutionalReading {
+  key: string;
+  role: string;
+  code: string;
+  familyCode: string;
+  vantage: string;
+  responses: number;
+  topIssues: ReportShare[];
+  issue: { greatest: string | null; others: string[] };
+  frequency: string | null;
+  marks: string[];
+  consequence: { greatest: string | null; others: string[] };
+  capability: string | null;
 }
 
 /** The AI-drafted narrative in force for a report document. */
@@ -558,7 +659,7 @@ export interface IndustryReportContent {
     achieved: number;
     meets: boolean;
   }>;
-  indices: ReportPending;
+  indices: ReportIndices;
   frictions: { base: number; items: ReportShare[] } | null;
   frustrations: { base: number; items: ReportShare[] } | null;
   participationImpact: { base: number; items: ReportShare[] } | null;
@@ -573,13 +674,9 @@ export interface IndustryReportContent {
     rows: Array<{ comparator: string; better: number; same: number; worse: number; n: number }>;
   } | null;
   selfVsInvestors: { firmSelfBelief: ReportRating; investorExperience: ReportRating };
-  institutional: Array<{
-    role: string;
-    familyCode: string;
-    responses: number;
-    topIssues: ReportShare[];
-    capability: string | null;
-  }>;
+  institutional: InstitutionalReading[];
+  institutionalParticipation: { invited: number; contributed: number };
+  institutionalThemes: { themes: Array<{ theme: string; codes: string[] }>; standsApart: string[] };
   narrative: ReportNarrativeView | null;
   /** When the document left CIS (released to its firm / published); then final. */
   publishedAt?: string | null;
@@ -596,7 +693,7 @@ export interface FirmReportContent {
     releaseState: string;
   };
   margin: number;
-  indices: ReportPending;
+  indices: ReportIndices;
   dimensions: Array<{
     key: 'ease' | 'responsiveness' | 'transparency' | 'trust';
     label: string;
@@ -619,4 +716,19 @@ export interface FirmReportContent {
   narrative: ReportNarrativeView | null;
   /** When the document left CIS (released to its firm / published); then final. */
   publishedAt?: string | null;
+}
+
+/** The scoring methodology's two-person approval (Runbook §5.2). */
+export interface MethodologyApprovalView {
+  methodology: { id: string; version: string };
+  approved: {
+    actionId: string;
+    requestedBy: string;
+    approvedBy: string;
+    approvedAt: string;
+    reason: string;
+  } | null;
+  pending: { actionId: string; requestedBy: string; requestedAt: string; reason: string } | null;
+  viewerId: string;
+  operatorNames: Record<string, string>;
 }

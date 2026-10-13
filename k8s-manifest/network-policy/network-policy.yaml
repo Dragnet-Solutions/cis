@@ -1,0 +1,246 @@
+# CIS-specific NetworkPolicies for the dev namespace.
+#
+# The following policies are assumed to already exist (baseline created once
+# for the shared dev namespace) and are NOT repeated here:
+#   default-deny-all, allow-dns-egress, allow-acme-solver-ingress, observability policies.
+#
+# Traffic paths:
+#   ingress-nginx → cis-admin:8080          (all browser traffic)
+#   cis-admin     → cis-api:3000            (nginx proxies /api/*)
+#   cis-api       → cis-admin:8080          (headless Chromium opens /print/* for PDFs)
+#   cis-api       → cis-redis:6379          (dedicated in-cluster Redis)
+#   cis-api       → Postgres:5432, HTTPS:443, SMTP:465/587 (external)
+#   cis-db-migration → Postgres:5432 (external)
+
+---
+# Allow cis-api → cis-redis (port 6379). CIS runs its own dedicated Redis
+# StatefulSet; no other app's pods can reach it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-cis-redis-ingress
+  namespace: dev
+  labels:
+    app.kubernetes.io/part-of: cis
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: cis-redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cis-api
+      ports:
+        - port: 6379
+          protocol: TCP
+
+---
+# Allow ingress-nginx and cis-api (PDF renderer) → cis-admin (port 8080)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-cis-admin-ingress
+  namespace: dev
+  labels:
+    app.kubernetes.io/part-of: cis
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: cis-admin
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cis-api
+      ports:
+        - port: 8080
+          protocol: TCP
+
+---
+# Egress from cis-admin: cis-api only (its nginx proxies every /api call; the
+# browser loads Google Fonts directly, not through this pod)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-cis-admin-egress
+  namespace: dev
+  labels:
+    app.kubernetes.io/part-of: cis
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: cis-admin
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cis-api
+      ports:
+        - port: 3000
+          protocol: TCP
+
+---
+# Allow cis-admin → cis-api (port 3000). The API is never reached directly
+# from ingress-nginx.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-cis-api-ingress
+  namespace: dev
+  labels:
+    app.kubernetes.io/part-of: cis
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: cis-api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cis-admin
+      ports:
+        - port: 3000
+          protocol: TCP
+
+---
+# Egress from cis-api: cis-admin (PDF rendering), Postgres (external), HTTPS
+# (Azure AI Foundry, ZeptoMail API, Google Fonts for Chromium), SMTP
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-cis-api-egress
+  namespace: dev
+  labels:
+    app.kubernetes.io/part-of: cis
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: cis-api
+  policyTypes:
+    - Egress
+  egress:
+    # Dedicated Redis (in-cluster)
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cis-redis
+      ports:
+        - port: 6379
+          protocol: TCP
+    # Headless Chromium → in-cluster print pages
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cis-admin
+      ports:
+        - port: 8080
+          protocol: TCP
+    # Postgres — Azure Database for PostgreSQL Flexible Server (external)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - port: 5432
+          protocol: TCP
+    # HTTPS and SMTP — Azure AI Foundry, ZeptoMail, Google Fonts
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 465
+          protocol: TCP
+        - port: 587
+          protocol: TCP
+
+---
+# Egress from the seed job (dev only): Postgres only
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-cis-db-seed-egress
+  namespace: dev
+  labels:
+    app.kubernetes.io/part-of: cis
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: cis-db-seed
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - port: 5432
+          protocol: TCP
+
+---
+# Egress from the migration job: Postgres only
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-cis-db-migration-egress
+  namespace: dev
+  labels:
+    app.kubernetes.io/part-of: cis
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: cis-db-migration
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - port: 5432
+          protocol: TCP

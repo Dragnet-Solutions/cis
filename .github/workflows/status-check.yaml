@@ -1,0 +1,202 @@
+name: status-check
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - dev
+    paths:
+      - 'app/**'
+      - '.github/workflows/status-check.yaml'
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: status-check-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      api: ${{ steps.filter.outputs.api }}
+      admin: ${{ steps.filter.outputs.admin }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Detect changed app
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            workspace: &workspace
+              - 'app/package.json'
+              - 'app/apps/*/package.json'
+              - 'app/packages/*/package.json'
+              - 'app/pnpm-lock.yaml'
+              - 'app/pnpm-workspace.yaml'
+              - 'app/tsconfig.base.json'
+              - 'app/turbo.json'
+              - 'app/vitest.workspace.ts'
+              - 'app/eslint.config.cjs'
+              - 'app/.dockerignore'
+            api:
+              - *workspace
+              - 'app/apps/api/**'
+              - 'app/packages/**'
+            admin:
+              - *workspace
+              - 'app/apps/admin/**'
+              - 'app/packages/survey/**'
+
+  api-scanning-and-testing:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.api == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./app
+
+    env:
+      DATABASE_URL: postgres://cis:cis_test_password@localhost:5432/cis_test
+      JWT_SECRET: ci-test-secret-at-least-32-characters-long-for-ci
+      NODE_ENV: test
+      # Only the shared-rate-limit test uses Redis; every other test keeps
+      # in-memory limits (REDIS_URL stays unset).
+      TEST_REDIS_URL: redis://localhost:6379
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: cis
+          POSTGRES_PASSWORD: cis_test_password
+          POSTGRES_DB: cis_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U cis -d cis_test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: app/package.json
+
+      - name: Setup Node Environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: app/pnpm-lock.yaml
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm exec eslint apps/api packages
+
+      - name: Typecheck
+        run: pnpm exec turbo run typecheck --filter=@cis/api...
+
+      - name: Build
+        run: pnpm exec turbo run build --filter=@cis/api...
+
+      - name: Run database migrations
+        run: pnpm --filter @cis/db migrate:up
+
+      - name: Run Integration Tests
+        run: pnpm test --project integration
+
+      - name: Security Audit
+        run: pnpm audit --audit-level=high
+
+      # Secret scanning (repo root — path must be the git checkout, not a subdirectory)
+      - name: Trufflehog Secret Scanning
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          extra_args: --only-verified --exclude-paths=.github/trufflehog-exclude.txt
+
+  admin-lint-and-build:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.admin == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./app
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: app/package.json
+
+      - name: Setup Node Environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: app/pnpm-lock.yaml
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm exec eslint apps/admin packages/survey
+
+      - name: Unit Test
+        run: pnpm test --project unit
+
+      - name: Build
+        run: pnpm exec turbo run build --filter=@cis/admin...
+
+      - name: Security Audit
+        run: pnpm audit --audit-level=high
+
+      # Secret scanning (repo root — path must be the git checkout, not a subdirectory)
+      - name: Trufflehog Secret Scanning
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          extra_args: --only-verified --exclude-paths=.github/trufflehog-exclude.txt
+
+  status-check:
+    if: always()
+    needs:
+      - detect-changes
+      - api-scanning-and-testing
+      - admin-lint-and-build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require no failed or cancelled jobs
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "One or more required jobs failed."
+            exit 1
+          fi
+          echo "All required jobs passed (or were skipped as not applicable)."

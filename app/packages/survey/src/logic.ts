@@ -114,6 +114,56 @@ export function outstanding(item: SurveyItem, value: unknown): string {
 }
 
 /**
+ * A short, readable rendering of an answer for the review-before-submit step —
+ * the same per-kind reading the controls write, never a raw value. Returns ''
+ * for an unanswered item (an optional item left blank included).
+ */
+export function describeAnswer(item: SurveyItem, value: unknown): string {
+  const a = getCanonical(value).a;
+  if (a === undefined || a === null || a === '') return '';
+  switch (item.kind) {
+    case 'rank':
+      return Array.isArray(a) ? a.map((o, i) => `${i + 1}. ${String(o)}`).join('  ') : '';
+    case 'select': {
+      const picked = asPicked(a);
+      const greatest = item.selectThenGreatest ? (a as SelectGreatestAnswer).greatest : undefined;
+      const list = picked.join(', ');
+      return greatest ? `${list}. Greatest consequence: ${greatest}` : list;
+    }
+    case 'multi':
+      return Array.isArray(a) ? (a as unknown[]).map(String).join(', ') : '';
+    case 'yesno': {
+      const y = asYesNo(a);
+      if (!y.v) return '';
+      return y.detail && y.detail.trim() ? `${y.v} — ${y.detail.trim()}` : y.v;
+    }
+    case 'grid': {
+      const cols = gridColumns(item);
+      const grid = (a ?? {}) as GridAnswer;
+      const lines: string[] = [];
+      for (const r of item.gridRows ?? []) {
+        const row = grid[r];
+        if (!row) continue;
+        // A single-column grid reads "row: value"; a multi-dimension one names
+        // each dimension.
+        const cells =
+          cols.length === 1
+            ? (row[cols[0] ?? ''] ?? '')
+            : cols
+                .filter((c) => row[c])
+                .map((c) => `${c}: ${row[c]}`)
+                .join(', ');
+        lines.push(`${r}: ${cells}`);
+      }
+      return lines.join('; ');
+    }
+    default:
+      // scale, single, open
+      return String(a).trim();
+  }
+}
+
+/**
  * Toggle an option in a select-up-to-N set. Adds only while under the cap
  * (over-selection is refused, not truncated); removes if already present.
  * Ported from R.controls.select's toggle so the cap rule lives in one place.

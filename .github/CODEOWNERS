@@ -5,4 +5,7 @@
 /IaC/ @malik-dragnet
 
 # Kubernetes manifests
-/k8s-manifests/ @malik-dragnet
+/k8s-manifest/ @malik-dragnet
+
+# ArgoCD
+/argocd/ @malik-dragnet

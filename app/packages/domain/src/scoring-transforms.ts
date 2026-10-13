@@ -21,10 +21,34 @@ const MISSING_TOKENS = new Set([
   'Invalid',
 ]);
 
+/**
+ * The value a scorer reads from a stored answer. A yes/no question is saved as
+ * `{ v: 'Yes' }` (with an optional `detail`), and the scoring queries read the
+ * answer as text (`answer->>'a'`), so it arrives as the JSON string
+ * `{"v": "Yes"}`. Without unwrapping it no yes/no item ever scored — which is
+ * why retail Investor Confidence (S4-Q5–Q7) counted no one.
+ */
+export function answerValue(raw: unknown): unknown {
+  let value = raw;
+  if (typeof value === 'string' && value.trimStart().startsWith('{')) {
+    try {
+      value = JSON.parse(value) as unknown;
+    } catch {
+      return raw;
+    }
+  }
+  if (value && typeof value === 'object' && !Array.isArray(value) && 'v' in value) {
+    return (value as { v: unknown }).v;
+  }
+  return value;
+}
+
 /** Whether a raw answer is substantive (present and not a missing token). */
 export function isSubstantive(raw: unknown): boolean {
-  if (raw === null || raw === undefined) return false;
-  const s = String(raw).trim();
+  const value = answerValue(raw);
+  if (value === null || value === undefined) return false;
+  if (typeof value === 'object') return true;
+  const s = String(value).trim();
   return s.length > 0 && !MISSING_TOKENS.has(s);
 }
 
@@ -49,7 +73,8 @@ function bandMidpoint(map: Record<string, number> | undefined, raw: string): num
 
 /** Apply a transform definition to a raw answer, returning a 0–100 score or null
  *  when the answer is missing / unmapped. */
-export function applyTransform(transform: RawTransform, raw: unknown): number | null {
+export function applyTransform(transform: RawTransform, answer: unknown): number | null {
+  const raw = answerValue(answer);
   if (!isSubstantive(raw)) return null;
   switch (transform.type) {
     case 'positive_1_10': {

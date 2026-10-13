@@ -1,0 +1,45 @@
+# Headless service — used by the StatefulSet for stable DNS per pod.
+apiVersion: v1
+kind: Service
+metadata:
+  name: cis-redis-headless
+  namespace: dev
+  labels:
+    app.kubernetes.io/name: cis-redis
+    app.kubernetes.io/part-of: cis
+    app.kubernetes.io/component: cache
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: cis-redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+      protocol: TCP
+
+---
+# ClusterIP service — the stable address the api pods connect to.
+apiVersion: v1
+kind: Service
+metadata:
+  name: cis-redis
+  namespace: dev
+  labels:
+    app.kubernetes.io/name: cis-redis
+    app.kubernetes.io/part-of: cis
+    app.kubernetes.io/component: cache
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: cis-redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+      protocol: TCP

@@ -121,20 +121,30 @@ export async function getFirmSeatStateCounts(
  * count): the per-index population predicates need to know exactly which seats
  * cleared — OMI needs all three, DMI needs S1+S3 specifically. Only firms with
  * at least one seat row appear.
+ *
+ * `asOf` reads the matrix as it stood at an earlier instant (the mission
+ * board's pace window): a seat counts as complete then only if its respondent
+ * had submitted by `asOf` (or, for a seat with no linked respondent, the seat
+ * row was last changed by then).
  */
 export async function getFirmSeatCompletionMatrix(
   pool: Pool,
   editionId: string,
+  asOf?: Date,
 ): Promise<Array<{ organizationId: string; completeSeats: string[] }>> {
+  const completeAt = asOf
+    ? `sa.state = 'complete' AND COALESCE(resp.submitted_at, sa.updated_at) <= $2`
+    : `sa.state = 'complete'`;
   const result = await query<{ organization_id: string; complete_seats: string[] | null }>(
     pool,
-    `SELECT organization_id,
-            ARRAY_AGG(seat_code ORDER BY seat_code) FILTER (WHERE state = 'complete') AS complete_seats
-       FROM seat_assignments
-      WHERE edition_id = $1
-      GROUP BY organization_id
-      ORDER BY organization_id`,
-    [editionId],
+    `SELECT sa.organization_id,
+            ARRAY_AGG(sa.seat_code ORDER BY sa.seat_code) FILTER (WHERE ${completeAt}) AS complete_seats
+       FROM seat_assignments sa
+       LEFT JOIN respondents resp ON resp.id = sa.respondent_id
+      WHERE sa.edition_id = $1
+      GROUP BY sa.organization_id
+      ORDER BY sa.organization_id`,
+    asOf ? [editionId, asOf] : [editionId],
   );
   return result.rows.map((r) => ({
     organizationId: r.organization_id,

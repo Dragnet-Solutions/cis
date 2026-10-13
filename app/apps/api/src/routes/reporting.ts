@@ -1,4 +1,4 @@
-import type { FastifyReply } from 'fastify';
+import type { FastifyBaseLogger, FastifyReply } from 'fastify';
 import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import {
@@ -8,7 +8,10 @@ import {
   getDisplayNamesByIdentifier,
   getReportPublication,
   listEmailsFor,
+  getUserById,
+  listFirmReportOpenings,
 } from '@cis/db';
+import { loadRbacContext } from '@cis/auth';
 import {
   generateNationalReport,
   openDraft,
@@ -17,13 +20,17 @@ import {
   approveNational,
   getSections,
   generateFirmReports,
-  approveFirmReport,
+  openFirmReport,
+  requestFirmReportRelease,
+  decideFirmReportRelease,
+  getPendingFirmReportRelease,
   regenerateFirmReport,
   releaseFirmReports,
   getFirmReports,
   currentSegmentSufficiency,
   buildIndustryReportContent,
   buildFirmReportContent,
+  withheldSections,
   generateIndustryNarrative,
   generateFirmNarrative,
   getIndustryNarrative,
@@ -32,8 +39,13 @@ import {
   ensureFirmNarrative,
   publishIndustryReport,
   queueReleaseNotices,
+  prepareNationalReview,
+  getNationalReview,
+  decideFinding,
   NATIONAL_SECTIONS,
   type SufficiencyContext,
+  type ReleaseOptions,
+  type ReleaseResult,
 } from '@cis/domain';
 import type { ReportNarrative } from '@cis/db';
 import { foundryModelFromEnv } from '../ai/foundry-model';
@@ -66,10 +78,14 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
       },
     },
     async (request, reply) => {
-      const { report, sections } = await generateNationalReport(getPool(), {
+      // What the report itself will withhold is read from its own content, never
+      // taken from the request: a section is not "publishable" if it shows nothing.
+      const pool = getPool();
+      const withheld = withheldSections(await buildIndustryReportContent(pool, request.params.id));
+      const { report, sections } = await generateNationalReport(pool, {
         editionId: request.params.id,
         scoringRunId: request.body.scoringRunId,
-        context: request.body.context as SufficiencyContext,
+        context: { ...(request.body.context as SufficiencyContext), withheld },
       });
       return reply.status(201).send({ reportId: report.id, sections });
     },
@@ -279,6 +295,35 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
     },
   );
 
+  // Institutional Perspectives — the Industry report's section 10 as its own
+  // document, from the same content and narrative.
+  app.get(
+    '/editions/:id/reports/institutional/pdf',
+    { preHandler: [app.authenticate], schema: { params: z.object({ id: z.string().uuid() }) } },
+    async (request, reply) => {
+      const pool = getPool();
+      const ready = await ensureIndustryNarrative(
+        pool,
+        request.params.id,
+        foundryModelFromEnv,
+        request.session.email,
+      );
+      if (!ready) {
+        return reply.status(409).send(noNarrative);
+      }
+      const content = await buildIndustryReportContent(pool, request.params.id);
+      const pdf = await renderReportPdf(
+        `/print/institutional?edition=${request.params.id}`,
+        pdfSession(request),
+      );
+      return sendPdf(
+        reply,
+        pdf,
+        `CIS-Dragnet-Institutional-Perspectives-${content.edition.label}.pdf`,
+      );
+    },
+  );
+
   app.get(
     '/editions/:id/firms/:firmId/report/pdf',
     {
@@ -355,6 +400,56 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
     },
   );
 
+  // The sentence-level review of the draft — the Industry report's AI
+  // narrative. POST makes it current (drafting the narrative if due, recording
+  // its sentences and findings, measuring the checker); GET reads it.
+  app.get(
+    '/national-reports/:id/review',
+    { preHandler: [app.authenticate], schema: { params: z.object({ id: z.string().uuid() }) } },
+    async (request, reply) => {
+      return reply.send(await getNationalReview(getPool(), request.params.id));
+    },
+  );
+
+  app.post(
+    '/national-reports/:id/review',
+    { preHandler: [app.authenticate], schema: { params: z.object({ id: z.string().uuid() }) } },
+    async (request, reply) => {
+      const review = await prepareNationalReview(
+        getPool(),
+        request.params.id,
+        foundryModelFromEnv,
+        request.session.email,
+      );
+      return reply.send(review);
+    },
+  );
+
+  // A reviewer's decision on one checker finding. Who decided is the session.
+  app.post(
+    '/national-reports/:id/findings/:findingId/decision',
+    {
+      preHandler: [app.authenticate],
+      schema: {
+        params: z.object({ id: z.string().uuid(), findingId: z.string().uuid() }),
+        body: z.object({
+          disposition: z.enum(['SUPPRESS_CLAIM', 'REJECT_WITH_REASON']),
+          reason: z.string().trim().max(2000).optional(),
+        }),
+      },
+    },
+    async (request, reply) => {
+      await decideFinding(getPool(), {
+        reportId: request.params.id,
+        findingId: request.params.findingId,
+        disposition: request.body.disposition,
+        reason: request.body.reason ?? null,
+        decidedBy: request.session.email,
+      });
+      return reply.send({ decided: true });
+    },
+  );
+
   app.post(
     '/national-reports/:id/request-approval',
     {
@@ -404,13 +499,33 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
   );
 
   // ── Firm reports (UX-ADM-006) ─────────────────────────────────────────────
+  // The pending release request, in the shape the maker-checker screens share.
+  const serializePendingRelease = async (pool: ReturnType<typeof getPool>, editionId: string) => {
+    const action = await getPendingFirmReportRelease(pool, editionId);
+    if (!action) return null;
+    const requester = await getUserById(pool, action.requestedBy);
+    const ids = action.payload['reportIds'];
+    return {
+      id: action.id,
+      reason: typeof action.payload['reason'] === 'string' ? action.payload['reason'] : '',
+      requestedAt: action.requestedAt.toISOString(),
+      requestedBy: {
+        id: action.requestedBy,
+        displayName: requester?.displayName ?? 'Unknown',
+        org: requester?.organization ?? null,
+      },
+      reportIds: Array.isArray(ids) ? ids.filter((x): x is string => typeof x === 'string') : [],
+    };
+  };
+
   app.get(
     '/editions/:id/firm-reports',
     { preHandler: [app.authenticate], schema: { params: z.object({ id: z.string().uuid() }) } },
     async (request, reply) => {
-      const reports = await getFirmReports(getPool(), request.params.id);
+      const pool = getPool();
+      const reports = await getFirmReports(pool, request.params.id);
       const emails = await listEmailsFor(
-        getPool(),
+        pool,
         'firm-report-released',
         reports.map((r) => r.id),
       );
@@ -423,7 +538,25 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
         const n = (notices[e.refId ?? ''] ??= { sent: 0, logged: 0, failed: 0, queued: 0 });
         n[e.status] += 1;
       }
-      return reply.send({ reports, notices });
+      // Per report: who has opened it — approving a release needs each covered
+      // report opened by the requester or the approver.
+      const openings = await listFirmReportOpenings(
+        pool,
+        reports.map((r) => r.id),
+      );
+      const names = await getDisplayNamesByIdentifier(
+        pool,
+        openings.map((o) => o.userId),
+      );
+      const openedBy: Record<string, Array<{ id: string; displayName: string }>> = {};
+      for (const o of openings) {
+        (openedBy[o.firmReportId] ??= []).push({
+          id: o.userId,
+          displayName: names[o.userId] ?? 'Unknown',
+        });
+      }
+      const pendingRelease = await serializePendingRelease(pool, request.params.id);
+      return reply.send({ reports, notices, openedBy, pendingRelease });
     },
   );
 
@@ -445,12 +578,14 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
     },
   );
 
+  // Record that the signed-in operator opened a report. Approving a release
+  // needs every covered report opened by the requester or the approver.
   app.post(
-    '/firm-reports/:id/approve',
+    '/firm-reports/:id/open',
     { preHandler: [app.authenticate], schema: { params: z.object({ id: z.string().uuid() }) } },
     async (request, reply) => {
-      const report = await approveFirmReport(getPool(), request.params.id);
-      return reply.send({ approvalState: report.approvalState });
+      await openFirmReport(getPool(), request.params.id, request.session.sub);
+      return reply.send({ opened: true });
     },
   );
 
@@ -465,45 +600,126 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
     },
   );
 
-  // Atomic per-report release. Blocked until the national report is approved.
+  // How a release runs, wherever it is triggered: each report goes out with its
+  // written analysis, frozen as released; then each released firm's
+  // coordinators are told. A notice never holds back or undoes a release.
+  const releaseOptions = (session: { email: string }, editionId: string): ReleaseOptions => {
+    const pool = getPool();
+    return {
+      releasedBy: session.email,
+      prepare: async (report) => {
+        const narrative = await ensureFirmNarrative(
+          pool,
+          editionId,
+          report.organizationId,
+          foundryModelFromEnv,
+          session.email,
+        );
+        if (!narrative) throw new Error('there are no figures to write about yet');
+        return { narrativeId: narrative.id };
+      },
+    };
+  };
+  const notifyAndSummarise = async (log: FastifyBaseLogger, result: ReleaseResult) => {
+    const pool = getPool();
+    let notified = { sent: 0, logged: 0, failed: 0 };
+    try {
+      await queueReleaseNotices(pool, result.released, portalUrl());
+      notified = await deliverQueuedEmails(pool, log);
+    } catch (err) {
+      log.warn({ err }, 'Release notices could not be queued');
+    }
+    return {
+      notified,
+      released: result.released.map((r) => r.organizationId),
+      held: result.held.map((h) => ({
+        organizationId: h.report.organizationId,
+        reason: h.reason,
+      })),
+    };
+  };
+
+  // Releasing the firm reports is a critical action (maker-checker). The maker
+  // asks, with a reason, for the generated reports to be released. Who asked is
+  // the signed-in operator, never a body field.
+  app.post(
+    '/editions/:id/firm-reports/release/request',
+    {
+      preHandler: [app.authenticate],
+      schema: {
+        params: z.object({ id: z.string().uuid() }),
+        body: z.object({
+          reason: z.string(),
+          reportIds: z.array(z.string().uuid()).max(5000).optional(),
+        }),
+      },
+    },
+    async (request, reply) => {
+      const pool = getPool();
+      const rbac = await loadRbacContext(pool, request.session.sub);
+      const action = await requestFirmReportRelease(
+        pool,
+        rbac,
+        request.params.id,
+        {
+          reason: request.body.reason,
+          ...(request.body.reportIds ? { reportIds: request.body.reportIds } : {}),
+        },
+        { ipAddress: request.ip, userAgent: request.headers['user-agent'] ?? null },
+      );
+      return reply.status(201).send({ criticalActionId: action.id });
+    },
+  );
+
+  // A different person approves (which releases) or rejects — taken from the
+  // session. Every covered report must have been opened by one of the two.
+  app.post(
+    '/editions/:id/firm-reports/release/:actionId/decide',
+    {
+      preHandler: [app.authenticate],
+      schema: {
+        params: z.object({ id: z.string().uuid(), actionId: z.string().uuid() }),
+        body: z.object({ approved: z.boolean(), rejectionReason: z.string().optional() }),
+      },
+    },
+    async (request, reply) => {
+      const pool = getPool();
+      const editionId = request.params.id;
+      const rbac = await loadRbacContext(pool, request.session.sub);
+      const { action, release, releaseError } = await decideFirmReportRelease(
+        pool,
+        rbac,
+        editionId,
+        request.params.actionId,
+        {
+          approved: request.body.approved,
+          ...(request.body.rejectionReason !== undefined
+            ? { rejectionReason: request.body.rejectionReason }
+            : {}),
+        },
+        { ipAddress: request.ip, userAgent: request.headers['user-agent'] ?? null },
+        releaseOptions(request.session, editionId),
+      );
+      const summary = release ? await notifyAndSummarise(request.log, release) : null;
+      return reply.send({ status: action.status, releaseError, ...summary });
+    },
+  );
+
+  // Release again: sends out reports two people have ALREADY approved but that
+  // did not go out (held while their analysis could not be prepared). It
+  // approves nothing — a report reaches 'approved' only through the
+  // maker-checker above. Blocked until the national report is approved.
   app.post(
     '/editions/:id/firm-reports/release',
     { preHandler: [app.authenticate], schema: { params: z.object({ id: z.string().uuid() }) } },
     async (request, reply) => {
-      const pool = getPool();
       const editionId = request.params.id;
-      // Each report goes out with its written analysis, frozen as released.
-      const result = await releaseFirmReports(pool, editionId, {
-        releasedBy: request.session.email,
-        prepare: async (report) => {
-          const narrative = await ensureFirmNarrative(
-            pool,
-            editionId,
-            report.organizationId,
-            foundryModelFromEnv,
-            request.session.email,
-          );
-          if (!narrative) throw new Error('there are no figures to write about yet');
-          return { narrativeId: narrative.id };
-        },
-      });
-      // Then tell each released firm's coordinators. A notice never holds back
-      // or undoes a release.
-      let notified = { sent: 0, logged: 0, failed: 0 };
-      try {
-        await queueReleaseNotices(pool, result.released, portalUrl());
-        notified = await deliverQueuedEmails(pool, request.log);
-      } catch (err) {
-        request.log.warn({ err }, 'Release notices could not be queued');
-      }
-      return reply.send({
-        notified,
-        released: result.released.map((r) => r.organizationId),
-        held: result.held.map((h) => ({
-          organizationId: h.report.organizationId,
-          reason: h.reason,
-        })),
-      });
+      const result = await releaseFirmReports(
+        getPool(),
+        editionId,
+        releaseOptions(request.session, editionId),
+      );
+      return reply.send(await notifyAndSummarise(request.log, result));
     },
   );
 };

@@ -1,0 +1,12 @@
+# One regex per line — paths skipped by TruffleHog.
+# `pnpm install` populates node_modules/ on disk before this scan runs, so
+# without these it re-scans every dependency's source tree on every run.
+node_modules/
+
+# Build output
+dist/
+coverage/
+\.turbo/
+
+# Package manager lockfiles (large, no real secrets, just noisy diffs)
+pnpm-lock.yaml

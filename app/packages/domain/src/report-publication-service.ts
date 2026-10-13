@@ -6,6 +6,8 @@ import {
   hasApprovedNationalReport,
   insertReportPublication,
   listActiveCoordinators,
+  listReviewedNarrativeIds,
+  getLatestNationalReportForEdition,
   queueEmail,
   type ReportNarrative,
   type ReportPublication,
@@ -75,7 +77,14 @@ export async function publishIndustryReport(
       'NATIONAL_NOT_APPROVED',
     );
   }
-  const narrative = await ensureIndustryNarrative(pool, editionId, model, publishedBy);
+  // What goes public is the narrative the approved national report reviewed —
+  // never one drafted after approval.
+  const approved = await getLatestNationalReportForEdition(pool, editionId);
+  const reviewed =
+    approved?.status === 'approved' ? (await listReviewedNarrativeIds(pool, approved.id))[0] : null;
+  const narrative = reviewed
+    ? { id: reviewed }
+    : await ensureIndustryNarrative(pool, editionId, model, publishedBy);
   if (!narrative) {
     throw new ReportPublicationError(
       'There are no figures to publish yet — too few responses have been received.',

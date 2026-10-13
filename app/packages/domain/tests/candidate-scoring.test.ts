@@ -49,7 +49,21 @@ import {
   generateFirmReports,
   correctFirmReport,
   releaseFirmReports,
+  firmOmiScores,
+  retailIciRelationshipScore,
+  industrySeiFromFirms,
+  buildFirmReportContent,
+  generateFirmReports,
+  requestMethodologyApproval,
+  decideMethodologyApproval,
+  getMethodologyApproval,
+  triggerScoringRun,
+  requestSignoff,
+  approveSignoff,
+  buildIndustryReportContent,
 } from '../src';
+import { loadRbacContext, MakerCheckerViolationError } from '@cis/auth';
+import { updateEditionStatus } from '@cis/db';
 import { getTestPool, runMigrations, truncateAllTables, closeTestPool } from '../../db/tests/setup';
 
 let pool: Pool;
@@ -59,9 +73,14 @@ beforeAll(async () => {
   pool = getTestPool();
   await runMigrations();
 });
+let makerUserId: string;
+let checkerUserId: string;
 beforeEach(async () => {
   await truncateAllTables(pool);
-  editionId = (await seedReferenceData(pool)).editionId;
+  const seed = await seedReferenceData(pool);
+  editionId = seed.editionId;
+  makerUserId = seed.makerUserId;
+  checkerUserId = seed.checkerUserId;
 });
 afterAll(async () => {
   await closeTestPool();
@@ -574,4 +593,183 @@ describe('Phase 22 — investor-unit scoring pipeline, real data through the rea
     const fetched = await getComparisonRun(pool, cmp.id);
     expect(fetched?.methodologyVersion).toBe('CIS-SCORE-2026@0.15');
   }, 30000);
+});
+
+describe('Approving the scoring methodology (two people), then scores in the reports', () => {
+  async function approveMethodology() {
+    const maker = await loadRbacContext(pool, makerUserId);
+    const checker = await loadRbacContext(pool, checkerUserId);
+    const action = await requestMethodologyApproval(pool, maker, {
+      reason: 'Approved externally by the methodology partner on 9 Oct.',
+    });
+    await expect(
+      decideMethodologyApproval(pool, maker, action.id, { approved: true }),
+    ).rejects.toBeInstanceOf(MakerCheckerViolationError);
+    await decideMethodologyApproval(pool, checker, action.id, { approved: true });
+  }
+
+  it('records who approved which version, and when; a reason is required', async () => {
+    const maker = await loadRbacContext(pool, makerUserId);
+    await expect(requestMethodologyApproval(pool, maker, { reason: ' ' })).rejects.toMatchObject({
+      code: 'INVALID_REASON',
+    });
+    expect((await getMethodologyApproval(pool)).approved).toBeNull();
+    await approveMethodology();
+    const state = await getMethodologyApproval(pool);
+    expect(state.methodology).toEqual({ id: 'CIS-SCORE-2026', version: '0.15' });
+    expect(state.approved?.approvedBy).toBe(checkerUserId);
+    expect(state.approved?.requestedBy).toBe(makerUserId);
+    expect(state.approved?.approvedAt).toBeInstanceOf(Date);
+    expect(state.pending).toBeNull();
+  });
+
+  it('refuses to mark a run approved before the methodology is approved', async () => {
+    await expect(
+      runCandidateScoring(pool, editionId, { methodologyStatus: 'APPROVED' }),
+    ).rejects.toMatchObject({ code: 'METHODOLOGY_NOT_APPROVED' });
+  });
+
+  it('computes Firm_OMI as the mean of the three role sub-indices', async () => {
+    await firmWithFirmSideAnswers('firm-omi', {
+      'S1-Q2': '10', // CEO → 100
+      'S2-Q1': '1', // Compliance — a negatively worded item (N2): 1 scores 100
+      'S3-Q2': '0-10%', // Operations → 95
+    });
+    await firmWithFirmSideAnswers('firm-omi-partial', { 'S1-Q2': '10' });
+    const scores = await firmOmiScores(pool, editionId);
+    expect(scores).toHaveLength(1);
+    expect(scores[0]!.score).toBeCloseTo((100 + 100 + 95) / 3, 3);
+  });
+
+  it('after approval, a signed run shows its index scores in the report', async () => {
+    await firmWithFirmSideAnswers('firm-scored', {
+      'S1-Q2': '8',
+      'S1-Q3': '8',
+      'S1-Q8': '9',
+      'S2-Q1': '7',
+      'S3-Q2': '0-10%',
+    });
+    await updateEditionStatus(pool, editionId, 'locked');
+
+    // Before approval: the placeholder runs and the report stays pending.
+    const before = await triggerScoringRun(pool, { editionId });
+    expect(before.run.methodologyStatus).not.toBe('APPROVED');
+
+    await approveMethodology();
+    const { run } = await triggerScoringRun(pool, { editionId });
+    expect(run.methodologyStatus).toBe('APPROVED');
+    const results = await listCalculatedResults(pool, run.id);
+    expect(results.some((r) => r.metricCode === 'OMI' && r.subjectType === 'market')).toBe(true);
+
+    // Not signed off yet: still pending.
+    expect((await buildIndustryReportContent(pool, editionId)).indices.state).toBe(
+      'pending_methodology',
+    );
+    const so = await requestSignoff(pool, {
+      editionId,
+      calculationRunId: run.id,
+      requestedBy: 'maker',
+      checkedAccount: {
+        populationCountsReviewed: true,
+        floorStatusReviewed: true,
+        dataQualityFlagsReviewed: true,
+      },
+    });
+    await approveSignoff(pool, { signoffId: so.id, approvedBy: 'checker' });
+
+    const indices = (await buildIndustryReportContent(pool, editionId)).indices;
+    expect(indices.state).toBe('reported');
+    if (indices.state !== 'reported') return;
+    // D36: one firm's "industry" score is that firm's score — withheld, not shown.
+    const omi = indices.industry.find((x) => x.code === 'OMI')!;
+    expect(omi.value).toBeNull();
+    expect(omi.note).toMatch(/^Withheld: from 1 firm, below the \d+-firm floor/);
+    expect(indices.industry.map((x) => x.code)).toEqual(['OMI', 'DMI', 'IEI', 'ICI', 'SEI']);
+  });
+
+  it('draws maturity tiers only when every third pools at least three firms', async () => {
+    for (let i = 1; i <= 9; i++) {
+      await firmWithFirmSideAnswers(`tier-firm-${i}`, {
+        'S1-Q2': String(i + 1),
+        'S2-Q1': '5',
+        'S3-Q2': '0-10%',
+      });
+    }
+    await updateEditionStatus(pool, editionId, 'locked');
+    await approveMethodology();
+    const { run } = await triggerScoringRun(pool, { editionId });
+    const so = await requestSignoff(pool, {
+      editionId,
+      calculationRunId: run.id,
+      requestedBy: 'maker',
+      checkedAccount: {
+        populationCountsReviewed: true,
+        floorStatusReviewed: true,
+        dataQualityFlagsReviewed: true,
+      },
+    });
+    await approveSignoff(pool, { signoffId: so.id, approvedBy: 'checker' });
+    const indices = (await buildIndustryReportContent(pool, editionId)).indices;
+    if (indices.state !== 'reported') throw new Error('expected reported indices');
+    expect(indices.tiers?.map((t) => t.firms)).toEqual([3, 3, 3]);
+    expect(indices.tiers![0]!.omi).toBeGreaterThan(indices.tiers![2]!.omi);
+  });
+
+  it('scores yes/no answers as the survey stores them (D38a)', () => {
+    // The survey saves {v: 'No'}; the scoring query reads it back as JSON text.
+    const stored = (v: string) => JSON.stringify({ v });
+    const score = retailIciRelationshipScore({
+      q4: '10',
+      q5: stored('No'),
+      q6: stored('No'),
+      q7: stored('Yes'),
+    });
+    // 0.5·N1(10) + 0.5·mean(100, 100, 0)
+    expect(score).toBeCloseTo(0.5 * 100 + 0.5 * (200 / 3), 3);
+  });
+
+  it('withholds a firm score built from fewer than ten of its investors (D37)', async () => {
+    const firmId = await firmWithFirmSideAnswers('firm-few-investors', {
+      'S1-Q2': '8',
+      'S1-Q11': '8',
+      'S2-Q1': '7',
+      'S3-Q2': '0-10%',
+    });
+    for (let i = 0; i < 4; i++) await seedRetailFull(editionId, firmId);
+    await updateEditionStatus(pool, editionId, 'locked');
+    await approveMethodology();
+    const { run } = await triggerScoringRun(pool, { editionId });
+    const so = await requestSignoff(pool, {
+      editionId,
+      calculationRunId: run.id,
+      requestedBy: 'maker',
+      checkedAccount: {
+        populationCountsReviewed: true,
+        floorStatusReviewed: true,
+        dataQualityFlagsReviewed: true,
+      },
+    });
+    await approveSignoff(pool, { signoffId: so.id, approvedBy: 'checker' });
+    await generateFirmReports(pool, { editionId, scoringRunId: run.id });
+    const indices = (await buildFirmReportContent(pool, editionId, firmId)).indices;
+    if (indices.state !== 'reported') throw new Error('expected reported indices');
+    for (const code of ['IEI', 'ICI']) {
+      const x = indices.firm!.find((f) => f.code === code)!;
+      expect(x.value).toBeNull();
+      expect(x.note).toMatch(/^Withheld: fewer than ten of your investors answered \(4\)/);
+    }
+    expect(JSON.stringify(indices)).not.toMatch(/caution/);
+  });
+
+  it('derives industry SEI from the run’s own firm SEI, not a previous run', () => {
+    // Ten firms, each with enough investors: calculable from this run alone.
+    const firms = Array.from({ length: 10 }, (_, i) => ({ value: 60 + i, n: 12 }));
+    const sei = industrySeiFromFirms(firms);
+    expect(sei.status).toBe('CALCULABLE');
+    expect(sei.value).toBeCloseTo(64.5, 1);
+    // Firms resting on fewer than ten investors do not count.
+    const thin = industrySeiFromFirms(firms.map((f) => ({ ...f, n: 4 })));
+    expect(thin.status).toBe('NOT_CALCULABLE');
+    expect(thin.reason).toMatch(/Only 0 firms/);
+  });
 });

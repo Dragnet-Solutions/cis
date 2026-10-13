@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError } from '../api/types';
 import { saveFile } from './parts';
 import type { ReportSource } from './source';
@@ -14,6 +14,11 @@ export function useReport<T extends { narrative: unknown; publishedAt?: string |
   source: ReportSource<T>,
   { printMode, onReady }: { printMode: boolean; onReady: (() => void) | undefined },
 ) {
+  // The latest source, read through a ref: callers may rebuild it each render,
+  // and only a change of `key` (another document or reader) reloads.
+  const ref = useRef(source);
+  ref.current = source;
+  const key = source.key;
   const [c, setC] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<'generating' | 'downloading' | 'publishing' | null>(null);
@@ -21,22 +26,22 @@ export function useReport<T extends { narrative: unknown; publishedAt?: string |
 
   const load = useCallback(async () => {
     try {
-      setC(await source.load());
+      setC(await ref.current.load());
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not load the report');
     }
-  }, [source]);
+  }, [key]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
   useEffect(() => {
-    if (printMode || !source.ensure) return;
+    const ensure = ref.current.ensure;
+    if (printMode || !ensure) return;
     let live = true;
     setBusy('generating');
-    void source
-      .ensure()
+    void ensure()
       .then(() => (live ? load() : undefined))
       .catch((err: unknown) => {
         if (live) {
@@ -51,7 +56,7 @@ export function useReport<T extends { narrative: unknown; publishedAt?: string |
     return () => {
       live = false;
     };
-  }, [source, printMode, load]);
+  }, [key, printMode, load]);
 
   useEffect(() => {
     if (c) onReady?.();

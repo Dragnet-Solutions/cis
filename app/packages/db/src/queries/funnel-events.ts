@@ -76,6 +76,19 @@ export async function emitFunnelEvent(
   return mapFunnel(row);
 }
 
+/**
+ * Regulator / market-infrastructure submissions (instrument_type 'regulator':
+ * I-SEC, I-NGX, I-CSCS, I-DEP) are never investor participation. The domain no
+ * longer emits a `completed` event for them, but earlier builds wrote them as
+ * `local_institution`, so every participation count below also excludes any
+ * such row by the respondent's instrument type. Events with no response_id
+ * (none are written for regulators) are unaffected.
+ */
+const NOT_REGULATOR = `NOT EXISTS (
+         SELECT 1 FROM respondents resp
+           JOIN instrument_definitions def ON def.code = resp.instrument_code
+          WHERE resp.id = funnel_event.response_id AND def.instrument_type = 'regulator')`;
+
 export async function listFunnelEvents(pool: Pool, editionId: string): Promise<FunnelEvent[]> {
   const result = await query<RawFunnelRow>(
     pool,
@@ -95,6 +108,7 @@ export async function countCompletedBySegment(
     `SELECT segment, COUNT(*)::text AS n
        FROM funnel_event
       WHERE edition_id = $1 AND event_type = 'completed'
+        AND ${NOT_REGULATOR}
       GROUP BY segment`,
     [editionId],
   );
@@ -115,6 +129,7 @@ export async function countCompletedBySegmentSince(
     `SELECT segment, COUNT(*)::text AS n
        FROM funnel_event
       WHERE edition_id = $1 AND event_type = 'completed' AND occurred_at >= $2
+        AND ${NOT_REGULATOR}
       GROUP BY segment`,
     [editionId, since],
   );
@@ -159,7 +174,8 @@ export async function countDistinctInstitutionsSince(
     `SELECT COUNT(DISTINCT institution_ref)::text AS n
        FROM funnel_event
       WHERE edition_id = $1 AND event_type = 'completed'
-        AND segment = $2 AND institution_ref IS NOT NULL AND occurred_at >= $3`,
+        AND segment = $2 AND institution_ref IS NOT NULL AND occurred_at >= $3
+        AND ${NOT_REGULATOR}`,
     [editionId, segment, since],
   );
   return parseInt(result.rows[0]?.n ?? '0', 10);
@@ -180,7 +196,8 @@ export async function countDistinctInstitutions(
     `SELECT COUNT(DISTINCT institution_ref)::text AS n
        FROM funnel_event
       WHERE edition_id = $1 AND event_type = 'completed'
-        AND segment = $2 AND institution_ref IS NOT NULL`,
+        AND segment = $2 AND institution_ref IS NOT NULL
+        AND ${NOT_REGULATOR}`,
     [editionId, segment],
   );
   return parseInt(result.rows[0]?.n ?? '0', 10);

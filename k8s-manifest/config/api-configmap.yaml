@@ -1,0 +1,48 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cis-api-config
+  namespace: dev
+  labels:
+    app.kubernetes.io/name: cis-api
+    app.kubernetes.io/part-of: cis
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+data:
+  # ── Application ──────────────────────────────────────────────────────────
+  NODE_ENV: "production"
+  HOST: "0.0.0.0"
+  PORT: "3000"
+  LOG_LEVEL: "info"
+  TRUST_PROXY: "2"
+
+  # ── Database ─────────────────────────────────────────────────────────────
+  DB_HOST: "refme.postgres.database.azure.com"
+  DB_PORT: "5432"
+
+  # ── Redis (dedicated in-cluster StatefulSet) ─────────────────────────────
+  # REDIS_PASSWORD comes from the ExternalSecret (cis-api-secrets).
+  REDIS_HOST: "cis-redis"
+  REDIS_PORT: "6379"
+
+  # ── Auth rate limiting ───────────────────────────────────────────────────
+  # Held in memory per pod — the effective limit scales with the replica count.
+  RATE_LIMIT_AUTH_MAX: "10"
+  RATE_LIMIT_AUTH_WINDOW_MS: "900000"
+
+  # ── Report PDFs & links ──────────────────────────────────────────────────
+  # REPORT_RENDER_URL: where the API's headless Chromium opens the print pages.
+  # In-cluster cis-admin Service (never leaves the cluster); its nginx proxies the
+  # page's /api calls back to cis-api.
+  REPORT_RENDER_URL: "http://cis-admin"
+  # PORTAL_URL: public origin used in links sent to firms by email.
+  PORTAL_URL: "https://dev-cis.idhub.ng"
+
+  # ── Mail ─────────────────────────────────────────────────────────────────
+  # SMTP_URL comes from the ExternalSecret. Without it, outbox mail is only logged.
+  MAIL_FROM: "CIS × Dragnet <no-reply@example.com>" # TODO: real sender
+
+  # ── AI report narrative (Azure AI Foundry) ───────────────────────────────
+  # AZURE_AI_API_KEY comes from the ExternalSecret.
+  AZURE_AI_ENDPOINT: "https://dragnet-gateway-resource.services.ai.azure.com/api/projects/dragnet-gateway"
+  AZURE_AI_MODEL: "DeepSeek-V4-Pro"
