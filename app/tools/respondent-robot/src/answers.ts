@@ -39,7 +39,28 @@ export const NEGATIVE_SCALES = new Set(['S1-Q5', 'S2-Q1']);
 const YES_IS_ADVERSE = true;
 
 /** Options that are a non-answer for scoring ("missing", never imputed). */
-const NEUTRAL = new Set(['Don’t know', "Don't know", 'Not applicable', 'Unable to assess']);
+const NEUTRAL = new Set(['Don’t know', "Don't know", 'Not applicable', 'N/A', 'Unable to assess']);
+
+/** A non-answer, including the select items' "insufficient direct experience to assess". */
+export function isNeutral(label: string): boolean {
+  return NEUTRAL.has(label) || /insufficient direct experience to assess/i.test(label);
+}
+
+/**
+ * ROBOT_NO_NEUTRAL=1: every respondent gives a real answer to every question,
+ * so every score comes out — no "Don't know", "Not applicable" or "Unable to
+ * assess" from any question kind.
+ */
+export function noNeutral(): boolean {
+  return process.env['ROBOT_NO_NEUTRAL'] === '1';
+}
+
+/** The options a respondent may pick: all of them, or only real answers under ROBOT_NO_NEUTRAL. */
+function answerable(options: string[]): string[] {
+  if (!noNeutral()) return options;
+  const real = options.filter((o) => !isNeutral(o));
+  return real.length > 0 ? real : options;
+}
 
 /**
  * How good each known ordinal label is, 0 (worst) .. 1 (best), following the
@@ -111,17 +132,18 @@ export function optionGoodness(label: string): number | null {
 function pickOrdinal(options: string[], ctx: AnswerContext): string {
   const { rng, persona } = ctx;
   if (options.length === 0) throw new Error('An option question with no options');
+  options = answerable(options);
   if (persona.kind === 'straightliner') {
     return options[Math.round(persona.position * (options.length - 1))] as string;
   }
-  const scored = options.filter((o) => !NEUTRAL.has(o));
-  const neutral = options.filter((o) => NEUTRAL.has(o));
+  const scored = options.filter((o) => !isNeutral(o));
+  const neutral = options.filter((o) => isNeutral(o));
   const known = scored.map(optionGoodness);
   if (persona.kind === 'speeder' || ctx.goodness === null || known.some((g) => g === null)) {
-    return rng.pick(options);
+    return rng.pick(noNeutral() ? scored : options);
   }
   // Now and then a real respondent can't say.
-  if (neutral.length > 0 && rng.chance(0.04)) return rng.pick(neutral);
+  if (!noNeutral() && neutral.length > 0 && rng.chance(0.04)) return rng.pick(neutral);
   const target = ctx.goodness;
   const weights = known.map((g) => Math.exp(-(((g as number) - target) ** 2) / (2 * 0.18 ** 2)));
   return scored[rng.weightedIndex(weights)] as string;
@@ -258,7 +280,7 @@ export function generateAnswer(item: SurveyItem, ctx: AnswerContext): AnswerValu
       break;
     }
     case 'select': {
-      const opts = item.options ?? [];
+      const opts = answerable(item.options ?? []);
       const picked = firstOrSample(opts, chooseCount(item.selectUpToN ?? 3, ctx), ctx);
       a = item.selectThenGreatest
         ? { picked, greatest: persona.kind === 'straightliner' ? picked[0] : rng.pick(picked) }
@@ -266,13 +288,14 @@ export function generateAnswer(item: SurveyItem, ctx: AnswerContext): AnswerValu
       break;
     }
     case 'multi': {
-      const opts = item.options ?? [];
+      const opts = answerable(item.options ?? []);
       a = firstOrSample(opts, chooseCount(Math.min(4, opts.length), ctx), ctx);
       break;
     }
     case 'rank': {
       const n = item.rankExactlyN ?? 3;
-      a = firstOrSample(item.options ?? [], n, ctx);
+      const opts = answerable(item.options ?? []);
+      a = firstOrSample(opts.length >= n ? opts : (item.options ?? []), n, ctx);
       break;
     }
     case 'grid':
