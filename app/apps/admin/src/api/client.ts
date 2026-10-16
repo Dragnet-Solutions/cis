@@ -9,6 +9,7 @@ import {
   type FirmReport,
   type FirmSummary,
   type FirmImportResult,
+  type FirmInvitation,
   type PendingFirmReportRelease,
   type FirmReportReleaseDecision,
   type IndexScoreView,
@@ -321,6 +322,15 @@ export interface AdminClient {
     incoming: { id: string; isLead: boolean };
   }>;
   removeCoordinator(orgId: string, coordinatorId: string): Promise<{ removed: boolean }>;
+  // Firm invitations — an emailed personal link to set up the firm's space.
+  listFirmInvitations(orgId: string): Promise<{ invitations: FirmInvitation[]; claimed: boolean }>;
+  listEditionFirmInvitations(editionId: string): Promise<{ invitations: FirmInvitation[] }>;
+  inviteFirm(
+    orgId: string,
+    body: { email: string; contactName?: string; editionId?: string },
+  ): Promise<{ invitation: FirmInvitation; resent: boolean }>;
+  resendFirmInvitation(id: string): Promise<{ invitation: FirmInvitation }>;
+  revokeFirmInvitation(id: string): Promise<{ invitation: FirmInvitation }>;
   // People & Access (UX-OPS-006)
   getPeople(): Promise<PeopleResponse>;
   addPerson(input: PersonInput): Promise<{ person: PersonAccess }>;
@@ -644,6 +654,15 @@ export function createClient(token: string | null, hooks: SessionHooks = {}): Ad
       request(`/firms/${orgId}/coordinators/handover`, { method: 'POST', body, token }),
     removeCoordinator: (orgId, coordinatorId) =>
       request(`/firms/${orgId}/coordinators/${coordinatorId}`, { method: 'DELETE', token }),
+    listFirmInvitations: (orgId) => request(`/firms/${orgId}/invitations`, { token }),
+    listEditionFirmInvitations: (editionId) =>
+      request(`/editions/${editionId}/firm-invitations`, { token }),
+    inviteFirm: (orgId, body) =>
+      request(`/firms/${orgId}/invitations`, { method: 'POST', body, token }),
+    resendFirmInvitation: (id) =>
+      request(`/firm-invitations/${id}/resend`, { method: 'POST', body: {}, token }),
+    revokeFirmInvitation: (id) =>
+      request(`/firm-invitations/${id}/revoke`, { method: 'POST', body: {}, token }),
     getPeople: () => request('/people', { token }),
     addPerson: (input) => request('/people', { method: 'POST', body: input, token }),
     updatePersonRights: (userId, input) =>

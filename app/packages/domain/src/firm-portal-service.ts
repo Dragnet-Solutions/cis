@@ -1,5 +1,9 @@
 import { Pool } from 'pg';
 import {
+  withTransaction,
+  getFirmInvitationByToken,
+  acceptFirmInvitation,
+  setFirmClaimInvitation,
   getFirmClaim,
   insertFirmClaim,
   setFollowUpConsent,
@@ -19,6 +23,7 @@ import {
   listEditions,
   listOrganizations,
   insertInvitationRequest,
+  getOrganizationById,
 } from '@cis/db';
 import type {
   SeatAssignment,
@@ -27,9 +32,16 @@ import type {
   FirmClaim,
   FirmCoordinator,
 } from '@cis/shared-types';
+import { writeAudit } from '@cis/audit';
 import { DomainError } from './errors';
+import { assertUsableInvitation, FirmInvitationError } from './firm-invitation-service';
 import { createLeadCoordinator, setCoordinatorPin } from './firm-team-service';
 import { assertCollectionOpen, startJourney } from './journey-service';
+import { queueNotice } from './email-content';
+import { firmSeatLink } from './notice-links';
+
+/** Outbox kind of the email to a newly assigned seat holder; ref_id is the seat. */
+export const SEAT_ASSIGNED_EMAIL_KIND = 'firm-seat-assigned';
 
 /**
  * Firm claim / portal / seats / outreach — UX-FRM-001.
@@ -131,12 +143,18 @@ export interface ClaimInput {
   role: string;
   privacyConsent: boolean;
   followUpConsent?: boolean;
+  /** The token from an invitation link, if the claimant arrived by one. Optional. */
+  inviteToken?: string | null;
 }
 
 /**
  * Claim a firm's space. Privacy consent gates the action; a mobile number is
  * required and length-validated; one firm, one space. The claimant becomes the
  * lead coordinator (Phase 3 UX-FRM-007 schema) and chooses a PIN.
+ *
+ * An invitation token is optional. When given, it must be open, unexpired and
+ * for this firm; the claim uses it up and records it (firm_claims.invitation_id).
+ * Everything is written in one transaction.
  */
 export async function claimSpace(
   pool: Pool,
@@ -156,28 +174,88 @@ export async function claimSpace(
     throw new FirmPortalError('Your PIN needs six digits', 'PIN_INVALID');
   }
 
+  const pin = input.pin.replace(/[^0-9]/g, '');
+  const inviteToken = input.inviteToken?.trim() || null;
+
   // One firm, one space — redirect without disclosing the first claimant.
-  const existing = await getFirmClaim(pool, input.organizationId);
-  if (existing) throw new AlreadyClaimedError();
+  // Checked up front for a fast answer, and again by the UNIQUE constraint.
+  // An invitation link is checked first: a used link says so plainly.
+  if (!inviteToken) {
+    const existing = await getFirmClaim(pool, input.organizationId);
+    if (existing) throw new AlreadyClaimedError();
+  }
 
-  const lead = await createLeadCoordinator(pool, {
-    organizationId: input.organizationId,
-    name: input.contactName.trim(),
-    email: input.contactEmail.trim(),
-    role: input.role,
-    phone: mobile,
-  });
-  await setCoordinatorPin(pool, lead.id, { newPin: input.pin.replace(/[^0-9]/g, '') });
+  // The coordinator, PIN, claim and (if any) invitation are written together,
+  // so a failure part-way leaves no half-made space behind.
+  try {
+    return await withTransaction(pool, async (client) => {
+      const c = client as unknown as Pool;
+      let invitationId: string | null = null;
+      let invitedEmail: string | null = null;
+      if (inviteToken) {
+        const inv = await getFirmInvitationByToken(c, inviteToken, { forUpdate: true });
+        assertUsableInvitation(inv);
+        if (inv.organizationId !== input.organizationId) {
+          throw new FirmInvitationError(
+            'This invitation is for a different firm. Open the link from your email again, or ask the CIS team for a new invitation.',
+            'WRONG_FIRM',
+          );
+        }
+        invitationId = inv.id;
+        invitedEmail = inv.email;
+        const existing = await getFirmClaim(c, input.organizationId);
+        if (existing) throw new AlreadyClaimedError();
+      }
 
-  const claim = await insertFirmClaim(pool, {
-    organizationId: input.organizationId,
-    claimingContactName: input.contactName.trim(),
-    claimingContactEmail: input.contactEmail.trim(),
-    leadCoordinatorId: lead.id,
-    privacyConsent: true,
-    followUpConsent: input.followUpConsent ?? false,
-  });
-  return { claim, leadCoordinator: lead };
+      const lead = await createLeadCoordinator(c, {
+        organizationId: input.organizationId,
+        name: input.contactName.trim(),
+        email: input.contactEmail.trim(),
+        role: input.role,
+        phone: mobile,
+      });
+      await setCoordinatorPin(c, lead.id, { newPin: pin });
+
+      const claim = await insertFirmClaim(c, {
+        organizationId: input.organizationId,
+        claimingContactName: input.contactName.trim(),
+        claimingContactEmail: input.contactEmail.trim(),
+        leadCoordinatorId: lead.id,
+        privacyConsent: true,
+        followUpConsent: input.followUpConsent ?? false,
+      });
+
+      if (invitationId) {
+        await acceptFirmInvitation(c, invitationId);
+        await setFirmClaimInvitation(c, claim.id, invitationId);
+        // The invitation is to the firm, so another address may claim with
+        // it — recorded for operations, never refused.
+        await writeAudit(c, {
+          actorId: null,
+          actionType: 'firm_invitation.accepted',
+          entityType: 'firm_invitation',
+          entityId: invitationId,
+          newValue: {
+            organizationId: input.organizationId,
+            claimId: claim.id,
+            claimedWithEmail: input.contactEmail.trim(),
+            invitedEmail,
+            differentAddress:
+              invitedEmail !== null &&
+              invitedEmail.toLowerCase() !== input.contactEmail.trim().toLowerCase(),
+          },
+        });
+      }
+      return { claim, leadCoordinator: lead };
+    });
+  } catch (err) {
+    // Someone claimed this firm between the check and the insert.
+    if ((err as { code?: string; constraint?: string }).code === '23505') {
+      const existing = await getFirmClaim(pool, input.organizationId);
+      if (existing) throw new AlreadyClaimedError();
+    }
+    throw err;
+  }
 }
 
 /** Change the per-firm follow-up consent. Gates nothing — the firm takes part
@@ -265,7 +343,21 @@ export async function getSeats(
   return ensureSeats(pool, editionId, organizationId);
 }
 
-/** Assign a seat. The same address may not hold two seats in one firm/edition. */
+/** Where the public site is, for the seat holder's email. Without it no email
+ *  is sent. */
+export interface SeatNotify {
+  /** The public site's address (PORTAL_URL). */
+  portalUrl: string;
+}
+
+/**
+ * Assign a seat. The same address may not hold two seats in one firm/edition.
+ *
+ * Re-saving the holder of a seat that is still only invited (same address)
+ * keeps their link, so a link already sent keeps working and no second email
+ * goes out. Any other assignment mints a fresh link and — with `notify` —
+ * emails it to the new holder. The email never carries a PIN.
+ */
 export async function assignSeat(
   pool: Pool,
   data: {
@@ -276,20 +368,30 @@ export async function assignSeat(
     assignedEmail: string;
     isSelf?: boolean;
   },
+  notify?: SeatNotify,
 ): Promise<SeatAssignment> {
   if (!data.assignedName.trim()) throw new FirmPortalError('A name is required', 'NAME_REQUIRED');
   if (!emailOk(data.assignedEmail)) {
     throw new FirmPortalError('A valid email address is required', 'EMAIL_REQUIRED');
   }
-  await ensureSeats(pool, data.editionId, data.organizationId);
+  const email = data.assignedEmail.trim();
+  const before = (await ensureSeats(pool, data.editionId, data.organizationId)).find(
+    (s) => s.seatCode === data.seatCode,
+  );
+  const sameHolder =
+    before !== undefined &&
+    before.state === 'invited' &&
+    (before.assignedEmail ?? '').trim().toLowerCase() === email.toLowerCase();
+  let seat: SeatAssignment;
   try {
-    return await dbAssignSeat(pool, {
+    seat = await dbAssignSeat(pool, {
       editionId: data.editionId,
       organizationId: data.organizationId,
       seatCode: data.seatCode,
       assignedName: data.assignedName.trim(),
-      assignedEmail: data.assignedEmail.trim(),
+      assignedEmail: email,
       ...(data.isSelf !== undefined ? { isSelf: data.isSelf } : {}),
+      ...(sameHolder ? { keepLinkToken: true } : {}),
     });
   } catch (err) {
     // The partial unique index on (edition, org, lower(email)) rejects a clash.
@@ -298,6 +400,37 @@ export async function assignSeat(
     }
     throw err;
   }
+  if (notify && !sameHolder && seat.assignedEmail) {
+    await queueSeatAssigned(pool, seat, notify);
+  }
+  return seat;
+}
+
+/** Tell a seat holder which survey is theirs and give them its personal link. */
+async function queueSeatAssigned(
+  pool: Pool,
+  seat: SeatAssignment,
+  notify: SeatNotify,
+): Promise<void> {
+  const firmName =
+    (await getOrganizationById(pool, seat.organizationId))?.displayName ?? 'Your firm';
+  const name = seat.assignedName ?? 'there';
+  await queueNotice(pool, {
+    kind: SEAT_ASSIGNED_EMAIL_KIND,
+    refId: seat.id,
+    to: seat.assignedEmail ?? '',
+    toName: seat.assignedName,
+    subject: `${firmName} has asked you to answer its ${seat.roleLabel} survey`,
+    heading: `Your ${seat.roleLabel} survey`,
+    paragraphs: [
+      `Dear ${name},`,
+      `${firmName} has asked you to answer its ${seat.roleLabel} survey for the CIS × Dragnet benchmark. It takes about fifteen minutes.`,
+      'Nobody at your firm sees your answers, including the coordinator who assigned this to you.',
+      'The link below is personal to you: please do not forward it. If you stop part-way, the same link picks up where you left off.',
+    ],
+    action: { label: 'Open your survey', url: firmSeatLink(notify.portalUrl, seat.linkToken) },
+    footer: 'If you were not expecting this, reply to this email and the CIS team will help.',
+  });
 }
 
 /**

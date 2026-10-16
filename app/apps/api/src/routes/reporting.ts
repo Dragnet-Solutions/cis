@@ -50,6 +50,7 @@ import {
 import type { ReportNarrative } from '@cis/db';
 import { foundryModelFromEnv } from '../ai/foundry-model';
 import { deliverQueuedEmails } from '../mail/mailer';
+import { firmPortalUrl } from '../public-url';
 import { renderReportPdf, type PdfSession } from '../pdf/report-pdf';
 
 /**
@@ -108,8 +109,7 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
   // (report-narrative-service.ts). Operator-only: the firm report is private to
   // its firm, so only study operations can open it here.
   // Where a released firm's coordinators sign in to read their report.
-  const portalUrl = () =>
-    `${new URL(process.env['PORTAL_URL'] || process.env['REPORT_RENDER_URL'] || 'http://localhost:5174').origin}/firm`;
+  const portalUrl = () => firmPortalUrl();
 
   const narrativeView = (n: ReportNarrative | null) =>
     n && {

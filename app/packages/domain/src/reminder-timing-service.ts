@@ -3,6 +3,7 @@ import {
   getConfig,
   setConfig,
   getEditionById,
+  getRespondentById,
   getInProgressResponses,
   listReminderSteps,
   recordReminderSend,
@@ -14,6 +15,12 @@ import {
 } from '@cis/db';
 import { isInvestorInstrument } from './funnel-service';
 import { DomainError } from './errors';
+import { assembleReminderEmail, ReminderContentError } from './reminder-content-service';
+import { queueNotice } from './email-content';
+import { stopRemindersLink, surveyResumeLink } from './notice-links';
+
+/** Outbox kind of a respondent reminder email; ref_id is the reminder_send row. */
+export const RESPONDENT_REMINDER_EMAIL_KIND = 'respondent-reminder';
 
 /**
  * UX-OPS-004 — Reminder timing and frequency. This surface owns WHEN a reminder
@@ -173,6 +180,7 @@ export async function scheduleDueReminders(
   pool: Pool,
   editionId: string,
   asOf: Date = new Date(),
+  opts: { portalUrl?: string } = {},
 ): Promise<ReminderSend[]> {
   const schedule = await getReminderSchedule(pool);
   const cap = await getReminderCap(pool);
@@ -192,17 +200,49 @@ export async function scheduleDueReminders(
       asOf,
     });
     if (!due) continue;
-    sent.push(
-      await recordReminderSend(pool, {
-        editionId,
-        responseId: r.responseId,
-        step: due.step,
-        scheduledFor: due.scheduledFor,
-        carriesStop: due.carriesStop,
-      }),
-    );
+    const send = await recordReminderSend(pool, {
+      editionId,
+      responseId: r.responseId,
+      step: due.step,
+      scheduledFor: due.scheduledFor,
+      carriesStop: due.carriesStop,
+    });
+    sent.push(send);
+    if (opts.portalUrl) await emailReminder(pool, send, opts.portalUrl);
   }
   return sent;
+}
+
+/**
+ * Email one recorded reminder to a respondent who chose email (or email and
+ * text): the managed reminder wording, a link back into their survey and —
+ * after their first reminder (DEC-012) — a link to stop reminders. A
+ * text-only respondent gets nothing here: there is no text-message service.
+ */
+async function emailReminder(pool: Pool, send: ReminderSend, portalUrl: string): Promise<void> {
+  const respondent = await getRespondentById(pool, send.responseId);
+  if (!respondent?.contactEmail || !respondent.recoveryToken) return;
+  if (respondent.contactChannel !== 'email' && respondent.contactChannel !== 'both') return;
+  let content: Awaited<ReturnType<typeof assembleReminderEmail>>;
+  try {
+    content = await assembleReminderEmail(pool, respondent.id, send.carriesStop);
+  } catch (err) {
+    if (err instanceof ReminderContentError) return; // no live wording: nothing to send
+    throw err;
+  }
+  await queueNotice(pool, {
+    kind: RESPONDENT_REMINDER_EMAIL_KIND,
+    refId: send.id,
+    to: respondent.contactEmail.trim(),
+    subject: content.subject,
+    paragraphs: [content.body],
+    action: { label: content.cta, url: surveyResumeLink(portalUrl, respondent.recoveryToken) },
+    ...(content.stopLinkText
+      ? {
+          footer: `${content.stopLinkText}: ${stopRemindersLink(portalUrl, respondent.recoveryToken)}`,
+        }
+      : {}),
+  });
 }
 
 // ─── Reachable / unreachable cohort (a real ceiling, stated as a number) ────────

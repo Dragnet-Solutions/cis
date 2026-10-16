@@ -371,8 +371,8 @@ function ContactSection(props: {
               {field('role', 'Role')}
             </div>
             <p className="hint">
-              Every detail is needed. The survey link and reminders go by email and by text, so the
-              mobile number is required too.
+              Every detail is needed. The survey link and reminders are emailed; the mobile number
+              is for texts, which are sent by hand for now.
             </p>
             <div className="two">
               {field('email', 'Email')}
@@ -506,7 +506,7 @@ function SurveySection(props: {
           input is needed — it stays a single submission.
         </p>
         <p className="chan">
-          Goes by email and text: {r.contact.email} · {r.contact.phone}
+          Emailed to {r.contact.email}. Mobile for texts: {r.contact.phone}
         </p>
         <div className="field">
           <label htmlFor="targetBy">Expected back by</label>
@@ -543,9 +543,7 @@ function SurveySection(props: {
           <dt>Sent to</dt>
           <dd>{r.contact.who}</dd>
           <dt>By</dt>
-          <dd>
-            {r.contact.email} and text to {r.contact.phone}
-          </dd>
+          <dd>Email to {r.contact.email}</dd>
           <dt>Expected by</dt>
           <dd>{fmtDate(r.targetBy)}</dd>
         </dl>
@@ -556,7 +554,7 @@ function SurveySection(props: {
             disabled={busy}
             onClick={() => void props.remind(false)}
           >
-            Send a reminder
+            Email a reminder
           </button>
           <button
             type="button"
@@ -564,7 +562,7 @@ function SurveySection(props: {
             disabled={busy}
             onClick={() => void props.remind(true)}
           >
-            Text only
+            Note a text reminder
           </button>
           <button
             type="button"
@@ -580,9 +578,9 @@ function SurveySection(props: {
           </button>
         </div>
         <p className="owner">
-          Reminders go by email and text. Text only is there for the case where the inbox has
-          clearly not been read. Anything said on a call goes in the history below. When they submit
-          through the link, this role is confirmed on its own.
+          A reminder is emailed with the survey link. There is no text-message service yet, so a
+          text reminder is sent by hand and noted here. Anything said on a call goes in the history
+          below. When they submit through the link, this role is confirmed on its own.
         </p>
       </>
     );

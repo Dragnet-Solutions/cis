@@ -14,12 +14,15 @@ import {
   resolveFirmNamesToOrgs,
   getBouncedRecipients,
 } from '@cis/domain';
+import { kickMailDispatcher } from '../mail/dispatcher';
+import { publicOrigin } from '../public-url';
 
 /**
- * Invitations routes — UX-OPS-002. Operator-authenticated. The sending provider
- * is not chosen here (a config decision, README open item), so send() uses the
- * default recording service; delivery/bounce/open/click state arrives later via
- * a provider callback (not part of this surface).
+ * Invitations routes — UX-OPS-002. Operator-authenticated. A send renders the
+ * template per recipient and queues it in the email outbox (kind
+ * 'invitation-batch'), which the mail dispatcher delivers through ZeptoMail;
+ * bounces/opens/clicks arrive later via the ZeptoMail webhook
+ * (mission-board.ts).
  */
 export const invitationsRoutes: FastifyPluginAsyncZod = async (app) => {
   const editionParam = z.object({ id: z.string().uuid() });
@@ -151,11 +154,14 @@ export const invitationsRoutes: FastifyPluginAsyncZod = async (app) => {
         audienceId: request.body.audienceId,
         ...(request.body.uploadRows ? { uploadRows: request.body.uploadRows } : {}),
         sentBy: request.user.sub,
+        portalUrl: publicOrigin(),
       });
+      kickMailDispatcher();
       return reply.status(201).send({
         batchId: result.batch.id,
         attempted: result.attempted,
         sent: result.sent,
+        notSent: result.notSent,
         skippedDuplicates: result.skippedDuplicates,
       });
     },
@@ -234,7 +240,9 @@ export const invitationsRoutes: FastifyPluginAsyncZod = async (app) => {
           ? { reissueTemplateId: request.body.reissueTemplateId }
           : {}),
         resolvedBy: request.user.sub,
+        portalUrl: publicOrigin(),
       });
+      kickMailDispatcher();
       return reply.send({ request: resolved });
     },
   );

@@ -8,7 +8,6 @@ import {
   listActiveCoordinators,
   listReviewedNarrativeIds,
   getLatestNationalReportForEdition,
-  queueEmail,
   type ReportNarrative,
   type ReportPublication,
 } from '@cis/db';
@@ -26,6 +25,7 @@ import {
   ReportPublicationError,
   type NarrativeModel,
 } from './report-narrative-service';
+import { queueNotice } from './email-content';
 
 /**
  * Report delivery: what leaves CIS, frozen as it left.
@@ -157,23 +157,23 @@ export async function queueReleaseNotices(
     const firm = org?.displayName ?? 'your firm';
     const label = edition?.label ?? '';
     for (const c of coordinators) {
-      await queueEmail(pool, {
+      await queueNotice(pool, {
         kind: 'firm-report-released',
         refId: report.id,
-        toAddress: c.email,
+        to: c.email,
+        toName: c.name,
         subject: `Your ${label} CIS-Dragnet firm report is ready`,
-        bodyText: [
+        heading: 'Your firm report is ready',
+        paragraphs: [
           `Dear ${c.name},`,
-          '',
-          `The private ${label} CIS-Dragnet Benchmark report for ${firm} has been released.`,
-          'It sets your firm’s results against the anonymised industry benchmark, with your own investors’ view of your service.',
-          '',
-          `Sign in to the firm portal to read it and download the PDF: ${portalUrl}`,
-          '',
-          'The report is private to your firm. It is never shared with other firms or any third party.',
-          '',
+          `The private ${label} CIS-Dragnet Benchmark report for ${firm} has been released.\n` +
+            'It sets your firm’s results against the anonymised industry benchmark, with your own investors’ view of your service.',
+          'Sign in to the firm portal to read it and download the PDF:',
+        ],
+        action: { label: 'Open the firm portal', url: portalUrl },
+        footer:
+          'The report is private to your firm. It is never shared with other firms or any third party.\n\n' +
           'CIS × Dragnet Benchmark Study',
-        ].join('\n'),
       });
       queued += 1;
     }

@@ -25,6 +25,19 @@ import { requirePermission, type RbacContext } from '@cis/auth';
 import { DomainError } from './errors';
 import { FAMILY_META, instrumentCodeForFamily } from './institution-family-service';
 import { assertCollectionOpen } from './journey-service';
+import { queueNotice } from './email-content';
+import { surveyResumeLink } from './notice-links';
+
+/** Outbox kinds of the emails to a regulator contact; ref_id is the survey's
+ *  respondent (one per issued link). */
+export const REGULATOR_SURVEY_LINK_EMAIL_KIND = 'regulator-survey-link';
+export const REGULATOR_REMINDER_EMAIL_KIND = 'regulator-survey-reminder';
+
+/** The contact's survey link from the stored `/journeys/resume/<token>` path. */
+function contactSurveyUrl(surveyLink: string | null, portalUrl?: string): string | null {
+  const token = surveyLink?.match(/\/journeys\/resume\/([^/?#]+)/)?.[1];
+  return token ? surveyResumeLink(portalUrl, decodeURIComponent(token)) : null;
+}
 
 /**
  * UX-OPS-007 — Regulator Engagement. One page per (institution, family) role,
@@ -365,7 +378,7 @@ export async function issueSurveyLink(
   editionId: string,
   institutionId: string,
   familyCode: InstrumentFamilyCode,
-  input: { targetBy: string },
+  input: { targetBy: string; portalUrl?: string },
 ): Promise<RegulatorEngagementView> {
   const row = await requireRow(pool, editionId, institutionId, familyCode);
   if (row.status === 'declined') {
@@ -402,12 +415,28 @@ export async function issueSurveyLink(
     surveyLink,
     respondentId: respondent.id,
   });
+  const url = surveyResumeLink(input.portalUrl, token);
+  await queueNotice(pool, {
+    kind: REGULATOR_SURVEY_LINK_EMAIL_KIND,
+    refId: respondent.id,
+    to: row.contact.email.trim(),
+    toName: row.contact.who,
+    subject: `${row.institutionName}: your CIS × Dragnet benchmark survey`,
+    heading: `A survey for ${row.institutionName}`,
+    paragraphs: [
+      `Dear ${row.contact.who},`,
+      `Thank you for agreeing to take part. The CIS × Dragnet benchmark asks ${row.institutionName} about its ${FAMILY_META[familyCode].relationship} with licensed stockbroking firms.`,
+      `We would be grateful to have your answers by ${fmtHuman(targetDate)}. Your answers save as you go, so you can stop and come back to the same link at any time.`,
+      'This link is personal to you — please do not forward it. If someone else should answer instead, reply to this email and we will send them their own link.',
+    ],
+    action: { label: 'Open the survey', url },
+  });
   await addRegulatorHistory(
     pool,
     editionId,
     institutionId,
     familyCode,
-    `Survey link issued to ${row.contact.who} by email and text. Expected back by ${fmtHuman(targetDate)}.`,
+    `Survey link emailed to ${row.contact.who} (${row.contact.email.trim()}). Expected back by ${fmtHuman(targetDate)}.`,
   );
   return getRegulator(pool, editionId, institutionId, familyCode);
 }
@@ -425,15 +454,38 @@ export async function sendReminder(
   editionId: string,
   institutionId: string,
   familyCode: InstrumentFamilyCode,
+  opts: { portalUrl?: string } = {},
 ): Promise<RegulatorEngagementView> {
   const row = await requireRow(pool, editionId, institutionId, familyCode);
   requireActiveLink(row);
+  const url = contactSurveyUrl(row.surveyLink, opts.portalUrl);
+  if (!row.contact || !url || !row.respondentId) {
+    throw new RegulatorEngagementError('No active survey link to remind against', 'NO_ACTIVE_LINK');
+  }
+  const by = row.targetBy
+    ? ` We would be grateful to have your answers by ${fmtHuman(new Date(`${dbDateStr(row.targetBy)}T00:00:00.000Z`))}.`
+    : '';
+  await queueNotice(pool, {
+    kind: REGULATOR_REMINDER_EMAIL_KIND,
+    refId: row.respondentId,
+    to: row.contact.email.trim(),
+    toName: row.contact.who,
+    subject: `Reminder: ${row.institutionName}'s CIS × Dragnet benchmark survey`,
+    heading: 'Your survey is still open',
+    paragraphs: [
+      `Dear ${row.contact.who},`,
+      `A gentle reminder that the CIS × Dragnet benchmark survey for ${row.institutionName} is still open.${by}`,
+      'Anything you have already answered is saved; the link below takes you back to where you stopped.',
+    ],
+    action: { label: 'Continue the survey', url },
+  });
+  // Only the email is sent: there is no text-message service yet.
   await addRegulatorHistory(
     pool,
     editionId,
     institutionId,
     familyCode,
-    `Reminder sent by email and text to ${row.contact?.who ?? 'the contact'}.`,
+    `Reminder emailed to ${row.contact.who} (${row.contact.email.trim()}).`,
   );
   return getRegulator(pool, editionId, institutionId, familyCode);
 }
@@ -451,7 +503,9 @@ export async function sendTextReminder(
     editionId,
     institutionId,
     familyCode,
-    `Reminder sent by text to ${row.contact?.phone ?? 'the contact'}.`,
+    // No text-message service is connected: this records the reminder for
+    // whoever sends the text by hand.
+    `Text reminder to ${row.contact?.phone ?? 'the contact'} noted (texts are sent by hand; nothing was sent automatically).`,
   );
   return getRegulator(pool, editionId, institutionId, familyCode);
 }

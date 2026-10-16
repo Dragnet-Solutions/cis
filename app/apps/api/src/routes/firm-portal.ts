@@ -16,6 +16,8 @@ import {
   getOutreachVolumes,
   updateInvestorCategoriesServed,
 } from '@cis/domain';
+import { kickMailDispatcher } from '../mail/dispatcher';
+import { publicOrigin } from '../public-url';
 
 const INVESTOR_CATEGORY = z.enum([
   'retail',
@@ -64,6 +66,8 @@ export const firmPortalRoutes: FastifyPluginAsyncZod = async (app) => {
           role: z.string().min(1),
           privacyConsent: z.boolean(),
           followUpConsent: z.boolean().optional(),
+          // From an invitation link (?invite=). Optional: a firm can claim without one.
+          inviteToken: z.string().min(1).max(100).optional(),
         }),
       },
     },
@@ -79,6 +83,7 @@ export const firmPortalRoutes: FastifyPluginAsyncZod = async (app) => {
         ...(request.body.followUpConsent !== undefined
           ? { followUpConsent: request.body.followUpConsent }
           : {}),
+        ...(request.body.inviteToken ? { inviteToken: request.body.inviteToken } : {}),
       });
       return reply.status(201).send({
         claim: { id: claim.id, organizationId: claim.organizationId },
@@ -193,14 +198,19 @@ export const firmPortalRoutes: FastifyPluginAsyncZod = async (app) => {
       },
     },
     async (request, reply) => {
-      const seat = await assignSeat(getPool(), {
-        editionId: request.params.editionId,
-        organizationId: request.params.orgId,
-        seatCode: request.params.seatCode,
-        assignedName: request.body.assignedName,
-        assignedEmail: request.body.assignedEmail,
-        ...(request.body.isSelf !== undefined ? { isSelf: request.body.isSelf } : {}),
-      });
+      const seat = await assignSeat(
+        getPool(),
+        {
+          editionId: request.params.editionId,
+          organizationId: request.params.orgId,
+          seatCode: request.params.seatCode,
+          assignedName: request.body.assignedName,
+          assignedEmail: request.body.assignedEmail,
+          ...(request.body.isSelf !== undefined ? { isSelf: request.body.isSelf } : {}),
+        },
+        { portalUrl: publicOrigin() },
+      );
+      kickMailDispatcher();
       return reply.send({ seat });
     },
   );

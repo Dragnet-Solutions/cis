@@ -21,6 +21,8 @@ import {
   acceptsResponses,
   getPublicConsentContent,
 } from '@cis/domain';
+import { kickMailDispatcher } from '../mail/dispatcher';
+import { publicOrigin } from '../public-url';
 import { getRespondentByRecoveryToken, setReportDelivery } from '@cis/db';
 import type { AnswerValue } from '@cis/survey';
 
@@ -119,12 +121,18 @@ export const journeyRoutes: FastifyPluginAsyncZod = async (app) => {
       },
     },
     async (request, reply) => {
-      const r = await registerContact(getPool(), request.params.respondentId, {
-        consentAccepted: request.body.consentAccepted,
-        channel: request.body.channel,
-        email: request.body.email ?? null,
-        phone: request.body.phone ?? null,
-      });
+      const r = await registerContact(
+        getPool(),
+        request.params.respondentId,
+        {
+          consentAccepted: request.body.consentAccepted,
+          channel: request.body.channel,
+          email: request.body.email ?? null,
+          phone: request.body.phone ?? null,
+        },
+        { portalUrl: publicOrigin() },
+      );
+      kickMailDispatcher();
       return reply.send({ respondentId: r.id, recoveryToken: r.recoveryToken });
     },
   );

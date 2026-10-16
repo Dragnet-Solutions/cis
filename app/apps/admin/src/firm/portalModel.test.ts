@@ -15,6 +15,8 @@ import {
   PROGRESS_PIP_COUNT,
   pipsOnFor,
   replacementCost,
+  readPortalEntry,
+  invitationProblemTitle,
   type PortalView,
 } from './portalModel';
 
@@ -64,5 +66,24 @@ describe('seat replacement cost mirrors the domain rule', () => {
   it('invited/empty → no cost', () => {
     expect(replacementCost('invited', 'Sam').requiresConfirm).toBe(false);
     expect(replacementCost('empty', null).warning).toBeNull();
+  });
+});
+
+describe('portal entry links', () => {
+  it('reads an invitation token, and keeps ?claim= working', () => {
+    expect(readPortalEntry('?invite=abc-123')).toEqual({
+      claimOrgId: null,
+      inviteToken: 'abc-123',
+    });
+    expect(readPortalEntry('?claim=org-1')).toEqual({ claimOrgId: 'org-1', inviteToken: null });
+    expect(readPortalEntry('')).toEqual({ claimOrgId: null, inviteToken: null });
+    expect(readPortalEntry('?invite=%20')).toEqual({ claimOrgId: null, inviteToken: null });
+  });
+  it('names each unusable-invitation case plainly', () => {
+    expect(invitationProblemTitle('EXPIRED')).toMatch(/expired/);
+    expect(invitationProblemTitle('REVOKED')).toMatch(/withdrawn/);
+    expect(invitationProblemTitle('USED')).toMatch(/already been used/);
+    expect(invitationProblemTitle('NOT_FOUND')).toMatch(/recognise/);
+    expect(invitationProblemTitle(null)).toMatch(/could not open/);
   });
 });

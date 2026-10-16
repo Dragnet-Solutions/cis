@@ -18,6 +18,11 @@ import { hashPassword } from '@cis/auth';
 import { writeAudit } from '@cis/audit';
 import type { PersonAccess, AccessRightKey, AccessOrg } from '@cis/shared-types';
 import { DomainError } from './errors';
+import { queueNotice } from './email-content';
+import { siteOrigin } from './notice-links';
+
+/** Outbox kind of the "you have been given access" email; ref_id is the user. */
+export const OPERATOR_ACCESS_EMAIL_KIND = 'operator-access-granted';
 
 /**
  * UX-OPS-006 — People & Access. Manages WHO holds the seven access rights,
@@ -187,6 +192,7 @@ async function applyRights(
 export async function addPerson(
   pool: Pool,
   input: RightsInput & { actorId: string },
+  opts: { portalUrl?: string } = {},
 ): Promise<PersonAccess> {
   const rights = await validate(pool, input, null);
   const placeholder = await hashPassword(
@@ -208,6 +214,25 @@ export async function addPerson(
       entityId: user.id,
       newValue: { email: user.email, organization: input.organization, rights },
     });
+    // Tell them they have access — no credentials: the account cannot sign in
+    // until an administrator sets its password.
+    if (opts.portalUrl) {
+      await queueNotice(c, {
+        kind: OPERATOR_ACCESS_EMAIL_KIND,
+        refId: user.id,
+        to: user.email,
+        toName: user.displayName,
+        subject: 'You have been given access to the CIS × Dragnet study operations site',
+        heading: 'You have been given access',
+        paragraphs: [
+          `Dear ${user.displayName},`,
+          'You have been given access to the CIS × Dragnet benchmark study operations site.',
+          'You cannot sign in yet: an administrator will set your password and tell you separately. You will then sign in with this email address at the link below.',
+        ],
+        action: { label: 'Go to the sign-in page', url: `${siteOrigin(opts.portalUrl)}/` },
+        footer: 'If you were not expecting this, reply to this email.',
+      });
+    }
     const perms = await getUserPermissions(c, user.id);
     return toPerson(
       user,

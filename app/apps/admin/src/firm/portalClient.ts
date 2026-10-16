@@ -85,6 +85,27 @@ export interface PortalMe {
   currentEdition: { id: string; status: 'draft' | 'open' | 'locked' | 'archived' } | null;
 }
 
+/** An open invitation link: which firm it is for, and who it was sent to. */
+export interface InvitationDetails {
+  organizationId: string;
+  firmName: string;
+  email: string;
+  contactName: string | null;
+  expiresAt: string;
+}
+
+/** An invitation link that cannot be used — `code` is NOT_FOUND, EXPIRED, REVOKED or USED. */
+export class InvitationLinkError extends ApiError {
+  constructor(
+    statusCode: number,
+    public readonly code: string | null,
+    message: string,
+  ) {
+    super(statusCode, message);
+    this.name = 'InvitationLinkError';
+  }
+}
+
 export interface FirmDirectoryEntry {
   id: string;
   displayName: string;
@@ -164,11 +185,34 @@ export const firmPublic = {
     role: string;
     privacyConsent: boolean;
     followUpConsent?: boolean;
+    /** From an invitation link; optional. */
+    inviteToken?: string;
   }) =>
     request<{
       claim: { id: string; organizationId: string };
       leadCoordinator: { id: string; accessCode: string };
     }>('/firm/claim', { method: 'POST', body: input }),
+
+  /** What an invitation link (?invite=) is for. Throws InvitationLinkError if it cannot be used. */
+  lookupInvitation: async (token: string): Promise<InvitationDetails> => {
+    const res = await fetch(`${BASE}/firm/invitations/${encodeURIComponent(token)}`);
+    const text = await res.text();
+    let data: unknown = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      data = null;
+    }
+    if (!res.ok) {
+      const body = (data ?? {}) as { code?: unknown; message?: unknown };
+      throw new InvitationLinkError(
+        res.status,
+        typeof body.code === 'string' ? body.code : null,
+        typeof body.message === 'string' ? body.message : `Request failed (${res.status})`,
+      );
+    }
+    return (data as { invitation: InvitationDetails }).invitation;
+  },
 
   requestInvitation: (input: {
     firmName: string;

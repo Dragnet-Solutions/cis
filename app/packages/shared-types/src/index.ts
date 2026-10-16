@@ -696,8 +696,9 @@ export interface MessageTemplate {
   updatedAt: Date;
 }
 
-/** delivery_state is the always-available core report. */
-export type MessageDeliveryState = 'sent' | 'delivered' | 'bounced';
+/** delivery_state is the always-available core report. `not_sent`: the
+ *  platform held no email address for the recipient, so nothing was sent. */
+export type MessageDeliveryState = 'sent' | 'delivered' | 'bounced' | 'not_sent';
 
 export interface MessageBatch {
   id: string;
@@ -751,6 +752,12 @@ export interface BatchReport {
   /** Diagnostic split kept distinct: channel/spam vs. message content. */
   deliveredNeverOpened: number;
   openedNotClicked: number;
+  /** Recipients with no email address on file — recorded, nothing sent. */
+  notSent: number;
+  /** The email outbox's view of this batch's messages: handed to the mail
+   *  service (`sent`), still waiting (`queued`), refused (`failed`), or only
+   *  recorded because no mail service is configured (`logged`). */
+  outbox: { queued: number; sent: number; logged: number; failed: number };
 }
 
 /** One of the four file-validation problems (no fifth register-match check). */

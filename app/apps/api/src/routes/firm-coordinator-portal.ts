@@ -18,6 +18,8 @@ import {
   ensureOutreachLinks,
   listOutreachLinksForFirm,
 } from '@cis/domain';
+import { kickMailDispatcher } from '../mail/dispatcher';
+import { publicOrigin } from '../public-url';
 
 const INVESTOR_CATEGORY = z.enum([
   'retail',
@@ -101,13 +103,18 @@ export const firmCoordinatorPortalRoutes: FastifyPluginAsyncZod = async (app) =>
       },
     },
     async (request, reply) => {
-      const c = await addCoordinator(getPool(), {
-        organizationId: request.coordinatorSession.organizationId,
-        name: request.body.name,
-        email: request.body.email,
-        role: request.body.role ?? null,
-        phone: request.body.phone ?? null,
-      });
+      const c = await addCoordinator(
+        getPool(),
+        {
+          organizationId: request.coordinatorSession.organizationId,
+          name: request.body.name,
+          email: request.body.email,
+          role: request.body.role ?? null,
+          phone: request.body.phone ?? null,
+        },
+        { portalUrl: publicOrigin() },
+      );
+      kickMailDispatcher();
       return reply.status(201).send({ coordinator: c });
     },
   );
@@ -225,14 +232,19 @@ export const firmCoordinatorPortalRoutes: FastifyPluginAsyncZod = async (app) =>
           .status(409)
           .send({ error: 'Conflict', message: 'No edition is open', statusCode: 409 });
       }
-      const seat = await assignSeat(getPool(), {
-        editionId,
-        organizationId: request.coordinatorSession.organizationId,
-        seatCode: request.params.seatCode,
-        assignedName: request.body.assignedName,
-        assignedEmail: request.body.assignedEmail,
-        ...(request.body.isSelf !== undefined ? { isSelf: request.body.isSelf } : {}),
-      });
+      const seat = await assignSeat(
+        getPool(),
+        {
+          editionId,
+          organizationId: request.coordinatorSession.organizationId,
+          seatCode: request.params.seatCode,
+          assignedName: request.body.assignedName,
+          assignedEmail: request.body.assignedEmail,
+          ...(request.body.isSelf !== undefined ? { isSelf: request.body.isSelf } : {}),
+        },
+        { portalUrl: publicOrigin() },
+      );
+      kickMailDispatcher();
       return reply.send({ seat });
     },
   );

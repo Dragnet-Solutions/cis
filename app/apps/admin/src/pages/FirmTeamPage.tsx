@@ -1,6 +1,21 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { AdminClient } from '../api/client';
-import { ApiError, type Coordinator, type FirmImportResult, type FirmSummary } from '../api/types';
+import {
+  ApiError,
+  type Coordinator,
+  type FirmImportResult,
+  type FirmInvitation,
+  type FirmSummary,
+} from '../api/types';
+import {
+  INVITATION_FILTERS,
+  INVITE_STATE,
+  deliveryLabel,
+  filterInvitations,
+  summarizeInvitations,
+  summaryLine,
+  type InvitationFilter,
+} from './firmInvitationsModel';
 
 type InvestorCategory = 'retail' | 'local_institutional' | 'foreign_institutional' | 'not_sure';
 
@@ -127,6 +142,417 @@ function FirmDigestCard({
           <p>{digest.attention.label}</p>
         </>
       )}
+    </fieldset>
+  );
+}
+
+const shortDate = (iso: string) =>
+  new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+
+/**
+ * Invite the selected firm: email its contact a personal link that opens the
+ * firm portal's set-up view for this firm. The link expires (14 days unless
+ * configured otherwise) and can be resent or revoked. Sending to the same
+ * address again resends the open invitation rather than adding another.
+ * Needs the "Write to firms, regulators and participants" right.
+ */
+function FirmInvitationsCard({
+  client,
+  orgId,
+  editionId,
+  firmName,
+  hasLead,
+  version,
+  onChanged,
+}: {
+  client: AdminClient;
+  orgId: string;
+  editionId: string | null;
+  firmName: string;
+  /** The firm already has a lead coordinator (so, in effect, a space). */
+  hasLead: boolean;
+  /** Bumped when an invitation changes elsewhere on the page; reloads the list. */
+  version: number;
+  /** Called after this card invites, resends or revokes. */
+  onChanged: () => void;
+}): JSX.Element {
+  const [invitations, setInvitations] = useState<FirmInvitation[]>([]);
+  const [claimedOnServer, setClaimed] = useState(false);
+  const claimed = claimedOnServer || hasLead;
+  const [email, setEmail] = useState('');
+  const [contactName, setContactName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const r = await client.listFirmInvitations(orgId);
+      setInvitations(r.invitations);
+      setClaimed(r.claimed);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not load invitations');
+    }
+  }, [client, orgId]);
+
+  useEffect(() => {
+    setError(null);
+    setNotice(null);
+    setEmail('');
+    setContactName('');
+    void load();
+  }, [load]);
+
+  // Another part of the page changed an invitation: refresh the list only.
+  useEffect(() => {
+    if (version > 0) void load();
+  }, [version, load]);
+
+  async function act(fn: () => Promise<string>): Promise<void> {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      setNotice(await fn());
+      await load();
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'That action could not be completed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function send(): Promise<void> {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setError('Enter a valid email address.');
+      return;
+    }
+    await act(async () => {
+      const r = await client.inviteFirm(orgId, {
+        email: email.trim(),
+        ...(contactName.trim() ? { contactName: contactName.trim() } : {}),
+        ...(editionId ? { editionId } : {}),
+      });
+      setEmail('');
+      setContactName('');
+      return r.resent
+        ? `There was already an open invitation for ${r.invitation.email}, so it was sent again with a new expiry date.`
+        : `Invitation sent to ${r.invitation.email}. It expires on ${shortDate(r.invitation.expiresAt)}.`;
+    });
+  }
+
+  return (
+    <fieldset className="contact-fields">
+      <legend>Invite this firm</legend>
+      {claimed ? (
+        <p className="qstate ok">
+          Already claimed. {firmName} has set up its space; its coordinators sign in to the firm
+          portal, so it cannot be invited again.
+        </p>
+      ) : (
+        <>
+          <p className="lede" style={{ fontSize: 13 }}>
+            Email the firm a personal link to set up its space. Whoever opens it becomes the firm’s
+            lead coordinator and chooses a six-digit PIN. The link expires after 14 days; you can
+            resend or revoke it below.
+          </p>
+          <div className="field">
+            <label htmlFor="ftp-inv-email">Email address</label>
+            <input
+              id="ftp-inv-email"
+              type="email"
+              value={email}
+              placeholder="name@firm.com"
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="ftp-inv-name">Contact name (optional)</label>
+            <input
+              id="ftp-inv-name"
+              value={contactName}
+              onChange={(e) => setContactName(e.target.value)}
+            />
+          </div>
+          <div className="actions">
+            <button
+              type="button"
+              className="btn"
+              disabled={busy || !email.trim()}
+              onClick={() => void send()}
+            >
+              {busy ? 'Sending…' : 'Send invitation'}
+            </button>
+          </div>
+        </>
+      )}
+      {notice && <p className="qstate ok">{notice}</p>}
+      {error && <div className="err">{error}</div>}
+
+      {invitations.length > 0 && (
+        <table className="ftbl" style={{ marginTop: 8 }}>
+          <thead>
+            <tr>
+              <th scope="col">Email</th>
+              <th scope="col">Sent</th>
+              <th scope="col">Expires</th>
+              <th scope="col">Status</th>
+              <th scope="col">Email delivery</th>
+              <th scope="col">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {invitations.map((inv) => {
+              const state = INVITE_STATE[inv.state];
+              const delivery = deliveryLabel(inv.delivery);
+              const open = inv.state === 'pending' || inv.state === 'expired';
+              return (
+                <tr key={inv.id}>
+                  <td>
+                    {inv.email}
+                    {inv.contactName && (
+                      <>
+                        <br />
+                        <small>{inv.contactName}</small>
+                      </>
+                    )}
+                  </td>
+                  <td>
+                    {shortDate(inv.lastSentAt)}
+                    {inv.sendCount > 1 && <small> ({inv.sendCount} sends)</small>}
+                  </td>
+                  <td>{inv.state === 'accepted' ? '—' : shortDate(inv.expiresAt)}</td>
+                  <td>
+                    <span className={state.cls}>{state.label}</span>
+                  </td>
+                  <td>
+                    {delivery.cls ? (
+                      <span className={delivery.cls}>{delivery.text}</span>
+                    ) : (
+                      delivery.text
+                    )}
+                  </td>
+                  <td className="actions">
+                    {open && !claimed && (
+                      <button
+                        type="button"
+                        className="btn-2"
+                        disabled={busy}
+                        onClick={() =>
+                          void act(async () => {
+                            const r = await client.resendFirmInvitation(inv.id);
+                            return `Sent again to ${r.invitation.email}. It now expires on ${shortDate(r.invitation.expiresAt)}.`;
+                          })
+                        }
+                      >
+                        Resend
+                      </button>
+                    )}
+                    {open && (
+                      <button
+                        type="button"
+                        className="btn-2"
+                        disabled={busy}
+                        onClick={() => {
+                          if (
+                            !window.confirm(
+                              `Revoke the invitation to ${inv.email}? Its link stops working straight away.`,
+                            )
+                          )
+                            return;
+                          void act(async () => {
+                            await client.revokeFirmInvitation(inv.id);
+                            return `Invitation to ${inv.email} revoked. Its link no longer works.`;
+                          });
+                        }}
+                      >
+                        Revoke
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </fieldset>
+  );
+}
+
+/**
+ * Every firm invitation in this edition at a glance: who was invited, when it
+ * expires, whether it was accepted and whether the email got out — with the
+ * same Resend/Revoke actions as the per-firm box.
+ */
+function EditionInvitationsCard({
+  client,
+  editionId,
+  version,
+  onChanged,
+}: {
+  client: AdminClient;
+  editionId: string;
+  /** Bumped when the per-firm box changes an invitation; reloads the list. */
+  version: number;
+  /** Called after a resend or revoke here. */
+  onChanged: () => void;
+}): JSX.Element {
+  const [invitations, setInvitations] = useState<FirmInvitation[]>([]);
+  const [filter, setFilter] = useState<InvitationFilter>('all');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setInvitations((await client.listEditionFirmInvitations(editionId)).invitations);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not load invitations');
+    }
+  }, [client, editionId]);
+
+  useEffect(() => {
+    void load();
+  }, [load, version]);
+
+  async function act(fn: () => Promise<string>): Promise<void> {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      setNotice(await fn());
+      await load();
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'That action could not be completed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const shown = filterInvitations(invitations, filter);
+
+  return (
+    <fieldset className="contact-fields">
+      <legend>Firm invitations this edition</legend>
+      <p className="lede" style={{ fontSize: 13 }}>
+        {summaryLine(summarizeInvitations(invitations))}
+      </p>
+      <div className="field">
+        <label htmlFor="ftp-inv-filter">Show</label>
+        <select
+          id="ftp-inv-filter"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value as InvitationFilter)}
+        >
+          {INVITATION_FILTERS.map((f) => (
+            <option key={f.value} value={f.value}>
+              {f.label}
+            </option>
+          ))}
+        </select>
+      </div>
+      {notice && <p className="qstate ok">{notice}</p>}
+      {error && <div className="err">{error}</div>}
+      <table className="ftbl" style={{ marginTop: 8 }}>
+        <thead>
+          <tr>
+            <th scope="col">Firm</th>
+            <th scope="col">Email</th>
+            <th scope="col">Sent</th>
+            <th scope="col">Expires</th>
+            <th scope="col">Status</th>
+            <th scope="col">Email delivery</th>
+            <th scope="col">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {shown.length === 0 ? (
+            <tr>
+              <td colSpan={7}>
+                {invitations.length === 0
+                  ? 'No firm has been invited in this edition yet.'
+                  : 'No invitations match this filter.'}
+              </td>
+            </tr>
+          ) : (
+            shown.map((inv) => {
+              const state = INVITE_STATE[inv.state];
+              const delivery = deliveryLabel(inv.delivery);
+              const open = inv.state === 'pending' || inv.state === 'expired';
+              return (
+                <tr key={inv.id}>
+                  <td>{inv.firmName}</td>
+                  <td>
+                    {inv.email}
+                    {inv.contactName && (
+                      <>
+                        <br />
+                        <small>{inv.contactName}</small>
+                      </>
+                    )}
+                  </td>
+                  <td>
+                    {shortDate(inv.lastSentAt)}
+                    {inv.sendCount > 1 && <small> ({inv.sendCount} sends)</small>}
+                  </td>
+                  <td>{inv.state === 'accepted' ? '—' : shortDate(inv.expiresAt)}</td>
+                  <td>
+                    <span className={state.cls}>{state.label}</span>
+                  </td>
+                  <td>
+                    {delivery.cls ? (
+                      <span className={delivery.cls}>{delivery.text}</span>
+                    ) : (
+                      delivery.text
+                    )}
+                  </td>
+                  <td className="actions">
+                    {open && (
+                      <button
+                        type="button"
+                        className="btn-2"
+                        disabled={busy}
+                        onClick={() =>
+                          void act(async () => {
+                            const r = await client.resendFirmInvitation(inv.id);
+                            return `Sent again to ${r.invitation.email} (${inv.firmName}). It now expires on ${shortDate(r.invitation.expiresAt)}.`;
+                          })
+                        }
+                      >
+                        Resend
+                      </button>
+                    )}
+                    {open && (
+                      <button
+                        type="button"
+                        className="btn-2"
+                        disabled={busy}
+                        onClick={() => {
+                          if (
+                            !window.confirm(
+                              `Revoke the invitation to ${inv.email} (${inv.firmName})? Its link stops working straight away.`,
+                            )
+                          )
+                            return;
+                          void act(async () => {
+                            await client.revokeFirmInvitation(inv.id);
+                            return `Invitation to ${inv.email} revoked. Its link no longer works.`;
+                          });
+                        }}
+                      >
+                        Revoke
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })
+          )}
+        </tbody>
+      </table>
     </fieldset>
   );
 }
@@ -320,6 +746,9 @@ export function FirmTeamPage({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [form, setForm] = useState({ name: '', email: '', role: '' });
+  // Keep the per-firm invitation box and the edition-wide list in step.
+  const [firmInvitesVersion, setFirmInvitesVersion] = useState(0);
+  const [editionInvitesVersion, setEditionInvitesVersion] = useState(0);
 
   const loadFirms = useCallback(async () => {
     try {
@@ -528,6 +957,25 @@ export function FirmTeamPage({
         )}
       </fieldset>
 
+      {orgId && (
+        <FirmInvitationsCard
+          client={client}
+          orgId={orgId}
+          editionId={editionId}
+          firmName={firms.find((f) => f.id === orgId)?.displayName ?? 'This firm'}
+          hasLead={!!lead}
+          version={firmInvitesVersion}
+          onChanged={() => setEditionInvitesVersion((v) => v + 1)}
+        />
+      )}
+      {editionId && (
+        <EditionInvitationsCard
+          client={client}
+          editionId={editionId}
+          version={editionInvitesVersion}
+          onChanged={() => setFirmInvitesVersion((v) => v + 1)}
+        />
+      )}
       {orgId && <InvestorCategoriesCard client={client} orgId={orgId} />}
       <FirmDirectoryImport client={client} onImported={loadFirms} editionId={editionId} />
       {orgId && editionId && <FirmDigestCard client={client} orgId={orgId} editionId={editionId} />}

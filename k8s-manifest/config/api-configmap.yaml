@@ -39,8 +39,14 @@ data:
   PORTAL_URL: "https://dev-cis.idhub.ng"
 
   # ── Mail ─────────────────────────────────────────────────────────────────
-  # SMTP_URL comes from the ExternalSecret. Without it, outbox mail is only logged.
-  MAIL_FROM: "CIS × Dragnet <no-reply@example.com>" # TODO: real sender
+  # Notices are sent through ZeptoMail's HTTP API; ZEPTOMAIL_API_TOKEN comes from
+  # the ExternalSecret. Without it, SMTP_URL (also from the ExternalSecret) is the
+  # fallback; with neither, outbox mail is only recorded (logged), not sent.
+  # Use the regional host the ZeptoMail account lives on (api.zeptomail.eu, .in, …).
+  ZEPTOMAIL_API_URL: "https://api.zeptomail.com/v1.1/email"
+  # The sender's domain must be verified in the ZeptoMail Mail Agent.
+  MAIL_FROM: "CIS × Dragnet <noreply@idhub.ng>"
+  MAIL_REPLY_TO: "noreply@idhub.ng"
 
   # ── AI report narrative (Azure AI Foundry) ───────────────────────────────
   # AZURE_AI_API_KEY comes from the ExternalSecret.

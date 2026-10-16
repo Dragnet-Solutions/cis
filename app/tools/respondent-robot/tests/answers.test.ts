@@ -241,3 +241,115 @@ describe('optionGoodness', () => {
     expect(optionGoodness('Onboarding')).toBeNull();
   });
 });
+
+describe('ROBOT_NO_NEUTRAL=1', () => {
+  const NON_ANSWERS = [
+    "Don't know",
+    'Don’t know',
+    'Not applicable',
+    'Unable to assess',
+    'Insufficient direct experience to assess',
+    'None observed / insufficient direct experience to assess',
+  ];
+  // Every kind that offers options, each with non-answers mixed in — ordered
+  // labels (the tilted path) and unordered ones (the random fallback).
+  const WITH_NEUTRAL: SurveyItem[] = [
+    {
+      ...base,
+      id: 'N-single-ordered',
+      kind: 'single',
+      text: 'Ordered',
+      options: ['Poor', 'Average', 'Excellent', "Don't know", 'Not applicable'],
+    },
+    {
+      ...base,
+      id: 'N-single-unordered',
+      kind: 'single',
+      text: 'Unordered',
+      options: ['Onboarding', 'Settlement', 'Unable to assess', 'Don’t know'],
+    },
+    {
+      ...base,
+      id: 'N-select',
+      kind: 'select',
+      text: 'Select',
+      options: ['A', 'B', 'C', 'Insufficient direct experience to assess'],
+      selectUpToN: 3,
+    },
+    {
+      ...base,
+      id: 'N-select-greatest',
+      kind: 'select',
+      text: 'Select then greatest',
+      options: ['A', 'B', 'None observed / insufficient direct experience to assess'],
+      selectUpToN: 3,
+      selectThenGreatest: true,
+    },
+    {
+      ...base,
+      id: 'N-multi',
+      kind: 'multi',
+      text: 'Multi',
+      options: ['A', 'B', 'C', 'Not applicable', "Don't know"],
+    },
+    {
+      ...base,
+      id: 'N-rank',
+      kind: 'rank',
+      text: 'Rank',
+      options: ['A', 'B', 'C', 'Not applicable'],
+      rankExactlyN: 3,
+    },
+    {
+      ...base,
+      id: 'N-grid',
+      kind: 'grid',
+      text: 'Grid',
+      gridRows: ['r1', 'r2'],
+      gridDimensions: {
+        Quality: ['Very weak', 'Adequate', 'Very strong', 'Unable to assess'],
+        Trend: ['Worse', 'Same', 'Better', 'Not applicable'],
+      },
+    },
+  ];
+  const PERSONAS: Persona[] = [
+    { kind: 'normal' },
+    { kind: 'speeder' },
+    { kind: 'straightliner', position: 0 },
+    { kind: 'straightliner', position: 1 },
+  ];
+
+  it('never gives a non-answer from any question kind or persona', () => {
+    process.env['ROBOT_NO_NEUTRAL'] = '1';
+    try {
+      const seen: string[] = [];
+      for (const item of WITH_NEUTRAL) {
+        for (const persona of PERSONAS) {
+          for (const goodness of [null, 0, 0.5, 1]) {
+            for (let i = 0; i < 200; i++) {
+              const rng = new Rng(`${item.id}:${persona.kind}:${goodness}:${i}`);
+              seen.push(JSON.stringify(generateAnswer(item, { rng, persona, goodness })));
+            }
+          }
+        }
+      }
+      for (const s of seen) for (const n of NON_ANSWERS) expect(s).not.toContain(n);
+    } finally {
+      delete process.env['ROBOT_NO_NEUTRAL'];
+    }
+  });
+
+  it('still gives non-answers sometimes without the flag', () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 2000; i++) {
+      const rng = new Rng(`off:${i}`);
+      const a = generateAnswer(WITH_NEUTRAL[0]!, {
+        rng,
+        persona: { kind: 'normal' },
+        goodness: 0.5,
+      });
+      seen.add(String((a as { a: unknown }).a));
+    }
+    expect([...seen].some((v) => NON_ANSWERS.includes(v))).toBe(true);
+  });
+});

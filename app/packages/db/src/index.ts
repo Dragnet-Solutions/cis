@@ -33,6 +33,7 @@ export * from './queries/scoring-queries';
 export * from './queries/managed-content';
 export * from './queries/dragnet';
 export * from './queries/firm-digest';
+export * from './queries/firm-invitations';
 export {
   loadScoringConfig,
   getMethodologyMeta,

@@ -26,6 +26,7 @@ type Screen =
     }
   | { name: 'complete'; respondentId: string; code: string; retail: boolean }
   | { name: 'already-submitted' }
+  | { name: 'reminders-stopped'; token: string }
   | { name: 'error'; kind: ErrorStateKind }
   | { name: 'help-about' }
   | { name: 'previous-editions' };
@@ -93,7 +94,24 @@ export function RespondentApp(): JSX.Element {
         const token = new URLSearchParams(window.location.search).get('resume');
         // A firm's outreach link: ?ref=<token>.
         const outreachRef = new URLSearchParams(window.location.search).get('ref');
-        if (firmSeatToken) {
+        // "Stop these reminders" from a reminder email: ?stop=<recovery token>.
+        const stopToken = new URLSearchParams(window.location.search).get('stop');
+        if (stopToken) {
+          try {
+            await journeyApi.stopReminders(stopToken);
+            if (cancelled) return;
+            setScreen({ name: 'reminders-stopped', token: stopToken });
+          } catch (err) {
+            if (cancelled) return;
+            setScreen({
+              name: 'error',
+              kind:
+                err instanceof ApiError && err.statusCode === 404
+                  ? 'no_unfinished_survey'
+                  : 'service_unavailable',
+            });
+          }
+        } else if (firmSeatToken) {
           setScreen({ name: 'firm-seat-entry', linkToken: firmSeatToken });
         } else if (outreachRef && !ctx.collectionOpen) {
           // A firm's link followed after collection ended: the landing page
@@ -328,6 +346,19 @@ export function RespondentApp(): JSX.Element {
 
         {screen.name === 'error' && (
           <ErrorState kind={screen.kind} onBack={() => setScreen({ name: 'landing' })} />
+        )}
+
+        {screen.name === 'reminders-stopped' && (
+          <div className="card">
+            <h2>We will not remind you again.</h2>
+            <p>
+              Stopping reminders does not withdraw you from the study and does not delete anything.
+              You can still return and complete your survey whenever you like.
+            </p>
+            <a className="btn" href={`/survey?resume=${encodeURIComponent(screen.token)}`}>
+              Return to my survey
+            </a>
+          </div>
         )}
 
         {screen.name === 'already-submitted' && (

@@ -15,6 +15,7 @@ import { firmSeatEntryRoutes } from './routes/firm-seat-entry';
 import { outreachEntryRoutes } from './routes/outreach-entry';
 import { governedContentRoutes } from './routes/governed-content';
 import { firmPortalRoutes } from './routes/firm-portal';
+import { firmInvitationRoutes } from './routes/firm-invitations';
 import { reportingRoutes } from './routes/reporting';
 import { scoringRoutes } from './routes/scoring';
 import { peopleRoutes } from './routes/people';
@@ -88,6 +89,7 @@ export async function buildServer() {
   await app.register(outreachEntryRoutes);
   await app.register(governedContentRoutes);
   await app.register(firmPortalRoutes);
+  await app.register(firmInvitationRoutes);
   await app.register(reportingRoutes);
   await app.register(scoringRoutes);
   await app.register(peopleRoutes);
@@ -169,6 +171,7 @@ function resolveStatusCode(error: Error & { statusCode?: number }): number {
     case 'InvestorCategoriesError':
     case 'FirmDigestError':
     case 'ReportPublicationError':
+    case 'FirmInvitationError':
     case 'DomainError':
       return 409;
     default:

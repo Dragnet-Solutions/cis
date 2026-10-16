@@ -16,6 +16,7 @@ import {
   getConfig,
   getEditionStatus,
   withTransaction,
+  listEmailsFor,
 } from '@cis/db';
 import {
   buildJourneySequence,
@@ -31,6 +32,14 @@ import { ConsentRequiredError, ResponseScopeError } from './response-service';
 import { emitCompletedForRespondent } from './funnel-service';
 import { ParticipationClosedError } from './shared-error-service';
 import { isRegulatorInstrument } from './institution-family-service';
+import { queueNotice } from './email-content';
+import { surveyResumeLink } from './notice-links';
+
+/** Outbox kind of the save-and-resume email; ref_id is the respondent. */
+export const SURVEY_RESUME_EMAIL_KIND = 'survey-resume-link';
+/** At most this many resume emails per respondent — the contact route is
+ *  public, so it must not become a way to mail an address repeatedly. */
+const MAX_RESUME_EMAILS = 5;
 
 /** A required contact-collecting surface was progressed without accepted consent. */
 export { ConsentRequiredError };
@@ -170,6 +179,7 @@ export async function registerContact(
   pool: Pool,
   respondentId: string,
   input: ContactInput,
+  opts: { portalUrl?: string } = {},
 ): Promise<Respondent> {
   const respondent = await getRespondentById(pool, respondentId);
   if (!respondent) throw new DomainError('Respondent not found', 'RESPONDENT_NOT_FOUND');
@@ -192,13 +202,39 @@ export async function registerContact(
   }
 
   await updateRespondentJourney(pool, respondentId, { consentAccepted: true });
-  return setRespondentContact(pool, respondentId, {
+  const updated = await setRespondentContact(pool, respondentId, {
     channel: input.channel,
     email: input.channel === 'text' || input.channel === 'none' ? null : (input.email ?? null),
     phone: input.channel === 'email' || input.channel === 'none' ? null : (input.phone ?? null),
     recoveryToken: randomUUID(),
     reportDelivery: input.channel,
   });
+
+  // Save and resume: email the respondent their own link back in (when the
+  // caller supplied the site's address and an email was given).
+  if (opts.portalUrl && updated.contactEmail && updated.recoveryToken) {
+    const earlier = await listEmailsFor(pool, SURVEY_RESUME_EMAIL_KIND, [respondentId]);
+    if (earlier.length < MAX_RESUME_EMAILS) {
+      await queueNotice(pool, {
+        kind: SURVEY_RESUME_EMAIL_KIND,
+        refId: respondentId,
+        to: updated.contactEmail.trim(),
+        subject: 'Your link back to the CIS × Dragnet survey',
+        heading: 'Your link back to the survey',
+        paragraphs: [
+          'Thank you for taking part in the CIS × Dragnet benchmark survey.',
+          'Your answers save as you go. If you stop part-way, use the link below to come back to where you left off — on this device or another.',
+          'The link is personal to you: anyone who has it can see and change your answers, so please do not forward it. Any earlier link we sent you no longer works.',
+        ],
+        action: {
+          label: 'Return to my survey',
+          url: surveyResumeLink(opts.portalUrl, updated.recoveryToken),
+        },
+        footer: 'You are receiving this because you gave this address in the survey.',
+      });
+    }
+  }
+  return updated;
 }
 
 /**
