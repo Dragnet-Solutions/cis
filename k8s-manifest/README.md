@@ -43,10 +43,12 @@ ArgoCD's `Application` (see `../argocd`) applies this whole tree with `directory
 - **Placeholders to replace**:
   - `dev-cis.example.com` in `admin/ingress.yaml` and `PORTAL_URL` in `config/api-configmap.yaml`
   - `DB_HOST` in `config/api-configmap.yaml` — the real Flexible Server FQDN
-  - `MAIL_FROM` in `config/api-configmap.yaml`
+  - `MAIL_FROM` in `config/api-configmap.yaml` — an address on a domain verified in ZeptoMail
+    (and `ZEPTOMAIL_API_URL` if the account is not on the default region)
 - **Key Vault secrets** (see `eso/external-secret.yaml`): `cis-dev-DATABASE-URL` (include
   `?sslmode=require`), `cis-dev-JWT-SECRET`, `cis-dev-REDIS-PASSWORD`, `cis-dev-AZURE-AI-API-KEY`, `cis-dev-SMTP-URL`,
-  `cis-dev-ZEPTOMAIL-API-TOKEN`, and `cis-argocd-deploy-key` for ArgoCD's repo access.
+  `cis-dev-ZEPTOMAIL-API-TOKEN` (the Mail Agent's Send Mail token — the API sends notices
+  through ZeptoMail when it is set, otherwise falls back to `SMTP_URL`), and `cis-argocd-deploy-key` for ArgoCD's repo access.
 - **Postgres**: the first migration runs `CREATE EXTENSION pgcrypto` — allow-list `PGCRYPTO` in the
   Flexible Server's `azure.extensions` parameter first.
 - **CI/CD**: `.github/workflows/api-CI.yaml` and `admin-CI.yaml` build/scan/sign/push each image on
