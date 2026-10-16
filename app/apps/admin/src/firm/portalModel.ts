@@ -132,3 +132,33 @@ export const SEGMENT_ORDER: Segment[] = [
   'local_institutional',
   'foreign_institutional',
 ];
+
+/**
+ * How the portal was opened. `?claim=<organizationId>` opens the set-up view
+ * for that firm; `?invite=<token>` opens it from an emailed invitation, which
+ * the portal looks up first. Both may be absent (sign in / claim by choice).
+ */
+export function readPortalEntry(search: string): {
+  claimOrgId: string | null;
+  inviteToken: string | null;
+} {
+  const params = new URLSearchParams(search);
+  const clean = (v: string | null) => (v && v.trim() ? v.trim() : null);
+  return { claimOrgId: clean(params.get('claim')), inviteToken: clean(params.get('invite')) };
+}
+
+/** A friendly heading for an invitation link that cannot be used, by its code. */
+export function invitationProblemTitle(code: string | null): string {
+  switch (code) {
+    case 'EXPIRED':
+      return 'This invitation has expired.';
+    case 'REVOKED':
+      return 'This invitation was withdrawn.';
+    case 'USED':
+      return 'This invitation has already been used.';
+    case 'NOT_FOUND':
+      return 'We do not recognise this invitation link.';
+    default:
+      return 'We could not open this invitation.';
+  }
+}

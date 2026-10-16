@@ -9,7 +9,8 @@
  *   - investor contribution:  Phase 5's firm_id-attributable counts, by segment
  *   - what needs attention:   Phase 4/9's existing firm audience states
  *
- * Delivery reuses Phase 9's SendingService — no second sending mechanism.
+ * Delivery reuses Phase 9's SendingService — no second sending mechanism —
+ * which queues the digest in the email outbox for ZeptoMail.
  * Frequency and channel are governed config (the artefact is explicit that
  * these are implementation configuration, not a design decision).
  */
@@ -28,7 +29,9 @@ import {
   getFirmAudienceState,
   ZeptomailSendingService,
   type SendingService,
+  type SendOutcome,
 } from './invitations-service';
+import { firmPortalLink } from './notice-links';
 import { DomainError } from './errors';
 
 export class FirmDigestError extends DomainError {
@@ -120,21 +123,40 @@ export async function assembleFirmDigest(
 
 export interface FirmDigestSendResult {
   digest: FirmDigest;
-  deliveryState: 'sent' | 'bounced';
+  /** `sent`: queued for delivery; `not_sent`: the lead has no usable address. */
+  deliveryState: SendOutcome;
   recipientEmail: string;
 }
 
+/** Outbox kind of a firm digest email; its ref_id is the firm (organization). */
+export const FIRM_DIGEST_EMAIL_KIND = 'firm-digest';
+
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/** The digest as email paragraphs — the same counts the portal shows. */
+export function digestParagraphs(digest: FirmDigest, leadName: string | null): string[] {
+  const c = digest.investorContribution;
+  return [
+    leadName?.trim() ? `Dear ${leadName.trim()},` : 'Hello,',
+    `Here is where ${digest.firmName} stands in the CIS × Dragnet benchmark.`,
+    `Firm surveys: ${digest.seatCompletion.complete} of ${digest.seatCompletion.total} complete.`,
+    `Investors who answered through your firm's links: ${c.total} — ${plural(c.retail, 'retail investor')}, ${plural(c.localInstitutional, 'Nigerian institution')}, ${plural(c.foreignInstitutional, 'institution')} abroad.`,
+    `What needs attention: ${digest.attention.label}`,
+    'Sign in to the firm portal with your email address and PIN to see the detail.',
+  ];
+}
+
 /**
- * Assemble and push a digest to the firm's lead coordinator, via their
- * already-validated contact channel (Phase 4's required, length-validated
- * mobile number, or email). Delivery goes through the caller-supplied
- * SendingService — this function never performs its own I/O.
+ * Assemble and push a digest to the firm's lead coordinator by email. Delivery
+ * goes through the SendingService (by default queued in the email outbox,
+ * kind 'firm-digest', for ZeptoMail).
  */
 export async function sendFirmDigest(
   pool: Pool,
   editionId: string,
   organizationId: string,
   sendingService?: SendingService,
+  opts: { portalUrl?: string } = {},
 ): Promise<FirmDigestSendResult> {
   const digest = await assembleFirmDigest(pool, editionId, organizationId);
   const lead = await getActiveLead(pool, organizationId);
@@ -144,14 +166,22 @@ export async function sendFirmDigest(
       'NO_COORDINATOR',
     );
   }
-  // Zeptomail is the resolved provider (Phase 10); it degrades to
-  // recording-only when no token is configured, matching Phase 9's sendBatch.
   const service = sendingService ?? new ZeptomailSendingService();
-  const result = await service.send({
-    recipientEmail: lead.email,
-    firmName: digest.firmName,
-    organizationId,
-    code: null,
-  });
+  const result = await service.send(
+    {
+      recipientEmail: lead.email,
+      recipientName: lead.name,
+      firmName: digest.firmName,
+      organizationId,
+      code: null,
+      kind: FIRM_DIGEST_EMAIL_KIND,
+      refId: organizationId,
+      subject: `${digest.firmName}: your benchmark update`,
+      heading: `${digest.firmName}: your benchmark update`,
+      paragraphs: digestParagraphs(digest, lead.name),
+      action: { label: 'Open the firm portal', url: firmPortalLink(opts.portalUrl) },
+    },
+    pool,
+  );
   return { digest, deliveryState: result.deliveryState, recipientEmail: lead.email };
 }

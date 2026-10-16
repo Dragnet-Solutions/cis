@@ -9,6 +9,8 @@ import {
   removePerson,
   CRITICAL_ACTIONS,
 } from '@cis/domain';
+import { kickMailDispatcher } from '../mail/dispatcher';
+import { publicOrigin } from '../public-url';
 
 /**
  * People & Access routes — UX-OPS-006. Manages who holds the seven access
@@ -45,13 +47,18 @@ export const peopleRoutes: FastifyPluginAsyncZod = async (app) => {
     '/people',
     { preHandler: [app.authenticate], schema: { body: personBody } },
     async (request, reply) => {
-      const person = await addPerson(getPool(), {
-        name: request.body.name,
-        email: request.body.email,
-        organization: request.body.organization,
-        rights: request.body.rights,
-        actorId: request.user.sub,
-      });
+      const person = await addPerson(
+        getPool(),
+        {
+          name: request.body.name,
+          email: request.body.email,
+          organization: request.body.organization,
+          rights: request.body.rights,
+          actorId: request.user.sub,
+        },
+        { portalUrl: publicOrigin() },
+      );
+      kickMailDispatcher();
       return reply.status(201).send({ person });
     },
   );

@@ -6,6 +6,8 @@ import {
   SEAT_STATE_LABEL,
   SEGMENTS,
   SEGMENT_ORDER,
+  readPortalEntry,
+  invitationProblemTitle,
   type PortalView,
   type SeatState,
   type Segment,
@@ -21,6 +23,8 @@ import {
   type OutreachLink,
   type FirmDirectoryEntry,
   type FirmResults,
+  type InvitationDetails,
+  InvitationLinkError,
 } from './portalClient';
 import { FirmReport } from '../reports/FirmReport';
 import { portalFirmSource } from '../reports/source';
@@ -56,12 +60,16 @@ const ROLE_TO_SEAT: Record<string, SeatCode> = {
 
 export function FirmPortal(): JSX.Element {
   const { session, signIn, signOut } = usePortalSession();
-  const [claimOrgId] = useState<string | null>(() =>
-    new URLSearchParams(window.location.search).get('claim'),
-  );
+  const [entry] = useState(() => readPortalEntry(window.location.search));
 
   if (!session) {
-    return <ClaimOrSignIn claimOrgId={claimOrgId} onSignedIn={signIn} />;
+    return (
+      <ClaimOrSignIn
+        claimOrgId={entry.claimOrgId}
+        inviteToken={entry.inviteToken}
+        onSignedIn={signIn}
+      />
+    );
   }
   return <Portal session={session} onSignOut={signOut} />;
 }
@@ -70,12 +78,21 @@ export function FirmPortal(): JSX.Element {
 
 function ClaimOrSignIn({
   claimOrgId,
+  inviteToken,
   onSignedIn,
 }: {
   claimOrgId: string | null;
+  /** From an emailed invitation link (?invite=); looked up before the claim view opens. */
+  inviteToken: string | null;
   onSignedIn: (session: PortalSession) => void;
 }): JSX.Element {
-  const [view, setView] = useState<PortalView>(claimOrgId ? 'claim' : 'email');
+  const [view, setView] = useState<PortalView>(claimOrgId || inviteToken ? 'claim' : 'email');
+  const [invite, setInvite] = useState<InvitationDetails | null>(null);
+  const [inviteLoading, setInviteLoading] = useState(!!inviteToken);
+  const [inviteProblem, setInviteProblem] = useState<{
+    code: string | null;
+    message: string;
+  } | null>(null);
   const [email, setEmail] = useState('');
   const [firmName, setFirmName] = useState('');
   const [firms, setFirms] = useState<FirmDirectoryEntry[]>([]);
@@ -85,12 +102,33 @@ function ClaimOrSignIn({
   useEffect(() => {
     let cancelled = false;
     void (async () => {
+      let linkedOrgId = claimOrgId;
+      if (inviteToken) {
+        try {
+          const found = await firmPublic.lookupInvitation(inviteToken);
+          if (cancelled) return;
+          setInvite(found);
+          linkedOrgId = found.organizationId;
+        } catch (e) {
+          if (cancelled) return;
+          if (e instanceof InvitationLinkError && e.statusCode < 500) {
+            setInviteProblem({ code: e.code, message: e.message });
+          } else {
+            setInviteProblem({
+              code: null,
+              message: 'Please try the link again in a few minutes.',
+            });
+          }
+        } finally {
+          if (!cancelled) setInviteLoading(false);
+        }
+      }
       try {
         const list = await firmPublic.directory();
         if (cancelled) return;
         setFirms(list);
-        if (claimOrgId) {
-          const match = list.find((f) => f.id === claimOrgId);
+        if (linkedOrgId) {
+          const match = list.find((f) => f.id === linkedOrgId);
           setFirmName(match?.displayName ?? '');
         }
       } catch {
@@ -100,7 +138,7 @@ function ClaimOrSignIn({
     return () => {
       cancelled = true;
     };
-  }, [claimOrgId]);
+  }, [claimOrgId, inviteToken]);
 
   const go = (v: PortalView) => {
     setView(v);
@@ -124,44 +162,99 @@ function ClaimOrSignIn({
       </header>
 
       <main>
-        {view === 'email' && (
-          <EmailView
-            initialNote={alreadyClaimedNote}
-            onNext={(v, a) => {
-              setEmail(a);
-              setAlreadyClaimedNote(null);
-              go(v);
-            }}
-          />
-        )}
-        {view === 'pin' && (
-          <PinView email={email} onSignedIn={onSignedIn} onBack={() => go('email')} />
-        )}
-        {view === 'unclaimed' && (
-          <UnknownView onRequest={() => go('nocode')} onBack={() => go('email')} />
-        )}
-        {view === 'claim' && (
-          <SetupView
-            firm={firmName}
-            organizationId={claimOrgId}
-            firms={firms}
-            onClaimed={onSignedIn}
-            onAlreadyClaimed={(message) => {
-              setAlreadyClaimedNote(message);
+        {inviteLoading ? (
+          <p className="lede">Opening your invitation…</p>
+        ) : inviteProblem ? (
+          <InviteProblemView
+            code={inviteProblem.code}
+            message={inviteProblem.message}
+            onSignIn={() => {
+              setInviteProblem(null);
               go('email');
             }}
+            onRequest={() => {
+              setInviteProblem(null);
+              go('nocode');
+            }}
           />
+        ) : (
+          <>
+            {view === 'email' && (
+              <EmailView
+                initialNote={alreadyClaimedNote}
+                onNext={(v, a) => {
+                  setEmail(a);
+                  setAlreadyClaimedNote(null);
+                  go(v);
+                }}
+              />
+            )}
+            {view === 'pin' && (
+              <PinView email={email} onSignedIn={onSignedIn} onBack={() => go('email')} />
+            )}
+            {view === 'unclaimed' && (
+              <UnknownView onRequest={() => go('nocode')} onBack={() => go('email')} />
+            )}
+            {view === 'claim' && (
+              <SetupView
+                firm={firmName}
+                organizationId={invite?.organizationId ?? claimOrgId}
+                invite={invite && inviteToken ? { token: inviteToken, ...invite } : null}
+                firms={firms}
+                onClaimed={onSignedIn}
+                onAlreadyClaimed={(message) => {
+                  setAlreadyClaimedNote(message);
+                  go('email');
+                }}
+              />
+            )}
+            {view === 'nocode' && (
+              <RequestView
+                firms={firms.map((f) => f.displayName)}
+                onSent={() => go('requested')}
+                onBack={() => go('email')}
+              />
+            )}
+            {view === 'requested' && <RequestedView />}
+          </>
         )}
-        {view === 'nocode' && (
-          <RequestView
-            firms={firms.map((f) => f.displayName)}
-            onSent={() => go('requested')}
-            onBack={() => go('email')}
-          />
-        )}
-        {view === 'requested' && <RequestedView />}
       </main>
     </div>
+  );
+}
+
+/** An invitation link that cannot be used: say why, and what to do instead. */
+function InviteProblemView({
+  code,
+  message,
+  onSignIn,
+  onRequest,
+}: {
+  code: string | null;
+  message: string;
+  onSignIn: () => void;
+  onRequest: () => void;
+}): JSX.Element {
+  return (
+    <>
+      <h1 tabIndex={-1}>{invitationProblemTitle(code)}</h1>
+      <p className="lede">{message}</p>
+      <div className="note">
+        <p>
+          {code === 'USED'
+            ? 'If your firm’s space is already set up, sign in with your email address and PIN. Otherwise, ask the CIS team for a new invitation.'
+            : 'Ask the CIS team for a new invitation — you can request one here, and they will send a fresh link.'}
+        </p>
+      </div>
+      <div className="actions">
+        <button type="button" className="btn" onClick={code === 'USED' ? onSignIn : onRequest}>
+          {code === 'USED' ? 'Sign in' : 'Request a new invitation'}
+        </button>
+        <button type="button" className="btn-2" onClick={code === 'USED' ? onRequest : onSignIn}>
+          {code === 'USED' ? 'Request a new invitation' : 'Sign in instead'}
+        </button>
+      </div>
+    </>
   );
 }
 
@@ -323,12 +416,15 @@ function UnknownView({
 function SetupView({
   firm,
   organizationId,
+  invite,
   firms,
   onClaimed,
   onAlreadyClaimed,
 }: {
   firm: string;
   organizationId: string | null;
+  /** The invitation the claimant arrived by: locks the firm, prefills their details. */
+  invite: (InvitationDetails & { token: string }) | null;
   firms: FirmDirectoryEntry[];
   onClaimed: (session: PortalSession) => void;
   onAlreadyClaimed: (message: string) => void;
@@ -355,12 +451,12 @@ function SetupView({
   const chosenName = firms.find((f) => f.id === chosenOrgId)?.displayName ?? firm;
   const [privacy, setPrivacy] = useState(false);
   const [followUp, setFollowUp] = useState(false);
-  const [name, setName] = useState('');
+  const [name, setName] = useState(invite?.contactName ?? '');
   const [mobile, setMobile] = useState('');
   const [role, setRole] = useState('');
   const [pin, setPin] = useState('');
   const [pin2, setPin2] = useState('');
-  const [contactEmail, setContactEmail] = useState('');
+  const [contactEmail, setContactEmail] = useState(invite?.email ?? '');
   const [showPriv, setShowPriv] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -408,6 +504,7 @@ function SetupView({
         role,
         privacyConsent: privacy,
         followUpConsent: followUp,
+        ...(invite && chosenOrgId === invite.organizationId ? { inviteToken: invite.token } : {}),
       });
       const { token, coordinator } = await portalAuth.login(contactEmail.trim(), pin);
       const seatCode = ROLE_TO_SEAT[role];
@@ -453,17 +550,21 @@ function SetupView({
         {firmLocked && (
           <p className="hint" id="setupFirmHint">
             From your invitation link.{' '}
-            <button
-              type="button"
-              className="textlink"
-              onClick={() => {
-                setLinkReleased(true);
-                setChosenOrgId(null);
-                setFirmQuery('');
-              }}
-            >
-              Not your firm?
-            </button>
+            {invite ? (
+              'Not your firm? Ask the CIS team for the right invitation.'
+            ) : (
+              <button
+                type="button"
+                className="textlink"
+                onClick={() => {
+                  setLinkReleased(true);
+                  setChosenOrgId(null);
+                  setFirmQuery('');
+                }}
+              >
+                Not your firm?
+              </button>
+            )}
           </p>
         )}
         {linkNotFound && (
@@ -1363,7 +1464,7 @@ function SeatRow({
           </div>
           {seat.state === 'invited' && (
             <p className="hint">
-              Send them this link:{' '}
+              We emailed them this link. You can also send it yourself:{' '}
               <code>{`${window.location.origin}/survey?firmSeat=${seat.linkToken}`}</code>
             </p>
           )}

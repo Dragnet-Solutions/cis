@@ -13,6 +13,8 @@ import {
   reopenDeclined,
   recordHistory,
 } from '@cis/domain';
+import { kickMailDispatcher } from '../mail/dispatcher';
+import { publicOrigin } from '../public-url';
 import { loadRbacContext } from '@cis/auth';
 
 /**
@@ -104,8 +106,9 @@ export const regulatorRoutes: FastifyPluginAsyncZod = async (app) => {
         request.params.id,
         request.params.institutionId,
         request.params.familyCode,
-        { targetBy: request.body.targetBy },
+        { targetBy: request.body.targetBy, portalUrl: publicOrigin() },
       );
+      kickMailDispatcher();
       return reply.send({ regulator });
     },
   );
@@ -119,7 +122,9 @@ export const regulatorRoutes: FastifyPluginAsyncZod = async (app) => {
         request.params.id,
         request.params.institutionId,
         request.params.familyCode,
+        { portalUrl: publicOrigin() },
       );
+      kickMailDispatcher();
       return reply.send({ regulator });
     },
   );

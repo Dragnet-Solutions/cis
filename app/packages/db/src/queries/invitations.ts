@@ -317,7 +317,8 @@ export async function orgsSentTemplate(
     `SELECT DISTINCT r.organization_id
        FROM message_recipients r
        JOIN message_batches b ON b.id = r.batch_id
-      WHERE r.edition_id = $1 AND b.template_id = $2 AND r.organization_id IS NOT NULL`,
+      WHERE r.edition_id = $1 AND b.template_id = $2 AND r.organization_id IS NOT NULL
+        AND r.delivery_state <> 'not_sent'`,
     [editionId, templateId],
   );
   return new Set(res.rows.map((x) => x.organization_id));
@@ -329,7 +330,7 @@ export async function orgIdsInvitedThisEdition(pool: Pool, editionId: string): P
   const res = await query<{ organization_id: string }>(
     pool,
     `SELECT DISTINCT organization_id FROM message_recipients
-      WHERE edition_id = $1 AND organization_id IS NOT NULL`,
+      WHERE edition_id = $1 AND organization_id IS NOT NULL AND delivery_state <> 'not_sent'`,
     [editionId],
   );
   return res.rows.map((r) => r.organization_id);
@@ -350,6 +351,7 @@ export async function batchDeliveryAggregate(
   clicksReported: boolean;
   deliveredNeverOpened: number;
   openedNotClicked: number;
+  notSent: number;
 }> {
   const res = await query<{
     firms: string;
@@ -361,10 +363,12 @@ export async function batchDeliveryAggregate(
     clicks_reported: boolean;
     delivered_never_opened: string;
     opened_not_clicked: string;
+    not_sent: string;
   }>(
     pool,
     `SELECT
-       COUNT(*)::text AS firms,
+       COUNT(*) FILTER (WHERE delivery_state <> 'not_sent')::text AS firms,
+       COUNT(*) FILTER (WHERE delivery_state = 'not_sent')::text AS not_sent,
        COUNT(*) FILTER (WHERE delivery_state = 'delivered')::text AS delivered,
        COUNT(*) FILTER (WHERE delivery_state = 'bounced')::text AS bounced,
        COUNT(*) FILTER (WHERE opened_at IS NOT NULL)::text AS opened,
@@ -388,7 +392,30 @@ export async function batchDeliveryAggregate(
     clicksReported: !!r?.clicks_reported,
     deliveredNeverOpened: num(r?.delivered_never_opened),
     openedNotClicked: num(r?.opened_not_clicked),
+    notSent: num(r?.not_sent),
   };
+}
+
+/** How a batch's outbox emails (kind `kind`, one per recipient) stand. */
+export async function batchOutboxCounts(
+  pool: Pool,
+  batchId: string,
+  kind: string,
+): Promise<{ queued: number; sent: number; logged: number; failed: number }> {
+  const res = await query<{ status: string; n: string }>(
+    pool,
+    `SELECT e.status, COUNT(*)::text AS n
+       FROM email_outbox e
+       JOIN message_recipients r ON r.id = e.ref_id
+      WHERE e.kind = $2 AND r.batch_id = $1
+      GROUP BY e.status`,
+    [batchId, kind],
+  );
+  const out = { queued: 0, sent: 0, logged: 0, failed: 0 };
+  for (const r of res.rows) {
+    if (r.status in out) out[r.status as keyof typeof out] = parseInt(r.n, 10);
+  }
+  return out;
 }
 
 // ─── invitation_requests ─────────────────────────────────────────────────────
@@ -508,6 +535,68 @@ export async function resolveInvitationRequestRow(
   return mapRequest(row);
 }
 
+// ─── Firm contact addresses (who an invitation batch writes to) ──────────────
+
+export interface FirmContactAddress {
+  organizationId: string;
+  email: string;
+  name: string | null;
+  /** Where the address came from: an active coordinator (the firm has a
+   *  space) or the firm's open invitation (it has not claimed one yet). */
+  source: 'coordinator' | 'invitation';
+  /** The open invitation's token (source 'invitation', unexpired only). */
+  invitationToken: string | null;
+}
+
+/**
+ * The address a firm-audience batch writes to, per firm: the active lead
+ * coordinator, else another active coordinator (earliest added), else the
+ * most recent pending firm invitation. Firms with none are absent.
+ */
+export async function resolveFirmContactAddresses(
+  pool: Pool,
+  organizationIds: string[],
+): Promise<Map<string, FirmContactAddress>> {
+  if (organizationIds.length === 0) return new Map();
+  const res = await query<{
+    organization_id: string;
+    email: string;
+    name: string | null;
+    source: 'coordinator' | 'invitation';
+    token: string | null;
+  }>(
+    pool,
+    `SELECT DISTINCT ON (organization_id) organization_id, email, name, source, token
+       FROM (
+         SELECT organization_id, email, name, 'coordinator' AS source, NULL::text AS token,
+                CASE WHEN is_lead THEN 0 ELSE 1 END AS rank,
+                EXTRACT(EPOCH FROM created_at) AS ord
+           FROM firm_coordinators
+          WHERE organization_id = ANY($1::uuid[]) AND revoked_at IS NULL
+         UNION ALL
+         SELECT organization_id, email, contact_name, 'invitation',
+                CASE WHEN expires_at > NOW() THEN token::text END,
+                2, -EXTRACT(EPOCH FROM created_at)
+           FROM firm_invitations
+          WHERE organization_id = ANY($1::uuid[]) AND status = 'pending'
+       ) c
+      ORDER BY organization_id, rank, ord`,
+    [organizationIds],
+  );
+  return new Map(
+    res.rows.map((r) => [
+      r.organization_id,
+      {
+        organizationId: r.organization_id,
+        email: r.email,
+        name: r.name,
+        source: r.source,
+        invitationToken: r.token,
+      },
+    ]),
+  );
+}
+
 // ─── regulator_contacts (provisional, pending UX-OPS-007) ─────────────────────
 
 export async function listRegulatorContacts(
@@ -532,21 +621,21 @@ export async function seedInvitationDefaults(pool: Pool, editionId: string): Pro
     {
       name: 'First invitation',
       subject: 'Your firm has been invited to the 2026 benchmark',
-      body: 'Dear {{firm}},\n\nYour firm has a space on the study platform. Your invitation code is {{code}}.\n\nUse it once to set up your access.',
+      body: 'Dear {{firm}},\n\nYour firm has a space on the study platform. Open your invitation link to set up your access:\n\n{{code}}',
       audienceKind: 'firm',
       requiresCode: true,
     },
     {
       name: 'Reminder',
       subject: 'Your firm has not yet claimed its space',
-      body: 'Dear {{firm}},\n\nYour invitation to the 2026 benchmark study has not been used yet. Your code is {{code}}.',
+      body: 'Dear {{firm}},\n\nYour invitation to the 2026 benchmark study has not been used yet. Your invitation link is:\n\n{{code}}',
       audienceKind: 'firm',
       requiresCode: true,
     },
     {
       name: 'Reissued code',
       subject: 'A new invitation code for your firm',
-      body: 'Dear {{firm}},\n\nA new invitation code has been issued for your firm: {{code}}.\n\nAny earlier code no longer works.',
+      body: "Dear {{firm}},\n\nHere is your firm's invitation link again:\n\n{{code}}",
       audienceKind: 'firm',
       requiresCode: true,
     },

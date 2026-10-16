@@ -164,6 +164,7 @@ export async function getFirmFunnelRows(pool: Pool, editionId: string): Promise<
          SELECT r.organization_id, MIN(b.sent_at) AS invited_at
            FROM message_recipients r JOIN message_batches b ON b.id = r.batch_id
           WHERE r.edition_id = $1 AND r.organization_id IS NOT NULL
+            AND r.delivery_state <> 'not_sent'
           GROUP BY r.organization_id
        ) inv ON inv.organization_id = o.id
        LEFT JOIN firm_claims fc ON fc.organization_id = o.id

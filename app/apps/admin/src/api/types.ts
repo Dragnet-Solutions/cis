@@ -165,7 +165,7 @@ export interface MessageTemplate {
   updatedAt: string;
 }
 
-export type MessageDeliveryState = 'sent' | 'delivered' | 'bounced';
+export type MessageDeliveryState = 'sent' | 'delivered' | 'bounced' | 'not_sent';
 
 export interface MessageBatch {
   id: string;
@@ -197,6 +197,10 @@ export interface BatchReport {
   clicksReported: boolean;
   deliveredNeverOpened: number;
   openedNotClicked: number;
+  /** Recipients with no email address on file — nothing was sent. */
+  notSent: number;
+  /** How the batch's emails stand in the mail outbox. */
+  outbox: { queued: number; sent: number; logged: number; failed: number };
 }
 
 export type UploadCheckKind =
@@ -237,6 +241,7 @@ export interface SendBatchResult {
   batchId: string;
   attempted: number;
   sent: number;
+  notSent: number;
   skippedDuplicates: number;
 }
 
@@ -257,6 +262,31 @@ export interface FirmImportResult {
   /** Firms enrolled in the edition (null when no edition was given). */
   enrolled: number | null;
   enrolmentNote: string | null;
+}
+
+/** An invitation for a firm to set up its space (an emailed personal link). */
+export type FirmInvitationState = 'pending' | 'accepted' | 'revoked' | 'expired';
+
+export interface FirmInvitation {
+  id: string;
+  organizationId: string;
+  firmName: string;
+  editionId: string | null;
+  email: string;
+  contactName: string | null;
+  state: FirmInvitationState;
+  createdAt: string;
+  lastSentAt: string;
+  sendCount: number;
+  expiresAt: string;
+  acceptedAt: string | null;
+  revokedAt: string | null;
+  /** The latest invitation email's delivery; null if none was queued. */
+  delivery: {
+    status: 'queued' | 'sent' | 'logged' | 'failed';
+    error: string | null;
+    at: string;
+  } | null;
 }
 
 // ─── National report (UX-ADM-005) ───────────────────────────────────────────
@@ -381,7 +411,7 @@ export interface FirmReportReleaseDecision extends Partial<ReleaseFirmReportsRes
 
 export interface ReleaseFirmReportsResult {
   /** How the release notices to the firms' coordinators went. */
-  notified: { sent: number; logged: number; failed: number };
+  notified: { sent: number; logged: number; failed: number; retried?: number };
   released: string[];
   held: { organizationId: string; reason: string }[];
 }

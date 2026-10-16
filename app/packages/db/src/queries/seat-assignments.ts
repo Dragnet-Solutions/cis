@@ -89,8 +89,8 @@ export async function getSeat(
 }
 
 /** Assign (or re-assign) a seat: sets name/email and moves it to 'invited'.
- *  A fresh `link_token` is minted every time — the previous occupant's link
- *  (if any) stops resolving to anything immediately. */
+ *  A fresh `link_token` is minted unless `keepLinkToken` — the previous
+ *  occupant's link (if any) stops resolving to anything immediately. */
 export async function assignSeat(
   pool: Pool,
   data: {
@@ -100,6 +100,9 @@ export async function assignSeat(
     assignedName: string;
     assignedEmail: string;
     isSelf?: boolean;
+    /** Keep the seat's current link (re-saving the same holder of a seat that
+     *  is still only invited). Otherwise a fresh link is minted. */
+    keepLinkToken?: boolean;
   },
 ): Promise<SeatAssignment> {
   const result = await query<RawSeatRow>(
@@ -107,7 +110,8 @@ export async function assignSeat(
     `UPDATE seat_assignments
         SET assigned_name = $4, assigned_email = $5,
             state = 'invited', is_self = $6,
-            stalled_at = NULL, respondent_id = NULL, link_token = gen_random_uuid(),
+            stalled_at = NULL, respondent_id = NULL,
+            link_token = CASE WHEN $7::boolean THEN link_token ELSE gen_random_uuid() END,
             updated_at = NOW()
       WHERE edition_id = $1 AND organization_id = $2 AND seat_code = $3
       RETURNING *`,
@@ -118,6 +122,7 @@ export async function assignSeat(
       data.assignedName,
       data.assignedEmail,
       data.isSelf ?? false,
+      data.keepLinkToken ?? false,
     ],
   );
   const row = result.rows[0];

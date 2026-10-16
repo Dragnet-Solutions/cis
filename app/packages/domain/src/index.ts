@@ -45,6 +45,7 @@ export {
   acceptsResponses,
   assertCollectionOpen,
   getPublicConsentContent,
+  SURVEY_RESUME_EMAIL_KIND,
 } from './journey-service';
 export type { ContactInput, ResumeState, PublicConsentContent } from './journey-service';
 
@@ -57,7 +58,10 @@ export {
   listCoordinators,
   FirmTeamError,
   PinVerificationError,
+  COORDINATOR_WELCOME_EMAIL_KIND,
+  COORDINATOR_PIN_SET_EMAIL_KIND,
 } from './firm-team-service';
+export type { CoordinatorNotify } from './firm-team-service';
 
 export {
   importFirmDirectory,
@@ -74,6 +78,7 @@ export {
   requestInvitation,
   getSeats,
   assignSeat,
+  SEAT_ASSIGNED_EMAIL_KIND,
   replacementCost,
   describeSeatReplacement,
   confirmSeatReplacement,
@@ -98,9 +103,32 @@ export {
 export type {
   ClaimInput,
   InvitationRequest,
+  SeatNotify,
   SeatEntryContext,
   OutreachLinkContext,
 } from './firm-portal-service';
+
+export {
+  inviteFirm,
+  sendInvitationAgain,
+  revokeInvitation,
+  listInvitations,
+  lookupInvitation,
+  isFirmClaimed,
+  invitationLink,
+  invitationState,
+  firmInviteTtlDays,
+  FIRM_INVITATION_EMAIL_KIND,
+  FirmInvitationError,
+} from './firm-invitation-service';
+export type {
+  InviteContext,
+  InvitationLookup,
+  FirmInvitationView,
+  FirmInvitationState,
+  FirmInvitationDelivery,
+  FirmInvitationErrorCode,
+} from './firm-invitation-service';
 
 export {
   coordinatorLogin,
@@ -222,6 +250,7 @@ export {
   ACCESS_RIGHT_META,
   APPROVER_FLOOR,
   PeopleAccessError,
+  OPERATOR_ACCESS_EMAIL_KIND,
 } from './people-access-service';
 
 // ── Phase 9: Invitations (UX-OPS-002) ────────────────────────────────────────
@@ -243,9 +272,19 @@ export {
   RECORDING_SENDING_SERVICE,
   ZeptomailSendingService,
   ingestZeptomailEvent,
+  ingestOutboxDeliveryEvent,
+  renderTemplateText,
+  INVITATION_BATCH_EMAIL_KIND,
+  INVITATION_REQUEST_EMAIL_KIND,
   InvitationsError,
 } from './invitations-service';
-export type { SendingService, OutgoingMessage, SendResult } from './invitations-service';
+export type {
+  SendingService,
+  OutgoingMessage,
+  SendResult,
+  SendOutcome,
+  OutboxDeliveryEvent,
+} from './invitations-service';
 
 // ── Phase 10: Mission board (UX-OPS-001) ─────────────────────────────────────
 export {
@@ -379,6 +418,7 @@ export {
   getUnfinishedStats,
   getDropoffHistogram,
   ReminderTimingError,
+  RESPONDENT_REMINDER_EMAIL_KIND,
 } from './reminder-timing-service';
 export type {
   ReminderStepConfig,
@@ -405,6 +445,8 @@ export {
   listInstitutionRoster,
   renderInstitutionalIntro,
   RegulatorEngagementError,
+  REGULATOR_SURVEY_LINK_EMAIL_KIND,
+  REGULATOR_REMINDER_EMAIL_KIND,
 } from './regulator-engagement-service';
 
 // ── Phase 19: Institutional instrument families ──────────────────────────────
@@ -461,6 +503,7 @@ export {
   getFirmDigestSchedule,
   setFirmDigestSchedule,
   FirmDigestError,
+  FIRM_DIGEST_EMAIL_KIND,
 } from './firm-digest-service';
 export type {
   FirmDigest,
@@ -533,6 +576,18 @@ export {
   publicNarrative,
   type PublicNarrative,
 } from './report-publication-service';
+
+// ── Email content (every notice is queued through queueNotice) ──────────────
+export {
+  renderEmailHtml,
+  renderEmailText,
+  textToHtml,
+  escapeHtml,
+  queueNotice,
+  type EmailAction,
+  type EmailContent,
+  type Notice,
+} from './email-content';
 
 // ── Scoring methodology approval (two-person) ────────────────────────────────
 export {

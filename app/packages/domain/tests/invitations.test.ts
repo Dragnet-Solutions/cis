@@ -23,6 +23,7 @@ import {
   insertRecipient,
   recordDelivery,
   listBouncedRecipients,
+  createCoordinator,
 } from '@cis/db';
 import * as domain from '../src';
 import {
@@ -58,6 +59,16 @@ afterAll(async () => {
 
 async function firm(slug: string) {
   return createOrganization(pool, { slug, displayName: slug, orgType: 'firm' });
+}
+/** Give a firm an address to write to (its lead coordinator). */
+async function withLead(orgId: string) {
+  await createCoordinator(pool, {
+    organizationId: orgId,
+    name: 'Lead',
+    email: `lead@${orgId.slice(0, 8)}.example`,
+    isLead: true,
+    accessCode: orgId.slice(0, 8).toUpperCase(),
+  });
 }
 async function templateId(name: string): Promise<string> {
   const t = (await listTemplates(pool, editionId)).find((x) => x.name === name);
@@ -172,6 +183,7 @@ describe('Participant audiences reflect contact-consent, not raw responses', () 
 describe('Deduplication is per template', () => {
   it('blocks the same firm+template twice, allows a different template', async () => {
     const f = await firm('dedup-firm');
+    await withLead(f.id);
     const reminder = await templateId('Reminder');
     const first = await templateId('First invitation');
 
@@ -191,6 +203,7 @@ describe('Deduplication is per template', () => {
 describe('File validation — exactly four checks, no register-match fifth', () => {
   it('independently flags no-address, malformed, in-file duplicate, and already-sent', async () => {
     const f = await firm('already-firm');
+    await withLead(f.id);
     const first = await templateId('First invitation');
     // Give the firm this template already (so its org id trips already_sent).
     await sendBatch(pool, { editionId, templateId: first, audienceId: 'all' });

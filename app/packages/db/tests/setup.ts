@@ -74,6 +74,7 @@ export async function truncateAllTables(pool: Pool): Promise<void> {
       funnel_event,
       seat_assignments,
       firm_claims,
+      firm_invitations,
       respondent_drafts,
       firm_coordinators,
       outreach_links,

@@ -366,6 +366,25 @@ function BatchReportView({
         </div>
       )}
 
+      <div className="note">
+        <p>
+          Mail service: {report.outbox.sent} sent
+          {report.outbox.queued > 0 && <>, {report.outbox.queued} waiting to go</>}
+          {report.outbox.failed > 0 && <>, {report.outbox.failed} could not be sent</>}
+          {report.outbox.logged > 0 && (
+            <>, {report.outbox.logged} recorded only (no mail service was configured)</>
+          )}
+          .
+          {report.notSent > 0 && (
+            <>
+              {' '}
+              {report.notSent} recipient{report.notSent > 1 ? 's' : ''} had no email address on file
+              and {report.notSent > 1 ? 'were' : 'was'} not sent anything.
+            </>
+          )}
+        </p>
+      </div>
+
       {report.bounced > 0 && (
         <div className="warnbox" style={{ marginTop: 12 }}>
           <b>
@@ -427,6 +446,7 @@ function NewMessageWizard({
   const [result, setResult] = useState<{
     attempted: number;
     sent: number;
+    notSent: number;
     skippedDuplicates: number;
   } | null>(null);
 
@@ -497,9 +517,11 @@ function NewMessageWizard({
         <h2>Sent.</h2>
         <div className="note">
           <p>
-            {result.sent} of {result.attempted} sent.
+            {result.sent} of {result.attempted} handed to the mail service.
             {result.skippedDuplicates > 0 &&
               ` ${result.skippedDuplicates} skipped — already received this template.`}
+            {result.notSent > 0 &&
+              ` ${result.notSent} not sent — no email address on file (they stay in the audience for a later send).`}
           </p>
         </div>
         <div className="actions">
@@ -807,8 +829,8 @@ function TemplatesView({
         <div className="field">
           <label>Message</label>
           <p className="hint">
-            Write {'{{firm}}'} where the firm name goes and {'{{code}}'} where the invitation code
-            goes.
+            Write {'{{firm}}'} where the firm name goes and {'{{code}}'} where the firm’s invitation
+            link goes.
           </p>
           <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={8} />
         </div>

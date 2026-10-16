@@ -16,6 +16,8 @@ import {
   importFirmDirectory,
 } from '@cis/domain';
 import { loadRbacContext } from '@cis/auth';
+import { kickMailDispatcher } from '../mail/dispatcher';
+import { publicOrigin } from '../public-url';
 
 const CoordinatorSchema = z.object({
   id: z.string().uuid(),
@@ -111,13 +113,18 @@ export const firmTeamRoutes: FastifyPluginAsyncZod = async (app) => {
       },
     },
     async (request, reply) => {
-      const c = await createLeadCoordinator(getPool(), {
-        organizationId: request.params.orgId,
-        name: request.body.name,
-        email: request.body.email,
-        role: request.body.role ?? null,
-        phone: request.body.phone ?? null,
-      });
+      const c = await createLeadCoordinator(
+        getPool(),
+        {
+          organizationId: request.params.orgId,
+          name: request.body.name,
+          email: request.body.email,
+          role: request.body.role ?? null,
+          phone: request.body.phone ?? null,
+        },
+        { portalUrl: publicOrigin() },
+      );
+      kickMailDispatcher();
       return reply.status(201).send({ coordinator: c });
     },
   );
@@ -139,13 +146,18 @@ export const firmTeamRoutes: FastifyPluginAsyncZod = async (app) => {
       },
     },
     async (request, reply) => {
-      const c = await addCoordinator(getPool(), {
-        organizationId: request.params.orgId,
-        name: request.body.name,
-        email: request.body.email,
-        role: request.body.role ?? null,
-        phone: request.body.phone ?? null,
-      });
+      const c = await addCoordinator(
+        getPool(),
+        {
+          organizationId: request.params.orgId,
+          name: request.body.name,
+          email: request.body.email,
+          role: request.body.role ?? null,
+          phone: request.body.phone ?? null,
+        },
+        { portalUrl: publicOrigin() },
+      );
+      kickMailDispatcher();
       return reply.status(201).send({ coordinator: c });
     },
   );
@@ -161,10 +173,16 @@ export const firmTeamRoutes: FastifyPluginAsyncZod = async (app) => {
       },
     },
     async (request, reply) => {
-      await setCoordinatorPin(getPool(), request.params.coordinatorId, {
-        newPin: request.body.newPin,
-        ...(request.body.currentPin !== undefined ? { currentPin: request.body.currentPin } : {}),
-      });
+      await setCoordinatorPin(
+        getPool(),
+        request.params.coordinatorId,
+        {
+          newPin: request.body.newPin,
+          ...(request.body.currentPin !== undefined ? { currentPin: request.body.currentPin } : {}),
+        },
+        { portalUrl: publicOrigin() },
+      );
+      kickMailDispatcher();
       return reply.send({ ok: true });
     },
   );

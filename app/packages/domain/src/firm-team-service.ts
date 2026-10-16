@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { Pool } from 'pg';
 import {
+  getOrganizationById,
   createCoordinator,
   getCoordinatorById,
   getCoordinatorPinHash,
@@ -14,6 +15,50 @@ import {
 import { hashPassword, verifyPassword } from '@cis/auth';
 import type { FirmCoordinator } from '@cis/shared-types';
 import { DomainError } from './errors';
+import { queueNotice } from './email-content';
+import { firmPortalLink } from './notice-links';
+
+/** Outbox kinds of the emails to a coordinator; ref_id is the coordinator. */
+export const COORDINATOR_WELCOME_EMAIL_KIND = 'firm-coordinator-welcome';
+export const COORDINATOR_PIN_SET_EMAIL_KIND = 'firm-coordinator-pin-set';
+
+/** Who to email, and where the firm portal is. Without it no email is sent. */
+export interface CoordinatorNotify {
+  /** The public site's address (PORTAL_URL). */
+  portalUrl: string;
+}
+
+/**
+ * Welcome a newly added coordinator: where to sign in and how. Never carries
+ * a PIN — if none is set yet, says who will set it.
+ */
+async function queueCoordinatorWelcome(
+  pool: Pool,
+  c: FirmCoordinator,
+  notify: CoordinatorNotify,
+): Promise<void> {
+  const firmName = (await getOrganizationById(pool, c.organizationId))?.displayName ?? 'your firm';
+  await queueNotice(pool, {
+    kind: COORDINATOR_WELCOME_EMAIL_KIND,
+    refId: c.id,
+    to: c.email.trim(),
+    toName: c.name,
+    subject: `You have been added to ${firmName}'s team for the CIS × Dragnet benchmark`,
+    heading: `Welcome to ${firmName}'s space`,
+    paragraphs: [
+      `Dear ${c.name},`,
+      c.isLead
+        ? `You are now the lead coordinator for ${firmName} in the CIS × Dragnet benchmark. From the firm portal you assign your firm's surveys, invite your clients and add colleagues.`
+        : `You have been added as a coordinator for ${firmName} in the CIS × Dragnet benchmark. From the firm portal you can follow your firm's surveys and help its team.`,
+      'You sign in to the firm portal with this email address and a six-digit PIN.',
+      c.isLead
+        ? 'You do not have a PIN yet: the CIS team will set one for you and tell you separately.'
+        : "You do not have a PIN yet: your firm's lead coordinator or the CIS team will set one for you and tell you separately.",
+    ],
+    action: { label: 'Go to the firm portal', url: firmPortalLink(notify.portalUrl) },
+    footer: 'If you were not expecting this, reply to this email and the CIS team will help.',
+  });
+}
 
 /**
  * Firm coordinator (team) administration — UX-FRM-007.
@@ -74,12 +119,13 @@ export async function createLeadCoordinator(
     role?: string | null;
     phone?: string | null;
   },
+  notify?: CoordinatorNotify,
 ): Promise<FirmCoordinator> {
   const existingLead = await getActiveLead(pool, data.organizationId);
   if (existingLead) {
     throw new FirmTeamError('This firm already has an active lead coordinator', 'LEAD_EXISTS');
   }
-  return createCoordinator(pool, {
+  const c = await createCoordinator(pool, {
     organizationId: data.organizationId,
     name: data.name,
     email: data.email,
@@ -88,6 +134,8 @@ export async function createLeadCoordinator(
     isLead: true,
     accessCode: generateAccessCode(),
   });
+  if (notify) await queueCoordinatorWelcome(pool, c, notify);
+  return c;
 }
 
 /**
@@ -103,8 +151,9 @@ export async function addCoordinator(
     role?: string | null;
     phone?: string | null;
   },
+  notify?: CoordinatorNotify,
 ): Promise<FirmCoordinator> {
-  return createCoordinator(pool, {
+  const c = await createCoordinator(pool, {
     organizationId: data.organizationId,
     name: data.name,
     email: data.email,
@@ -113,6 +162,8 @@ export async function addCoordinator(
     isLead: false,
     accessCode: generateAccessCode(),
   });
+  if (notify) await queueCoordinatorWelcome(pool, c, notify);
+  return c;
 }
 
 /**
@@ -124,6 +175,7 @@ export async function setCoordinatorPin(
   pool: Pool,
   coordinatorId: string,
   data: { newPin: string; currentPin?: string },
+  notify?: CoordinatorNotify,
 ): Promise<void> {
   const coordinator = await getCoordinatorById(pool, coordinatorId);
   if (!coordinator || coordinator.revokedAt) {
@@ -142,6 +194,31 @@ export async function setCoordinatorPin(
 
   const hash = await hashPassword(data.newPin);
   await setCoordinatorPinHash(pool, coordinatorId, hash);
+
+  // Tell the coordinator their PIN was set or changed — never the PIN itself.
+  if (notify) {
+    const firmName =
+      (await getOrganizationById(pool, coordinator.organizationId))?.displayName ?? 'your firm';
+    await queueNotice(pool, {
+      kind: COORDINATOR_PIN_SET_EMAIL_KIND,
+      refId: coordinator.id,
+      to: coordinator.email.trim(),
+      toName: coordinator.name,
+      subject: existingHash
+        ? `Your firm portal PIN for ${firmName} was changed`
+        : `Your firm portal PIN for ${firmName} is ready`,
+      heading: existingHash ? 'Your PIN was changed' : 'Your PIN is ready',
+      paragraphs: [
+        `Dear ${coordinator.name},`,
+        existingHash
+          ? `The six-digit PIN you use to sign in to ${firmName}'s space was changed.`
+          : `A six-digit PIN has been set for you to sign in to ${firmName}'s space. Whoever set it will tell you what it is; this email never contains it.`,
+        'Sign in to the firm portal with this email address and the PIN.',
+        'If you did not expect this, reply to this email straight away and the CIS team will help.',
+      ],
+      action: { label: 'Go to the firm portal', url: firmPortalLink(notify.portalUrl) },
+    });
+  }
 }
 
 /**

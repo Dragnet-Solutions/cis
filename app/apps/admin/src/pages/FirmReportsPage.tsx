@@ -599,14 +599,19 @@ export function FirmReportsPage({
 }
 
 /** How a release's notices to the firms' coordinators went, in one line. */
-function noticeLine(n: { sent: number; logged: number; failed: number }): string {
+function noticeLine(n: { sent: number; logged: number; failed: number; retried?: number }): string {
   const parts: string[] = [];
   if (n.sent) parts.push(`${n.sent} coordinator email${n.sent === 1 ? '' : 's'} sent`);
   if (n.logged) {
     parts.push(
-      `${n.logged} coordinator notice${n.logged === 1 ? '' : 's'} recorded but not sent — no mail server is configured (SMTP_URL)`,
+      `${n.logged} coordinator notice${n.logged === 1 ? '' : 's'} recorded but not sent — no mail service is configured`,
     );
   }
   if (n.failed) parts.push(`${n.failed} email${n.failed === 1 ? '' : 's'} failed to send`);
+  if (n.retried) {
+    parts.push(
+      `${n.retried} email${n.retried === 1 ? '' : 's'} could not be sent yet and will be retried automatically`,
+    );
+  }
   return parts.length ? `${parts.join('; ')}.` : 'No coordinators to notify.';
 }

@@ -1,5 +1,10 @@
-import { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import {
+  resolveFirmContactAddresses,
+  batchOutboxCounts,
+  getEmailById,
+  markEmailFailed,
+  type FirmContactAddress,
   listOrganizations,
   listClaimedOrganizationIds,
   listOrganizationIdsWithOutreach,
@@ -37,6 +42,9 @@ import type {
   InvitationRequestItem,
 } from '@cis/shared-types';
 import { DomainError } from './errors';
+import { queueNotice, type EmailAction } from './email-content';
+import { invitationLink } from './firm-invitation-service';
+import { firmClaimLink, firmPortalLink, siteOrigin, textParagraphs } from './notice-links';
 
 /**
  * UX-OPS-002 — Invitations. Writing to firms, regulators and consented
@@ -63,29 +71,41 @@ export class InvitationsError extends DomainError {
   }
 }
 
-// ─── Sending service abstraction (provider is a config decision) ───────────────
+// ─── Sending service abstraction ────────────────────────────────────────────────
+
+/** Outbox kind of an invitation-batch email; its ref_id is the message_recipients row. */
+export const INVITATION_BATCH_EMAIL_KIND = 'invitation-batch';
+/** Outbox kind of the email to someone whose invitation request was answered
+ *  without a template; its ref_id is the invitation_requests row. */
+export const INVITATION_REQUEST_EMAIL_KIND = 'invitation-request-issued';
 
 export interface OutgoingMessage {
   recipientEmail: string | null;
+  recipientName?: string | null;
   firmName: string | null;
   organizationId: string | null;
   code: string | null;
+  /** The rendered message. */
+  subject?: string;
+  heading?: string;
+  paragraphs?: string[];
+  action?: EmailAction;
+  /** Outbox kind and reference, so the email's delivery can be looked up. */
+  kind?: string;
+  refId?: string | null;
 }
 
-/** A sending provider. CIS domain / Dragnet domain / TrustedMail (and the PRD's
- *  Zeptomail) are all candidates — none is decided, so any can be plugged in.
- *  `name` is recorded on the batch; `send` returns the initial delivery state. */
+/** `not_sent`: there was no usable address, so nothing was sent. */
+export type SendOutcome = 'sent' | 'bounced' | 'not_sent';
+
+/** A sending provider. `name` is recorded on the batch; `send` returns the
+ *  initial delivery state. `db` is the caller's pool or transaction. */
 export interface SendingService {
   readonly name: string;
-  send(message: OutgoingMessage): Promise<{ deliveryState: 'sent' | 'bounced' }>;
+  send(message: OutgoingMessage, db?: Pool | PoolClient): Promise<{ deliveryState: SendOutcome }>;
 }
 
-/**
- * The default provider used until a real one is configured. It records the
- * message as `sent` and reports nothing further — delivery, bounces, opens and
- * clicks arrive later via the provider's callbacks (recordDelivery). It performs
- * no external I/O, so it is safe in every environment.
- */
+/** Records every message as `sent` and sends nothing — for tests. */
 export const RECORDING_SENDING_SERVICE: SendingService = {
   name: 'undecided',
   async send() {
@@ -94,29 +114,37 @@ export const RECORDING_SENDING_SERVICE: SendingService = {
 };
 
 /**
- * Zeptomail — the RESOLVED sending provider (Phase 10; the mission-board brief
- * and UX-OPS-001's contract both confirm it, superseding UX-OPS-002's stale
- * "undecided" note). Zeptomail reports delivered/bounced/opened/clicked, the
- * full set the board depends on. No credential is hardcoded: the API token is
- * read from `ZEPTOMAIL_API_TOKEN` at construction. When no token is configured
- * (dev/test/CI), it records `sent` and performs no network I/O — the real send
- * would POST to Zeptomail's transactional API here, and delivery/bounce/open/
- * click events return asynchronously via the webhook (ingestZeptomailEvent).
+ * The real sender: queues the rendered message in the email outbox (inside the
+ * caller's transaction when given one), which the API's mail dispatcher
+ * delivers through ZeptoMail (SMTP as a fallback; recorded as `logged` when no
+ * mail service is configured). A message with no usable address is `not_sent`.
+ * Bounces, opens and clicks arrive later via the ZeptoMail webhook.
  */
 export class ZeptomailSendingService implements SendingService {
   readonly name = 'zeptomail';
-  private readonly token: string | null;
-  constructor(token?: string | null) {
-    this.token = token ?? process.env['ZEPTOMAIL_API_TOKEN'] ?? null;
-  }
-  async send(_message: OutgoingMessage): Promise<{ deliveryState: 'sent' | 'bounced' }> {
-    // Real integration point. With a token, POST to Zeptomail's send API here
-    // (the abstraction keeps that provider-specific code isolated). Without one,
-    // record as sent — the webhook carries the actual outcome either way.
+  constructor(private readonly pool?: Pool) {}
+  async send(
+    message: OutgoingMessage,
+    db?: Pool | PoolClient,
+  ): Promise<{ deliveryState: SendOutcome }> {
+    const to = message.recipientEmail?.trim() ?? '';
+    if (!to || !EMAIL_RE.test(to)) return { deliveryState: 'not_sent' };
+    if (!message.subject || !message.paragraphs || !message.kind) {
+      throw new InvitationsError('A message must be rendered before it is sent', 'NOT_RENDERED');
+    }
+    const target = db ?? this.pool;
+    if (!target) throw new InvitationsError('No database to queue the message in', 'NO_DB');
+    await queueNotice(target, {
+      kind: message.kind,
+      refId: message.refId ?? null,
+      to,
+      toName: message.recipientName ?? null,
+      subject: message.subject,
+      paragraphs: message.paragraphs,
+      ...(message.heading ? { heading: message.heading } : {}),
+      ...(message.action ? { action: message.action } : {}),
+    });
     return { deliveryState: 'sent' };
-  }
-  get configured(): boolean {
-    return this.token !== null;
   }
 }
 
@@ -157,6 +185,38 @@ export async function ingestZeptomailEvent(
     default:
       return false;
   }
+}
+
+/** A delivery event reported by ZeptoMail's webhook, by the outbox email id
+ *  the dispatcher sent as `client_reference`. */
+export type OutboxDeliveryEvent = 'bounced' | 'opened' | 'clicked';
+
+/**
+ * Apply a ZeptoMail webhook event to the outbox email it is about: a bounce
+ * marks the email failed; for an invitation-batch email the batch recipient
+ * gets the bounce/open/click too. Returns false for an unknown reference.
+ */
+export async function ingestOutboxDeliveryEvent(
+  pool: Pool,
+  input: { reference: string; event: OutboxDeliveryEvent; at?: Date; detail?: string | null },
+): Promise<boolean> {
+  if (!/^[0-9a-f-]{36}$/i.test(input.reference)) return false;
+  const email = await getEmailById(pool, input.reference);
+  if (!email) return false;
+  const at = input.at ?? new Date();
+  if (input.event === 'bounced') {
+    await markEmailFailed(pool, email.id, `Bounced${input.detail ? `: ${input.detail}` : ''}`);
+  }
+  if (email.kind === INVITATION_BATCH_EMAIL_KIND && email.refId) {
+    if (input.event === 'bounced') {
+      await recordDelivery(pool, email.refId, { deliveryState: 'bounced' });
+    } else if (input.event === 'opened') {
+      await recordDelivery(pool, email.refId, { openedAt: at });
+    } else {
+      await recordDelivery(pool, email.refId, { clickedAt: at });
+    }
+  }
+  return true;
 }
 
 // ─── Audiences ─────────────────────────────────────────────────────────────────
@@ -444,15 +504,93 @@ export async function validateUploadFile(
 export interface SendResult {
   batch: MessageBatch;
   attempted: number;
+  /** Queued for delivery. */
   sent: number;
+  /** No email address on file — recorded as not sent. */
+  notSent: number;
   skippedDuplicates: number;
+}
+
+interface BatchTarget {
+  recipientEmail: string | null;
+  recipientName: string | null;
+  firmName: string | null;
+  organizationId: string | null;
+  /** The firm's link into its space (the {{code}} placeholder), if a firm. */
+  link: string | null;
+  /** Whether the firm already has a space (its link signs in, not claims). */
+  claimed: boolean;
+}
+
+/** The firm's link: sign in if it has coordinators, else its open invitation's
+ *  link, else the portal's claim view for the firm. */
+function firmLink(
+  portalUrl: string,
+  organizationId: string | null,
+  contact: FirmContactAddress | undefined,
+): { link: string; claimed: boolean } {
+  if (contact?.source === 'coordinator') return { link: firmPortalLink(portalUrl), claimed: true };
+  if (contact?.invitationToken) {
+    return { link: invitationLink(portalUrl, contact.invitationToken), claimed: false };
+  }
+  return {
+    link: organizationId ? firmClaimLink(portalUrl, organizationId) : firmPortalLink(portalUrl),
+    claimed: false,
+  };
+}
+
+const PLACEHOLDER = (name: string) => new RegExp(`\\{\\{\\s*${name}\\s*\\}\\}`, 'g');
+
+/**
+ * Fill a template's placeholders: {{firm}} (the firm's or regulator's name)
+ * and {{code}} / {{link}} (the firm's link into its space — the platform has
+ * no typed invitation code; the link is the invitation). With no name,
+ * "Dear {{firm}}" becomes "Hello".
+ */
+export function renderTemplateText(
+  text: string,
+  vars: { firm: string | null; link: string | null },
+): string {
+  let out = text;
+  if (!vars.firm?.trim()) out = out.replace(/Dear\s*\{\{\s*firm\s*\}\}/g, 'Hello');
+  return out
+    .replace(PLACEHOLDER('firm'), vars.firm?.trim() ?? '')
+    .replace(PLACEHOLDER('(?:code|link)'), vars.link ?? '');
+}
+
+/** The rendered email for one batch recipient. */
+function renderBatchMessage(
+  template: MessageTemplate,
+  t: BatchTarget,
+): Pick<OutgoingMessage, 'subject' | 'paragraphs' | 'action'> {
+  const vars = { firm: t.firmName, link: t.link };
+  const bodyHasLink = /\{\{\s*(?:code|link)\s*\}\}/.test(template.body);
+  return {
+    subject: renderTemplateText(template.subject, vars),
+    paragraphs: textParagraphs(renderTemplateText(template.body, vars)),
+    // A template that does not carry the link itself still gets a button to it.
+    ...(t.link && !bodyHasLink
+      ? {
+          action: {
+            label: t.claimed ? "Sign in to your firm's space" : "Set up your firm's space",
+            url: t.link,
+          },
+        }
+      : {}),
+  };
 }
 
 /**
  * Send a batch. Resolves recipients from the audience (or the uploaded rows),
  * applies per-template deduplication (a firm never gets the SAME template twice
  * across any earlier batch in this edition — but may get different templates),
- * and records each recipient through the pluggable sending service.
+ * renders the template for each recipient and sends it through the sending
+ * service (by default: queued in the email outbox for ZeptoMail).
+ *
+ * A firm audience writes to the firm's lead coordinator, else another active
+ * coordinator, else its open firm invitation's address. A recipient with no
+ * address is recorded as `not_sent` — never counted as sent, and not treated
+ * as already sent this template, so a later batch reaches it.
  */
 export async function sendBatch(
   pool: Pool,
@@ -463,34 +601,50 @@ export async function sendBatch(
     uploadRows?: Array<{ firmName: string; email: string; organizationId?: string | null }>;
     sentBy?: string | null;
     service?: SendingService;
+    /** The public site's address (PORTAL_URL), for the links in the email. */
+    portalUrl?: string;
   },
 ): Promise<SendResult> {
   const template = await getTemplate(pool, input.templateId);
   if (!template || template.editionId !== input.editionId) {
     throw new InvitationsError('Template not found for this edition', 'TEMPLATE_NOT_FOUND');
   }
-  // Zeptomail is the resolved provider (Phase 10); it degrades to recording-only
-  // when no token is configured, so tests and CI stay hermetic.
   const service = input.service ?? new ZeptomailSendingService();
+  const portalUrl = siteOrigin(input.portalUrl);
   const alreadySent = await orgsSentTemplate(pool, input.editionId, input.templateId);
 
   // Resolve the target recipient set.
-  const targets: OutgoingMessage[] = [];
+  const targets: BatchTarget[] = [];
   let audienceLabel = input.audienceId;
 
   if (input.audienceId === 'upload') {
-    for (const r of input.uploadRows ?? []) {
+    const rows = input.uploadRows ?? [];
+    const contacts = await resolveFirmContactAddresses(pool, [
+      ...new Set(rows.map((r) => r.organizationId).filter((id): id is string => !!id)),
+    ]);
+    for (const r of rows) {
+      const orgId = r.organizationId ?? null;
+      const { link, claimed } = firmLink(portalUrl, orgId, orgId ? contacts.get(orgId) : undefined);
       targets.push({
         recipientEmail: r.email,
+        recipientName: null,
         firmName: r.firmName,
-        organizationId: r.organizationId ?? null,
-        code: null,
+        organizationId: orgId,
+        link,
+        claimed,
       });
     }
     audienceLabel = 'Uploaded list';
   } else if (input.audienceId === 'regsall') {
     for (const r of await listRegulatorContacts(pool)) {
-      targets.push({ recipientEmail: r.email, firmName: r.name, organizationId: null, code: null });
+      targets.push({
+        recipientEmail: r.email,
+        recipientName: null,
+        firmName: r.name,
+        organizationId: null,
+        link: null,
+        claimed: false,
+      });
     }
     audienceLabel = 'All three regulators';
   } else if (input.audienceId in PARTICIPANT_INSTRUMENTS) {
@@ -500,7 +654,14 @@ export async function sendBatch(
       PARTICIPANT_INSTRUMENTS[input.audienceId] as string[],
     );
     for (const c of contacts) {
-      targets.push({ recipientEmail: c.email, firmName: null, organizationId: null, code: null });
+      targets.push({
+        recipientEmail: c.email,
+        recipientName: null,
+        firmName: null,
+        organizationId: null,
+        link: null,
+        claimed: false,
+      });
     }
     audienceLabel =
       PARTICIPANT_META.find((m) => m.id === input.audienceId)?.label ?? input.audienceId;
@@ -509,13 +670,20 @@ export async function sendBatch(
     const predicate = FIRM_AUDIENCE_PREDICATE[input.audienceId];
     if (!predicate) throw new InvitationsError('Unknown audience', 'UNKNOWN_AUDIENCE');
     const firms = (await firmStates(pool, input.editionId)).filter(predicate);
+    const contacts = await resolveFirmContactAddresses(
+      pool,
+      firms.map((f) => f.organizationId),
+    );
     for (const f of firms) {
+      const contact = contacts.get(f.organizationId);
+      const { link, claimed } = firmLink(portalUrl, f.organizationId, contact);
       targets.push({
-        recipientEmail: null, // resolved from the register by the sending layer
+        recipientEmail: contact?.email ?? null,
+        recipientName: contact?.name ?? null,
         firmName: f.firmName,
         organizationId: f.organizationId,
-        // A code-bearing template carries the firm's invitation code.
-        code: template.requiresCode ? `INV-${f.organizationId.slice(0, 8).toUpperCase()}` : null,
+        link,
+        claimed,
       });
     }
     audienceLabel =
@@ -543,20 +711,43 @@ export async function sendBatch(
       sentBy: input.sentBy ?? null,
     });
     let sent = 0;
+    let notSent = 0;
     for (const t of deliverable) {
-      const outcome = await service.send(t);
-      await insertRecipient(c, {
+      const email = t.recipientEmail?.trim() || null;
+      const recipient = await insertRecipient(c, {
         batchId: batch.id,
         editionId: input.editionId,
         organizationId: t.organizationId,
-        recipientEmail: t.recipientEmail,
+        recipientEmail: email,
         firmName: t.firmName,
-        code: t.code,
-        deliveryState: outcome.deliveryState,
+        code: t.link,
+        deliveryState: email ? 'sent' : 'not_sent',
       });
-      sent += 1;
+      let outcome: SendOutcome = 'not_sent';
+      if (email) {
+        outcome = (
+          await service.send(
+            {
+              recipientEmail: email,
+              recipientName: t.recipientName,
+              firmName: t.firmName,
+              organizationId: t.organizationId,
+              code: t.link,
+              kind: INVITATION_BATCH_EMAIL_KIND,
+              refId: recipient.id,
+              ...renderBatchMessage(template, t),
+            },
+            client,
+          )
+        ).deliveryState;
+        if (outcome !== 'sent') {
+          await recordDelivery(c, recipient.id, { deliveryState: outcome });
+        }
+      }
+      if (outcome === 'not_sent') notSent += 1;
+      else sent += 1;
     }
-    return { batch, attempted: targets.length, sent, skippedDuplicates };
+    return { batch, attempted: targets.length, sent, notSent, skippedDuplicates };
   });
 }
 
@@ -590,6 +781,8 @@ export async function getBatchReport(pool: Pool, batchId: string): Promise<Batch
     clicksReported: agg.clicksReported,
     deliveredNeverOpened: agg.deliveredNeverOpened,
     openedNotClicked: agg.openedNotClicked,
+    notSent: agg.notSent,
+    outbox: await batchOutboxCounts(pool, batchId, INVITATION_BATCH_EMAIL_KIND),
   };
 }
 
@@ -640,9 +833,14 @@ export function getInvitationRequests(
 }
 
 /**
- * Resolve a queued request — either by issuing a code (records a reissue batch
- * to the requester) or by marking it done without issuing one. Both close the
- * queue item.
+ * Resolve a queued request — either by issuing the firm's invitation to the
+ * requester, or by marking it done without one. Both close the queue item.
+ *
+ * Issuing emails the requester their firm's link (claim view, open
+ * invitation, or sign-in if the firm already has a space): rendered from the
+ * reissue template when one is given — recorded as a one-recipient batch,
+ * kind 'invitation-batch' — else a plain notice of kind
+ * 'invitation-request-issued' referencing the request.
  */
 export async function resolveInvitationRequest(
   pool: Pool,
@@ -651,42 +849,96 @@ export async function resolveInvitationRequest(
     resolution: 'code_issued' | 'marked_done';
     resolvedBy?: string | null;
     reissueTemplateId?: string;
+    /** The public site's address (PORTAL_URL), for the link in the email. */
+    portalUrl?: string;
   },
 ): Promise<InvitationRequestItem> {
   const req = await getInvitationRequest(pool, input.requestId);
   if (!req) throw new InvitationsError('Request not found', 'NOT_FOUND');
   if (req.resolved) throw new InvitationsError('Request is already resolved', 'ALREADY_RESOLVED');
 
-  if (input.resolution === 'code_issued') {
-    // Record the reissue as a one-recipient batch to the requester's address, if
-    // a reissue template was supplied. The code itself is issued out-of-band; the
-    // batch is the delivery record.
-    if (input.reissueTemplateId) {
-      const template = await getTemplate(pool, input.reissueTemplateId);
+  const template =
+    input.resolution === 'code_issued' && input.reissueTemplateId
+      ? await getTemplate(pool, input.reissueTemplateId)
+      : null;
+  const portalUrl = siteOrigin(input.portalUrl);
+  const contact = req.organizationId
+    ? (await resolveFirmContactAddresses(pool, [req.organizationId])).get(req.organizationId)
+    : undefined;
+  const { link, claimed } = firmLink(portalUrl, req.organizationId, contact);
+
+  return withTransaction(pool, async (client) => {
+    const c = client as unknown as Pool;
+    if (input.resolution === 'code_issued') {
       if (template) {
-        const batch = await createBatch(pool, {
+        const service = new ZeptomailSendingService();
+        const batch = await createBatch(c, {
           editionId: req.editionId,
           templateId: template.id,
           audienceId: 'request',
           audienceLabel: `Reissue to ${req.firmName}`,
+          sendingService: service.name,
           sentBy: input.resolvedBy ?? null,
         });
-        await insertRecipient(pool, {
+        const recipient = await insertRecipient(c, {
           batchId: batch.id,
           editionId: req.editionId,
           organizationId: req.organizationId,
           recipientEmail: req.email,
           firmName: req.firmName,
-          code: req.organizationId
-            ? `INV-${req.organizationId.slice(0, 8).toUpperCase()}`
-            : 'INV-NEW',
+          code: link,
+        });
+        const target: BatchTarget = {
+          recipientEmail: req.email,
+          recipientName: req.requesterName,
+          firmName: req.firmName,
+          organizationId: req.organizationId,
+          link,
+          claimed,
+        };
+        const { deliveryState } = await service.send(
+          {
+            recipientEmail: req.email,
+            recipientName: req.requesterName,
+            firmName: req.firmName,
+            organizationId: req.organizationId,
+            code: link,
+            kind: INVITATION_BATCH_EMAIL_KIND,
+            refId: recipient.id,
+            ...renderBatchMessage(template, target),
+          },
+          client,
+        );
+        if (deliveryState !== 'sent') await recordDelivery(c, recipient.id, { deliveryState });
+      } else if (EMAIL_RE.test(req.email.trim())) {
+        await queueNotice(client, {
+          kind: INVITATION_REQUEST_EMAIL_KIND,
+          refId: req.id,
+          to: req.email.trim(),
+          toName: req.requesterName,
+          subject: `Your invitation to the CIS × Dragnet benchmark — ${req.firmName}`,
+          heading: claimed
+            ? `${req.firmName} already has its space`
+            : `Your invitation for ${req.firmName}`,
+          paragraphs: [
+            `Dear ${req.requesterName},`,
+            `Thank you for asking to take part in the CIS × Dragnet benchmark for ${req.firmName}.`,
+            claimed
+              ? `Your firm has already set up its space. Its coordinators sign in with their email address and PIN; ask one of them to add you to your firm's team.`
+              : `Open the link below to set up your firm's space. You will be its coordinator: you give your name and mobile number and choose a 6-digit PIN, which you then use with your email address to sign in.`,
+          ],
+          action: {
+            label: claimed ? 'Go to the firm portal' : "Set up your firm's space",
+            url: link,
+          },
+          footer: 'If you were not expecting this, reply to this email and the CIS team will help.',
         });
       }
     }
-  }
-  return resolveInvitationRequestRow(pool, input.requestId, {
-    resolution: input.resolution,
-    resolvedBy: input.resolvedBy ?? null,
+    return resolveInvitationRequestRow(c, input.requestId, {
+      resolution: input.resolution,
+      resolvedBy: input.resolvedBy ?? null,
+    });
   });
 }
 

@@ -131,6 +131,13 @@ export const journeyApi = {
       | { kind: 'participation_closed' }
     >(`/journeys/resume/${encodeURIComponent(token)}`),
 
+  /** Stops survey reminders for the respondent behind a recovery link. */
+  stopReminders: (token: string) =>
+    request<{ kind: 'reminders_stopped' }>(
+      `/journeys/stop-reminders/${encodeURIComponent(token)}`,
+      'POST',
+    ),
+
   submit: (respondentId: string) =>
     request<{ submitted: boolean; responseCount: number }>(
       `/journeys/${respondentId}/submit`,

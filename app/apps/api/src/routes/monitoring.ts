@@ -12,6 +12,8 @@ import {
   scheduleDueReminders,
   withdrawRespondent,
 } from '@cis/domain';
+import { kickMailDispatcher } from '../mail/dispatcher';
+import { publicOrigin } from '../public-url';
 
 /**
  * Monitoring routes — UX-OPS-003 (Responses) and UX-OPS-004 (Reminder timing).
@@ -92,7 +94,10 @@ export const monitoringRoutes: FastifyPluginAsyncZod = async (app) => {
     '/editions/:id/reminders/run',
     { preHandler: [app.authenticate], schema: { params: editionParam, querystring: asOfQuery } },
     async (request, reply) => {
-      const sent = await scheduleDueReminders(getPool(), request.params.id, asOfOf(request.query));
+      const sent = await scheduleDueReminders(getPool(), request.params.id, asOfOf(request.query), {
+        portalUrl: publicOrigin(),
+      });
+      kickMailDispatcher();
       return reply.send({ sent });
     },
   );

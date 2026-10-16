@@ -7,6 +7,8 @@ import {
   getFirmDigestSchedule,
   setFirmDigestSchedule,
 } from '@cis/domain';
+import { kickMailDispatcher } from '../mail/dispatcher';
+import { publicOrigin } from '../public-url';
 
 /**
  * UX-FRM-DIG-001 — Firm digest routes. A push summary of state the coordinator
@@ -38,7 +40,10 @@ export const firmDigestRoutes: FastifyPluginAsyncZod = async (app) => {
         getPool(),
         request.params.editionId,
         request.params.orgId,
+        undefined,
+        { portalUrl: publicOrigin() },
       );
+      kickMailDispatcher();
       return reply.send(result);
     },
   );
