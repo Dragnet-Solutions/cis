@@ -11,6 +11,13 @@ const FREEZE_COPY = {
   undo: 'Collection cannot open until the instruments are frozen, and a frozen instrument cannot be edited — a question changed mid-collection would mean two different surveys answered under one name.',
 };
 
+const ADD_COPY = {
+  eyebrow: 'Needs a second person',
+  title: 'Freeze the new instruments for this edition',
+  does: 'Adds only the instruments not yet frozen for this edition. Those already frozen are not touched.',
+  undo: 'Irreversible for this edition. Until it is approved, no survey link can be issued for these instruments in this edition.',
+};
+
 type View = 'main' | 'request' | 'review';
 
 export function SurveysPage({
@@ -61,14 +68,18 @@ export function SurveysPage({
     return <main>{error ? <div className="err">{error}</div> : <p>Loading…</p>}</main>;
   }
 
+  // After the first freeze, the only thing left to freeze is instruments
+  // registered since (e.g. I-LCFE joining an open edition).
+  const copy = data.frozen ? ADD_COPY : FREEZE_COPY;
+
   if (view === 'request') {
     return (
       <main>
         <CriticalActionRequest
-          eyebrow={FREEZE_COPY.eyebrow}
-          title={FREEZE_COPY.title}
-          doesText={FREEZE_COPY.does}
-          undoText={FREEZE_COPY.undo}
+          eyebrow={copy.eyebrow}
+          title={copy.title}
+          doesText={copy.does}
+          undoText={copy.undo}
           busy={busy}
           onCancel={() => setView('main')}
           onSubmit={(reason) => run(() => client.requestFreeze(editionId, reason))}
@@ -83,8 +94,8 @@ export function SurveysPage({
       <main>
         <CriticalActionReview
           eyebrow="Someone has asked for this"
-          title={FREEZE_COPY.title}
-          doesText={FREEZE_COPY.does}
+          title={copy.title}
+          doesText={copy.does}
           undoText="Irreversible for this edition."
           pending={data.pendingFreeze}
           viewer={viewer}
@@ -100,6 +111,7 @@ export function SurveysPage({
   }
 
   const { frozen, instruments, drgOps, pendingFreeze } = data;
+  const pendingNew = frozen ? (data.pendingInstruments ?? []) : [];
 
   return (
     <main>
@@ -190,7 +202,41 @@ export function SurveysPage({
           <Pill kind={frozen ? 'ok' : 'neutral'}>{frozen ? 'Frozen' : 'Open'}</Pill>
         </div>
         <div className="stagebody">
-          {frozen ? (
+          {frozen && pendingNew.length > 0 ? (
+            <>
+              <div className="warnbox">
+                <b>
+                  {pendingNew.length} new instrument{pendingNew.length === 1 ? '' : 's'} not yet
+                  frozen for this edition
+                </b>
+                <p style={{ margin: '6px 0 0' }}>
+                  {pendingNew.join(', ')}. The instruments already frozen stay exactly as they are,
+                  and collection continues. No survey link can be issued for the new ones in this
+                  edition until they are frozen, which needs a second person.
+                </p>
+              </div>
+              {pendingFreeze ? (
+                <div className="warnbox">
+                  <b>Awaiting a second person</b>
+                  <p style={{ margin: '6px 0 0' }}>
+                    Requested by {pendingFreeze.requestedBy.displayName} ·{' '}
+                    {new Date(pendingFreeze.requestedAt).toLocaleString()}
+                  </p>
+                  <div className="actions">
+                    <button type="button" className="btn" onClick={() => setView('review')}>
+                      Review the request
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="actions">
+                  <button type="button" className="btn" onClick={() => setView('request')}>
+                    Freeze the new instruments
+                  </button>
+                </div>
+              )}
+            </>
+          ) : frozen ? (
             <p>The instruments are frozen for this edition. Collection may open.</p>
           ) : pendingFreeze ? (
             <>

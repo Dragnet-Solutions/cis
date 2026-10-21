@@ -5,6 +5,9 @@ import {
   getPendingCriticalActionForEdition,
   createCriticalAction,
   isEditionInstrumentSetFrozen,
+  listInstrumentsNotFrozenForEdition,
+  listQuestionsContaining,
+  REGISTER_TODO_MARKER,
   withTransaction,
 } from '@cis/db';
 import {
@@ -28,6 +31,24 @@ import type { ActorContext } from './edition-service';
 /** Action type for the "freeze the instruments" critical action. */
 export const INSTRUMENT_FREEZE_ACTION = 'instrument_freeze';
 
+/** The Register still holds placeholder content: the controlled document has
+ *  not been loaded for these items, so the instruments cannot be frozen. */
+export class RegisterContentIncompleteError extends DomainError {
+  constructor(public readonly questionCodes: string[]) {
+    super(
+      `The instruments cannot be frozen: ${questionCodes.length} survey item${questionCodes.length === 1 ? '' : 's'} ` +
+        `still carr${questionCodes.length === 1 ? 'ies' : 'y'} placeholder content marked ${REGISTER_TODO_MARKER} ` +
+        `(${questionCodes.join(', ')}). Load the controlled wording into the Survey Register first.`,
+      'REGISTER_CONTENT_INCOMPLETE',
+    );
+  }
+}
+
+async function assertNoPlaceholderContent(db: Pick<Pool, 'query'>): Promise<void> {
+  const codes = await listQuestionsContaining(db, REGISTER_TODO_MARKER);
+  if (codes.length > 0) throw new RegisterContentIncompleteError(codes);
+}
+
 export async function requestFreeze(
   pool: Pool,
   rbac: RbacContext,
@@ -44,15 +65,29 @@ export async function requestFreeze(
 
   const edition = await getEditionById(pool, editionId);
   if (!edition) throw new EditionStateError(`Edition ${editionId} not found`);
-  if (edition.status !== 'draft') {
+
+  // Two kinds of freeze, one maker-checker action:
+  //  - initial: a draft edition's whole instrument set;
+  //  - add: instruments registered after the edition was frozen (e.g. I-LCFE
+  //    joining an open edition). Only instruments with no snapshot in this
+  //    edition are added; existing snapshots are never touched.
+  const alreadyFrozen = await isEditionInstrumentSetFrozen(pool, editionId);
+  const pendingCodes = await listInstrumentsNotFrozenForEdition(pool, editionId);
+  if (alreadyFrozen) {
+    if (edition.status !== 'draft' && edition.status !== 'open') {
+      throw new EditionStateError(
+        `New instruments can only be added while the edition is in draft or open (current: ${edition.status})`,
+      );
+    }
+    if (pendingCodes.length === 0) {
+      throw new EditionStateError('The instruments are already frozen for this edition');
+    }
+  } else if (edition.status !== 'draft') {
     throw new EditionStateError(
       `Instruments can only be frozen while the edition is in draft (current: ${edition.status})`,
     );
   }
-
-  if (await isEditionInstrumentSetFrozen(pool, editionId)) {
-    throw new EditionStateError('The instruments are already frozen for this edition');
-  }
+  await assertNoPlaceholderContent(pool);
 
   const existing = await getPendingCriticalActionForEdition(
     pool,
@@ -68,7 +103,12 @@ export async function requestFreeze(
   const action = await createCriticalAction(pool, {
     actionType: INSTRUMENT_FREEZE_ACTION,
     requestedBy: rbac.userId,
-    payload: { reason: trimmed, editionLabel: edition.label },
+    payload: {
+      reason: trimmed,
+      editionLabel: edition.label,
+      mode: alreadyFrozen ? 'add' : 'initial',
+      instrumentCodes: pendingCodes,
+    },
     editionId,
   });
 
@@ -121,6 +161,12 @@ export async function decideFreeze(
   }
 
   if (decision.approved) {
+    const edition = await getEditionById(pool, editionId);
+    if (!edition || (edition.status !== 'draft' && edition.status !== 'open')) {
+      throw new EditionStateError(
+        `Instruments can only be frozen while the edition is in draft or open (current: ${edition?.status ?? 'missing'})`,
+      );
+    }
     // Approve the action AND freeze every instrument into an immutable snapshot,
     // atomically. If any part fails, none of it takes effect.
     await withTransaction(pool, async (client) => {
@@ -133,12 +179,28 @@ export async function decideFreeze(
       if (a.rowCount === 0) {
         throw new CriticalActionStateError('Freeze request could not be approved');
       }
+      // Re-checked at approval: placeholder content loaded after the request
+      // must not be frozen either.
+      await assertNoPlaceholderContent(client);
 
-      const defs = await client.query<{ id: string }>(
-        `SELECT id FROM instrument_definitions ORDER BY code`,
+      // Only instruments with no snapshot in this edition — and, for an
+      // "add" request, only the ones that request named — are frozen. An
+      // existing snapshot is never touched.
+      const pending = new Set(await listInstrumentsNotFrozenForEdition(client, editionId));
+      const requested = Array.isArray(action.payload['instrumentCodes'])
+        ? new Set(action.payload['instrumentCodes'] as string[])
+        : null;
+      const all = await client.query<{ id: string; code: string }>(
+        `SELECT id, code FROM instrument_definitions ORDER BY code`,
       );
-      if (defs.rowCount === 0) {
+      if (all.rowCount === 0) {
         throw new DomainError('No instruments exist to freeze', 'NO_INSTRUMENTS');
+      }
+      const defs = {
+        rows: all.rows.filter((d) => pending.has(d.code) && (!requested || requested.has(d.code))),
+      };
+      if (defs.rows.length === 0) {
+        throw new CriticalActionStateError('Nothing is left to freeze for this request');
       }
 
       for (const def of defs.rows) {
@@ -159,7 +221,7 @@ export async function decideFreeze(
         await client.query(
           `UPDATE instrument_definition_versions
            SET is_frozen = TRUE, frozen_at = NOW(), frozen_by = $1
-           WHERE id = $2`,
+           WHERE id = $2 AND is_frozen = FALSE`,
           [rbac.userId, version.id],
         );
         await client.query(
@@ -189,7 +251,11 @@ export async function decideFreeze(
       entityType: 'edition',
       entityId: editionId,
       editionId,
-      newValue: { frozen: true },
+      newValue: {
+        frozen: true,
+        mode: action.payload['mode'] ?? 'initial',
+        instrumentCodes: action.payload['instrumentCodes'] ?? null,
+      },
       reason: typeof action.payload['reason'] === 'string' ? action.payload['reason'] : null,
       ipAddress: ctx.ipAddress ?? null,
       userAgent: ctx.userAgent ?? null,

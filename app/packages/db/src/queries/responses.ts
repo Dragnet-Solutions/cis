@@ -402,8 +402,45 @@ export async function setReportDelivery(
 
 /** Kill a respondent's recovery token so its survey link no longer resolves
  *  (used by a regulator referral: the earlier link dies with its partial answers). */
+/**
+ * Invalidate a respondent's link (cancel and start again): the token stops
+ * resolving, it is remembered as revoked so opening it can say the link no
+ * longer works, and any part-finished answers are discarded — a partial
+ * response never transfers between people (UX-OPS-007 v2.10).
+ */
 export async function revokeRespondentToken(pool: Pool, id: string): Promise<void> {
-  await query(pool, 'UPDATE respondents SET recovery_token = NULL WHERE id = $1', [id]);
+  await query(
+    pool,
+    `UPDATE respondents
+        SET revoked_recovery_token = COALESCE(recovery_token, revoked_recovery_token),
+            recovery_token = NULL
+      WHERE id = $1`,
+    [id],
+  );
+  await query(pool, 'DELETE FROM respondent_drafts WHERE respondent_id = $1', [id]);
+}
+
+/** Whether a token is a link that was invalidated by cancel-and-start-again. */
+export async function isRevokedRecoveryToken(pool: Pool, token: string): Promise<boolean> {
+  const res = await query<{ found: boolean }>(
+    pool,
+    'SELECT EXISTS (SELECT 1 FROM respondents WHERE revoked_recovery_token = $1) AS found',
+    [token],
+  );
+  return res.rows[0]?.found === true;
+}
+
+/** Whether this respondent's link was invalidated (and so may not answer). */
+export async function isRespondentLinkInvalidated(pool: Pool, id: string): Promise<boolean> {
+  const res = await query<{ found: boolean }>(
+    pool,
+    `SELECT EXISTS (
+       SELECT 1 FROM respondents
+        WHERE id = $1 AND recovery_token IS NULL AND revoked_recovery_token IS NOT NULL
+     ) AS found`,
+    [id],
+  );
+  return res.rows[0]?.found === true;
 }
 
 export async function getRespondentByRecoveryToken(

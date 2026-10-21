@@ -197,33 +197,69 @@ export async function getEditionInstrumentSnapshots(
 /**
  * The single authoritative answer to "is this edition's survey set frozen?".
  *
- * Frozen means every current instrument definition has a snapshot row for this
- * edition. Freeze is all-or-nothing (decideFreeze snapshots every instrument in
- * one transaction), so in practice snapshots either cover all instruments or
- * none — but requiring full coverage keeps this honest if instruments are ever
- * added between freeze attempts. This is a derived query, not a mutable flag
- * scattered across the schema.
+ * Frozen means the edition's instrument set has been frozen: it holds
+ * snapshot rows (the first freeze snapshots every instrument in one
+ * transaction). Only instruments already part of the edition count, so an
+ * instrument registered afterwards does not unfreeze an open, collecting
+ * edition; it is pending for this edition until its own maker-checker freeze
+ * adds it (instrument-service). A derived query, not a mutable flag.
  */
 export async function isEditionInstrumentSetFrozen(
   pool: Pool,
   editionId: string,
 ): Promise<boolean> {
-  const result = await query<{ total: string; frozen: string }>(
+  // The edition's instrument set is the instruments frozen into it. Once the
+  // first freeze is approved the edition is frozen for good: an instrument
+  // registered later (e.g. I-LCFE) is PENDING for this edition — listed by
+  // `listInstrumentsNotFrozenForEdition` and added by its own maker-checker
+  // freeze — and never makes an open, collecting edition read as unfrozen.
+  const result = await query<{ frozen: boolean }>(
     pool,
-    `SELECT
-       (SELECT COUNT(*) FROM instrument_definitions)::text AS total,
-       (SELECT COUNT(DISTINCT idv.instrument_definition_id)
-          FROM edition_instrument_snapshots eis
-          JOIN instrument_definition_versions idv
-            ON idv.id = eis.instrument_definition_version_id
-         WHERE eis.edition_id = $1)::text AS frozen`,
+    `SELECT EXISTS (
+       SELECT 1 FROM edition_instrument_snapshots WHERE edition_id = $1
+     ) AS frozen`,
     [editionId],
   );
-  const row = result.rows[0];
-  if (!row) return false;
-  const total = parseInt(row.total, 10);
-  const frozen = parseInt(row.frozen, 10);
-  return total > 0 && frozen >= total;
+  return result.rows[0]?.frozen === true;
+}
+
+/** Instrument codes with no snapshot in this edition, in code order: every
+ *  instrument before the first freeze; afterwards, only ones registered since. */
+export async function listInstrumentsNotFrozenForEdition(
+  db: Pick<Pool, 'query'>,
+  editionId: string,
+): Promise<string[]> {
+  const result = await db.query<{ code: string }>(
+    `SELECT d.code FROM instrument_definitions d
+      WHERE NOT EXISTS (
+        SELECT 1 FROM edition_instrument_snapshots eis
+          JOIN instrument_definition_versions idv
+            ON idv.id = eis.instrument_definition_version_id
+         WHERE eis.edition_id = $1 AND idv.instrument_definition_id = d.id)
+      ORDER BY d.code`,
+    [editionId],
+  );
+  return result.rows.map((r) => r.code);
+}
+
+/** Whether this instrument has a snapshot in this edition. */
+export async function isInstrumentFrozenForEdition(
+  pool: Pool,
+  editionId: string,
+  instrumentCode: string,
+): Promise<boolean> {
+  const result = await query<{ frozen: boolean }>(
+    pool,
+    `SELECT EXISTS (
+       SELECT 1 FROM edition_instrument_snapshots eis
+         JOIN instrument_definition_versions idv
+           ON idv.id = eis.instrument_definition_version_id
+         JOIN instrument_definitions d ON d.id = idv.instrument_definition_id
+        WHERE eis.edition_id = $1 AND d.code = $2
+     ) AS frozen`,
+    [editionId, instrumentCode],
+  );
+  return result.rows[0]?.frozen === true;
 }
 
 /**

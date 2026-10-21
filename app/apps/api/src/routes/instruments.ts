@@ -7,6 +7,7 @@ import {
   getUserById,
   getEditionInstrumentViews,
   isEditionInstrumentSetFrozen,
+  listInstrumentsNotFrozenForEdition,
   getPendingCriticalActionForEdition,
   listDrgOpsQuestionSummary,
   getInstrumentItems,
@@ -40,6 +41,9 @@ const InstrumentSchema = z.object({
 
 const InstrumentsResponse = z.object({
   frozen: z.boolean(),
+  /** Frozen edition only: instruments registered since, not yet frozen into
+   *  it (added by their own maker-checker freeze). */
+  pendingInstruments: z.array(z.string()),
   pendingFreeze: PendingActionSchema,
   instruments: z.array(InstrumentSchema),
   drgOps: z.array(
@@ -103,9 +107,13 @@ export const instrumentRoutes: FastifyPluginAsyncZod = async (app) => {
         getPendingCriticalActionForEdition(pool, edition.id, INSTRUMENT_FREEZE_ACTION),
         listDrgOpsQuestionSummary(pool),
       ]);
+      const pendingInstruments = frozen
+        ? await listInstrumentsNotFrozenForEdition(pool, edition.id)
+        : [];
 
       return reply.send({
         frozen,
+        pendingInstruments,
         pendingFreeze: await serializePending(pool, pending),
         instruments: views.map((v) => ({
           code: v.definition.code,

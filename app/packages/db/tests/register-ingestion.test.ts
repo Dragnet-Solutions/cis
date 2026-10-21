@@ -184,3 +184,48 @@ describe('importSurveyRegister — the loader', () => {
     });
   });
 });
+
+describe('scope_gate — a branch only by controlled decision', () => {
+  const GATE_ITEM = {
+    question_id: 'T-Q0',
+    kind: 'single',
+    text: 'How much direct operational dealing?',
+    scope: 'shared',
+    options: ['Regular and substantial', 'Occasional', 'Rare', 'Effectively none'],
+    scope_gate: { close_on: ['Rare', 'Effectively none'], decision: 'Decision ref, 21 Oct 2026' },
+  };
+  const withGate = (patch: Record<string, unknown>) =>
+    validPayload({ instruments: { T: [{ ...GATE_ITEM, ...patch }, VALID_ITEM] } });
+
+  it('accepts a gate on a shared single item that names its decision', () => {
+    expect(() => validateRegisterPayload(withGate({}))).not.toThrow();
+  });
+
+  it('rejects a gate without a decision', () => {
+    expect(() => validateRegisterPayload(withGate({ scope_gate: { close_on: ['Rare'] } }))).toThrow(
+      /scope_gate.decision/,
+    );
+  });
+
+  it('rejects closing options the item does not offer', () => {
+    expect(() =>
+      validateRegisterPayload(withGate({ scope_gate: { close_on: ['Never'], decision: 'x' } })),
+    ).toThrow(/close_on/);
+  });
+
+  it('rejects a gate on anything but a shared single-choice item', () => {
+    expect(() => validateRegisterPayload(withGate({ kind: 'select' }))).toThrow(/single-choice/);
+    expect(() => validateRegisterPayload(withGate({ scope: 'firm_specific' }))).toThrow(
+      /single-choice/,
+    );
+  });
+
+  it('loads the gate, decision included, onto the runtime item', async () => {
+    await importSurveyRegister(pool, withGate({}), META);
+    const [gate] = await getInstrumentItems(pool, 'T');
+    expect(gate!.scopeGate).toEqual({
+      closeOn: ['Rare', 'Effectively none'],
+      decision: 'Decision ref, 21 Oct 2026',
+    });
+  });
+});

@@ -30,6 +30,10 @@ export interface AnswerContext {
   persona: Persona;
   /** Target goodness in [0, 1]; null = no opinion tilt (uniform choice). */
   goodness: number | null;
+  /** For a scope-gate item (Register `scopeGate`): true answers one of its
+   *  closing options, ending the survey there; otherwise (the default) one
+   *  of the options that keeps the survey going. */
+  closeScopeGate?: boolean;
 }
 
 /** Scales where a HIGH number is BAD (scoring transform N2). */
@@ -262,6 +266,14 @@ export function generateAnswer(item: SurveyItem, ctx: AnswerContext): AnswerValu
       break;
     }
     case 'single':
+      if (item.scopeGate) {
+        const closing = item.scopeGate.closeOn;
+        const opts = (item.options ?? []).filter((o) =>
+          ctx.closeScopeGate ? closing.includes(o) : !closing.includes(o),
+        );
+        a = rng.pick(opts.length > 0 ? opts : (item.options ?? []));
+        break;
+      }
       a = pickOrdinal(item.options ?? [], ctx);
       break;
     case 'yesno': {

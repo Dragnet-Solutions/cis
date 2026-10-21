@@ -24,8 +24,23 @@ type Screen =
       firmSeatLinkToken: string | null;
       outreachToken: string | null;
     }
-  | { name: 'complete'; respondentId: string; code: string; retail: boolean }
+  | {
+      name: 'complete';
+      respondentId: string;
+      code: string;
+      retail: boolean;
+      closedByScopeGate: boolean;
+    }
   | { name: 'already-submitted' }
+  | { name: 'link-invalidated' }
+  | {
+      name: 'institution-start';
+      respondentId: string;
+      code: string;
+      institution: string;
+      questionCount: number;
+      started: boolean;
+    }
   | { name: 'reminders-stopped'; token: string }
   | { name: 'error'; kind: ErrorStateKind }
   | { name: 'help-about' }
@@ -54,7 +69,8 @@ const SEGMENT_INSTRUMENT: Record<
  * way, not as a separate path.
  *
  * "I represent an institution" is for institutional INVESTORS (S5a / S5b). The
- * regulator and market-infrastructure reviews (I-SEC, I-NGX, I-CSCS, I-DEP)
+ * regulator and market-infrastructure reviews (every Register instrument of
+ * type 'regulator': I-SEC, I-NGX, I-CSCS, I-DEP, I-LCFE, I-NASD, I-FMDQ, ...)
  * have no public entry: they open only from the named contact's issued link
  * (?resume=), and the server refuses to start one any other way.
  */
@@ -145,6 +161,19 @@ export function RespondentApp(): JSX.Element {
               setScreen({ name: 'error', kind: 'participation_closed' });
             } else if (state.kind === 'already_submitted') {
               setScreen({ name: 'already-submitted' });
+            } else if (state.kind === 'link_invalidated') {
+              setScreen({ name: 'link-invalidated' });
+            } else if (state.instrument?.instrumentType === 'regulator') {
+              // UX-INS-003: a market institution's link opens on its own start
+              // screen, with the instrument resolved from the Register.
+              setScreen({
+                name: 'institution-start',
+                respondentId: state.respondent.id,
+                code: state.respondent.instrumentCode,
+                institution: state.respondent.institutionName ?? state.instrument.name,
+                questionCount: state.items.length,
+                started: state.drafts.length > 0,
+              });
             } else {
               const firms = ctx.editionId ? await journeyApi.participatingFirms(ctx.editionId) : [];
               if (cancelled) return;
@@ -296,7 +325,7 @@ export function RespondentApp(): JSX.Element {
           <RunJourney
             respondentId={screen.respondentId}
             firms={screen.firms}
-            onSubmitted={() => {
+            onSubmitted={(outcome) => {
               if (screen.firmSeatLinkToken) {
                 void journeyApi.firmSeatComplete(screen.firmSeatLinkToken);
               }
@@ -308,6 +337,7 @@ export function RespondentApp(): JSX.Element {
                 respondentId: screen.respondentId,
                 code: screen.code,
                 retail: screen.retail,
+                closedByScopeGate: outcome.closedByScopeGate,
               });
             }}
           />
@@ -319,6 +349,7 @@ export function RespondentApp(): JSX.Element {
             editionId={editionId}
             instrumentCode={screen.code}
             canRefer={screen.retail}
+            closedByScopeGate={screen.closedByScopeGate}
             onReferralStarted={(next) =>
               setScreen({
                 name: 'running',
@@ -358,6 +389,54 @@ export function RespondentApp(): JSX.Element {
             <a className="btn" href={`/survey?resume=${encodeURIComponent(screen.token)}`}>
               Return to my survey
             </a>
+          </div>
+        )}
+
+        {screen.name === 'institution-start' && (
+          <div className="journey">
+            <p className="eyebrow">Market institution survey</p>
+            <h1 tabIndex={-1}>{screen.institution}</h1>
+            <p className="lede">
+              Your organisation has been invited to contribute. {screen.questionCount} questions.
+            </p>
+            <p>
+              Your answers are reported alongside the study’s findings, in its Institutional
+              Perspectives section. They are never scored and never enter an index.
+            </p>
+            <p>
+              Your answers save as you go, so you can stop and come back to this link. One response
+              is recorded for your organisation.
+            </p>
+            <div className="actions">
+              <button
+                type="button"
+                className="btn"
+                onClick={() =>
+                  setScreen({
+                    name: 'running',
+                    respondentId: screen.respondentId,
+                    firms: [],
+                    code: screen.code,
+                    retail: false,
+                    firmSeatLinkToken: null,
+                    outreachToken: null,
+                  })
+                }
+              >
+                {screen.started ? 'Continue where you left off' : 'Begin'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {screen.name === 'link-invalidated' && (
+          <div className="card" role="alert">
+            <h2>This link no longer works.</h2>
+            <p>
+              The survey has been sent to someone else at your organisation, and anything started on
+              this link has been discarded. If you think this is a mistake, reply to the email that
+              brought you here.
+            </p>
           </div>
         )}
 

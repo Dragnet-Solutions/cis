@@ -16,6 +16,7 @@ export const institutionRoutes: FastifyPluginAsyncZod = async (app) => {
         name: r.name,
         isActive: r.isActive,
         familyCode: r.familyCode,
+        instrumentCode: r.instrumentCode,
       })),
     });
   });

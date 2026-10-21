@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import {
+  applyScopeGate,
   buildJourneySequence,
   describeAnswer,
   firmContextAt,
@@ -42,18 +43,26 @@ export function JourneyShell({
   firmsById: Record<string, ParticipatingFirm>;
   initialDrafts: DraftRow[];
   initialStep: number;
-  onSubmitted: () => void;
+  onSubmitted: (outcome: { closedByScopeGate: boolean }) => void;
 }): JSX.Element {
-  const sequence = useMemo(() => buildJourneySequence(items, ratedFirmIds), [items, ratedFirmIds]);
+  const fullSequence = useMemo(
+    () => buildJourneySequence(items, ratedFirmIds),
+    [items, ratedFirmIds],
+  );
 
   const [answers, setAnswers] = useState<Record<string, { a: unknown; c?: string }>>(() => {
     const seed: Record<string, { a: unknown; c?: string }> = {};
     for (const d of initialDrafts) seed[key(d.questionId, d.ratedFirmId)] = d.answer;
     return seed;
   });
-  const [step, setStep] = useState(() =>
-    Math.min(Math.max(initialStep, 0), Math.max(sequence.length - 1, 0)),
-  );
+  // The scope-gate route (shared with the server): a gate answered with a
+  // closing option ends the journey there — nothing after it is shown.
+  const gated = applyScopeGate(fullSequence, (s) => answers[key(s.item.id, s.ratedFirmId)]);
+  const sequence = gated.steps;
+  const [rawStep, setStep] = useState(() => Math.max(initialStep, 0));
+  // Clamped every render: a closing gate answer can shorten the journey under
+  // a resume point that was further on.
+  const step = Math.min(rawStep, Math.max(sequence.length - 1, 0));
   const [reviewing, setReviewing] = useState(false);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -73,6 +82,8 @@ export function JourneyShell({
   }
 
   const current = sequence[step]!;
+  /** The current item is a scope gate whose answer closes the survey. */
+  const closesHere = gated.closedAt !== null && current === sequence[sequence.length - 1];
   const value = answers[key(current.item.id, current.ratedFirmId)];
   const answered = isAnswered(current.item, value);
   const why = outstanding(current.item, value);
@@ -138,6 +149,12 @@ export function JourneyShell({
 
   function goNext(): void {
     if (!answered) return;
+    // A closing scope-gate answer ends the survey immediately: it is sent as
+    // complete, with no review of questions that were never asked.
+    if (closesHere) {
+      void doSubmit();
+      return;
+    }
     if (step + 1 < sequence.length) setStep(step + 1);
     else setReviewing(true);
   }
@@ -158,7 +175,7 @@ export function JourneyShell({
       await Promise.all(Object.values(queue.current));
       for (const k of [...failed.current]) await saveLatest(k);
       await journeyApi.submit(respondentId);
-      onSubmitted();
+      onSubmitted({ closedByScopeGate: gated.closedAt !== null });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not submit');
       setSubmitting(false);
@@ -284,8 +301,14 @@ export function JourneyShell({
         <button type="button" className="btn-2" onClick={goBack} disabled={step === 0}>
           Back
         </button>
-        <button type="button" className="btn" onClick={goNext} disabled={!answered}>
-          {step + 1 < sequence.length ? 'Next' : 'Review'}
+        <button type="button" className="btn" onClick={goNext} disabled={!answered || submitting}>
+          {closesHere
+            ? submitting
+              ? 'Sending…'
+              : 'Finish'
+            : step + 1 < sequence.length
+              ? 'Next'
+              : 'Review'}
         </button>
       </div>
     </div>

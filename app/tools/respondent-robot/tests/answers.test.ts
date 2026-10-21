@@ -353,3 +353,45 @@ describe('ROBOT_NO_NEUTRAL=1', () => {
     expect([...seen].some((v) => NON_ANSWERS.includes(v))).toBe(true);
   });
 });
+
+describe('scope gate (Q0)', () => {
+  const gate: SurveyItem = {
+    ...base,
+    scored: false,
+    id: 'I-LCFE-Q0',
+    kind: 'single',
+    text: 'How much direct operational dealing?',
+    options: ['Regular and substantial', 'Occasional', 'Rare', 'Effectively none'],
+    scopeGate: { closeOn: ['Rare', 'Effectively none'] },
+  };
+  const personas: Persona[] = [
+    { kind: 'normal' },
+    { kind: 'speeder' },
+    { kind: 'straightliner', position: 1 },
+  ];
+
+  it('by default always keeps the survey going (a non-closing option)', () => {
+    for (const persona of personas) {
+      for (let n = 0; n < 40; n++) {
+        const v = generateAnswer(gate, {
+          rng: new Rng(`g${persona.kind}${n}`),
+          persona,
+          goodness: 0.5,
+        });
+        expect(['Regular and substantial', 'Occasional']).toContain(v!.a);
+      }
+    }
+  });
+
+  it('answers a closing option only when asked to close the gate', () => {
+    for (let n = 0; n < 40; n++) {
+      const v = generateAnswer(gate, {
+        rng: new Rng(`c${n}`),
+        persona: { kind: 'normal' },
+        goodness: 0.5,
+        closeScopeGate: true,
+      });
+      expect(['Rare', 'Effectively none']).toContain(v!.a);
+    }
+  });
+});

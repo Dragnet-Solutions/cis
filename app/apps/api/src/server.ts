@@ -145,6 +145,7 @@ function resolveStatusCode(error: Error & { statusCode?: number }): number {
       return 403;
     case 'InvalidReasonError':
     case 'ResponseScopeError':
+    case 'ScopeClosedError':
     case 'ReviewGapError':
     case 'FirmPortalError':
     case 'SignoffPayloadError':
@@ -158,9 +159,11 @@ function resolveStatusCode(error: Error & { statusCode?: number }): number {
     case 'ParticipationClosedError':
     case 'CollectionClosedError':
     case 'RegulatorLinkRequiredError':
+    case 'LinkInvalidatedError':
     case 'InvitationRequiredError':
       return 403;
     case 'EditionStateError':
+    case 'RegisterContentIncompleteError':
     case 'InstrumentsNotFrozenError':
     case 'CriticalActionStateError':
     case 'CandidateScoringError':

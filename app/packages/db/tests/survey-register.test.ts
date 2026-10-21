@@ -6,6 +6,9 @@
  * mismatch, scope mismatch, kind mismatch, or flag mismatch. Per SV-010 §5,
  * "a comparison must fail on a missing ID rather than pass on a plausible
  * paraphrase." This is the permanent regression gate for any content update.
+ * It covers every instrument in the Register (13: S1–S5b, I-SEC, I-NGX,
+ * I-CSCS, I-DEP and the bespoke I-LCFE, I-NASD, I-FMDQ), on IDs, text,
+ * options, sequence, limits, required/optional state and branches.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { Pool } from 'pg';
@@ -50,8 +53,12 @@ describe('SV-010 Register comparison gate', () => {
       const liveItems = await getInstrumentItems(pool, code);
       const liveById = new Map(liveItems.map((i) => [i.id, i]));
 
-      // No extra live rows beyond the Register.
+      // No extra live rows beyond the Register, and the Register's sequence.
       expect(liveItems.length).toBe(rawItems.length);
+      expect(
+        liveItems.map((i) => i.id),
+        `sequence for ${code}`,
+      ).toEqual(rawItems.map((r) => r.question_id));
 
       for (const raw of rawItems) {
         totalSeen += 1;
@@ -70,6 +77,48 @@ describe('SV-010 Register comparison gate', () => {
         );
         expect(live.isDrgOps, `drg flag mismatch for ${raw.question_id}`).toBe(!!raw.is_drg_ops);
         expect(live.scored, `scored flag mismatch for ${raw.question_id}`).toBe(raw.scored ?? true);
+        // Limits, required/optional state and per-kind rules.
+        const flag = (v: number | undefined) => v === 1;
+        expect(norm(live.selectUpToN), `select limit for ${raw.question_id}`).toBe(
+          norm(raw.select_up_to_n),
+        );
+        expect(norm(live.rankExactlyN), `rank limit for ${raw.question_id}`).toBe(
+          norm(raw.rank_exactly_n),
+        );
+        expect(!!live.selectThenGreatest, `greatest rule for ${raw.question_id}`).toBe(
+          flag(raw.select_then_greatest),
+        );
+        expect(!!live.answerOptional, `required/optional for ${raw.question_id}`).toBe(
+          flag(raw.answer_optional),
+        );
+        expect(!!live.hasOptionalComment, `comment for ${raw.question_id}`).toBe(
+          flag(raw.has_optional_comment),
+        );
+        expect(norm(live.conditionalDetailOn), `detail rule for ${raw.question_id}`).toBe(
+          norm(raw.conditional_detail_on),
+        );
+        expect(norm(live.scaleMin), `scale min for ${raw.question_id}`).toBe(norm(raw.scale_min));
+        expect(norm(live.scaleMax), `scale max for ${raw.question_id}`).toBe(norm(raw.scale_max));
+        expect(norm(live.scaleAnchors), `anchors for ${raw.question_id}`).toBe(
+          norm(raw.scale_anchors),
+        );
+        expect(norm(live.gridRows), `grid rows for ${raw.question_id}`).toEqual(
+          norm(raw.grid_rows),
+        );
+        expect(norm(live.gridDimensions), `grid dims for ${raw.question_id}`).toEqual(
+          norm(raw.grid_dimensions),
+        );
+        expect(norm(live.gridScale), `grid scale for ${raw.question_id}`).toEqual(
+          norm(raw.grid_scale),
+        );
+        // Branches: SV-010 §4a — the Register has none, except a scope gate a
+        // later controlled decision authorises (Q0, CIS sign-off 21 Oct 2026).
+        // The runtime branch must be exactly the Register's, decision included.
+        expect(norm(live.scopeGate), `branch for ${raw.question_id}`).toEqual(
+          raw.scope_gate
+            ? { closeOn: raw.scope_gate.close_on, decision: raw.scope_gate.decision }
+            : null,
+        );
       }
     }
 
@@ -98,8 +147,61 @@ describe('SV-010 Register comparison gate', () => {
     // as the existing Family A/B/C instruments — neither DRG-OPS nor
     // firm-specific. Its addition intentionally moves REGISTER_ITEM_COUNT
     // 90 → 95; this loop confirms it didn't also move a count it shouldn't.
-    for (const code of ['S1', 'S2', 'S3', 'I-SEC', 'I-NGX', 'I-CSCS', 'I-DEP']) {
+    for (const code of [
+      'S1',
+      'S2',
+      'S3',
+      'I-SEC',
+      'I-NGX',
+      'I-CSCS',
+      'I-DEP',
+      'I-LCFE',
+      'I-NASD',
+      'I-FMDQ',
+    ]) {
       expect(firmCounts[code]).toBe(0);
     }
+  });
+
+  it('covers every instrument in the Register, the three bespoke institutional ones included', async () => {
+    const fixture = getRegisterFixture();
+    expect([...INSTRUMENT_CODES].sort()).toEqual(Object.keys(fixture.instruments).sort());
+    expect(INSTRUMENT_CODES).toEqual(
+      expect.arrayContaining(['I-SEC', 'I-NGX', 'I-CSCS', 'I-LCFE', 'I-NASD', 'I-FMDQ']),
+    );
+    expect(INSTRUMENT_CODES).toHaveLength(13);
+    for (const code of ['I-LCFE', 'I-NASD', 'I-FMDQ']) {
+      const items = fixture.instruments[code]!;
+      // The document's ID scheme: Q0 scope gate, then Q1–Q5.
+      expect(items.map((i) => i.question_id)).toEqual(
+        [0, 1, 2, 3, 4, 5].map((n) => `${code}-Q${n}`),
+      );
+      expect(items.every((i) => i.scored === false)).toBe(true);
+    }
+  });
+
+  it('a branch is admitted only on the items that carry a controlled decision', () => {
+    const fixture = getRegisterFixture();
+    const gated = Object.values(fixture.instruments)
+      .flat()
+      .filter((i) => i.scope_gate);
+    expect(gated.map((i) => i.question_id).sort()).toEqual(['I-FMDQ-Q0', 'I-LCFE-Q0', 'I-NASD-Q0']);
+    for (const g of gated) {
+      expect(g.scope_gate!.close_on).toEqual(['Rare', 'Effectively none']);
+      expect(g.scope_gate!.decision).toMatch(/supersedes SV-010/);
+    }
+  });
+
+  it('fails on a missing ID rather than passing a paraphrase', async () => {
+    await seedSurveyRegister(pool);
+    await pool.query(
+      `UPDATE instrument_questions SET question_code = 'I-LCFE-Q9' WHERE question_code = 'I-LCFE-Q3'`,
+    );
+    const live = await getInstrumentItems(pool, 'I-LCFE');
+    const raw = getRegisterFixture().instruments['I-LCFE']!;
+    const liveIds = new Set(live.map((i) => i.id));
+    expect(raw.filter((r) => !liveIds.has(r.question_id)).map((r) => r.question_id)).toEqual([
+      'I-LCFE-Q3',
+    ]);
   });
 });

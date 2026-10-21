@@ -301,19 +301,20 @@ describe('Multi-role institution — CSCS holds Family C AND Family D independen
 describe('The institutional roster', () => {
   it('lists one row per REGISTERED (institution, family) role, all starting at no_contact', async () => {
     const list = await listRegulators(pool, editionId);
-    // 4 registered roles: SEC(A), NGX(B), CSCS(C), CSCS(D). NASD, LCFE and the
-    // three FMDQ entities are seeded inactive (under CIS review, Screen
-    // Stitching Guide §8) and carry no engagement row yet.
-    expect(list).toHaveLength(4);
+    // 7 registered roles: SEC(A), NGX(B), LCFE(B), NASD(B), FMDQ Group(B),
+    // CSCS(C), CSCS(D). The three FMDQ subsidiaries are seeded inactive (FMDQ
+    // registers as one entity this edition) and carry no engagement row.
+    expect(list).toHaveLength(7);
     expect(list.every((r) => r.state === 'no_contact')).toBe(true);
     expect(list.every((r) => r.nextStep === 'Add a contact')).toBe(true);
   });
 
-  it('excludes institutions under CIS review — not registered, not in collection', async () => {
+  it('excludes institutions not registered — not in collection', async () => {
     const list = await listRegulators(pool, editionId);
     const names = list.map((r) => r.name);
-    expect(names).not.toContain('NASD OTC Securities Exchange');
-    expect(names).not.toContain('Lagos Commodities and Futures Exchange');
+    expect(names).toContain('NASD OTC Securities Exchange');
+    expect(names).toContain('Lagos Commodities and Futures Exchange');
+    expect(names).toContain('FMDQ Group');
     expect(names).not.toContain('FMDQ Securities Exchange Limited');
     expect(names).not.toContain('FMDQ Clear Limited');
     expect(names).not.toContain('FMDQ Depository Limited');

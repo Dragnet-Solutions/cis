@@ -254,7 +254,7 @@ export function App(): JSX.Element {
         </NavTab>
         <span aria-hidden="true">·</span>
         <NavTab tabKey="regulators" tab={tab} phase={phase} setTab={setTab}>
-          Regulators
+          Market institutions
         </NavTab>
         <span aria-hidden="true">·</span>
         <NavTab tabKey="scoring" tab={tab} phase={phase} setTab={setTab}>
@@ -317,7 +317,7 @@ export function App(): JSX.Element {
       ) : tab === 'surveys' ? (
         <SurveysPage client={client} editionId={editionId} viewer={session.user} />
       ) : tab === 'renderer' ? (
-        <RendererPage client={client} />
+        <RendererPage client={client} editionId={editionId} />
       ) : tab === 'firmteam' ? (
         <FirmTeamPage client={client} editionId={editionId} />
       ) : tab === 'people' ? (

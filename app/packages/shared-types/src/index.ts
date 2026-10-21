@@ -125,6 +125,8 @@ export interface InstrumentQuestion {
   gridRows: string[] | null;
   gridDimensions: Record<string, string[]> | null;
   gridScale: { min: number; max: number } | null;
+  /** Register `scope_gate`: answering one of `closeOn` closes the instrument. */
+  scopeGate: { closeOn: string[]; decision?: string } | null;
   createdAt: Date;
 }
 
@@ -862,6 +864,12 @@ export interface Institution {
 export interface InstitutionRole {
   institutionId: string;
   familyCode: InstrumentFamilyCode;
+  /** The role's own bespoke instrument (e.g. I-LCFE), or null when the role
+   *  answers its family's shared instrument (FAMILY_META). Register data. */
+  instrumentCode: string | null;
+  /** The role's own one-line vantage (the instrument's strap), or null to use
+   *  the family's description. Register data. */
+  mandate: string | null;
 }
 
 // ─── Regulator engagement (Phase 12 — UX-OPS-007) ─────────────────────────────
@@ -900,6 +908,16 @@ export interface RegulatorEngagementView {
   /** The institution's display name (e.g. "Securities and Exchange Commission"). */
   name: string;
   mandate: string;
+  /** The bespoke instrument the register assigns this role, or null when none
+   *  is assigned and loaded ("Questionnaire not assigned"; no link possible). */
+  instrumentCode: string | null;
+  questionnaireAssigned: boolean;
+  /** False when the edition is already frozen and this questionnaire is not
+   *  yet frozen into it ("Questionnaire not frozen for this edition"). */
+  questionnaireFrozen: boolean;
+  /** Responded, and its scope-gate answer (Q0 "Rare" / "Effectively none")
+   *  closed the survey: a contributor with no attributed passage. */
+  closedByScopeGate: boolean;
   /** The Phase 10 engagement status this maps onto. */
   status: 'not_started' | 'invited' | 'in_progress' | 'confirmed' | 'declined';
   state: RegulatorSurveyState;

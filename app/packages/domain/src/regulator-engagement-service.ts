@@ -13,8 +13,15 @@ import {
   setRespondentContact,
   revokeRespondentToken,
   listInstitutionsWithRoles,
+  getInstrumentItems,
+  getResponsesForRespondent,
+  getEditionStatus,
+  seedInstitutionEngagement,
+  isEditionInstrumentSetFrozen,
+  isInstrumentFrozenForEdition,
   type RegulatorEngagementRow,
 } from '@cis/db';
+import { closesScope } from '@cis/survey';
 import type {
   InstrumentFamilyCode,
   RegulatorContact,
@@ -23,8 +30,8 @@ import type {
 } from '@cis/shared-types';
 import { requirePermission, type RbacContext } from '@cis/auth';
 import { DomainError } from './errors';
-import { FAMILY_META, instrumentCodeForFamily } from './institution-family-service';
-import { assertCollectionOpen } from './journey-service';
+import { FAMILY_META, instrumentCodeForRole } from './institution-family-service';
+import { acceptsResponses, assertCollectionOpen } from './journey-service';
 import { queueNotice } from './email-content';
 import { surveyResumeLink } from './notice-links';
 
@@ -89,8 +96,15 @@ const MANDATE_BY_INSTITUTION_NAME: Record<string, { family: InstrumentFamilyCode
   };
 
 /** A tagline describes one role, so it applies only to that family — CSCS's
- *  depository role (Family D) must not read "Clearing, settlement and custody". */
-function mandateFor(institutionName: string, familyCode: InstrumentFamilyCode): string {
+ *  depository role (Family D) must not read "Clearing, settlement and custody".
+ *  A role the Register gives its own vantage (`institution_roles.mandate`, the
+ *  bespoke instrument's strap) uses that. */
+function mandateFor(
+  institutionName: string,
+  familyCode: InstrumentFamilyCode,
+  roleMandate: string | null = null,
+): string {
+  if (roleMandate) return roleMandate;
   const tagline = MANDATE_BY_INSTITUTION_NAME[institutionName];
   return tagline && tagline.family === familyCode
     ? tagline.text
@@ -189,7 +203,18 @@ function deriveState(row: RegulatorEngagementRow): RegulatorSurveyState {
   return 'invited';
 }
 
-function nextStepFor(state: RegulatorSurveyState): string {
+function nextStepFor(
+  state: RegulatorSurveyState,
+  questionnaireAssigned: boolean,
+  questionnaireFrozen: boolean,
+): string {
+  // UX-OPS-007 v2.10 institution_without_instrument: an institution may be in
+  // operations before its bespoke questionnaire is ready, but cannot be
+  // invited until one is assigned.
+  const beforeInvite = state === 'no_contact' || state === 'contact_added';
+  if (!questionnaireAssigned && beforeInvite) return 'Assign bespoke questionnaire';
+  // ...and, in an edition already frozen, until its questionnaire is frozen in.
+  if (!questionnaireFrozen && beforeInvite) return 'Freeze the questionnaire for this edition';
   switch (state) {
     case 'confirmed':
       return 'Nothing further needed';
@@ -210,6 +235,43 @@ function isOverdue(row: RegulatorEngagementRow, asOf: Date): boolean {
   return dateStr(asOf) > dbDateStr(row.targetBy);
 }
 
+/** The role's assigned instrument when it is actually in the Survey Register
+ *  with content, otherwise null ("Questionnaire not assigned"). */
+async function assignedInstrument(pool: Pool, row: RegulatorEngagementRow): Promise<string | null> {
+  const code = instrumentCodeForRole({ instrumentCode: row.roleInstrumentCode });
+  if (!code) return null;
+  return (await getInstrumentItems(pool, code)).length > 0 ? code : null;
+}
+
+/** Whether the role's questionnaire may be sent in this edition: before the
+ *  edition's first freeze, any assigned one (drafts are piloted); once the
+ *  edition is frozen, only one frozen into it. */
+async function questionnaireFrozenFor(
+  pool: Pool,
+  editionId: string,
+  instrumentCode: string | null,
+): Promise<boolean> {
+  if (!instrumentCode) return false;
+  if (!(await isEditionInstrumentSetFrozen(pool, editionId))) return true;
+  return isInstrumentFrozenForEdition(pool, editionId, instrumentCode);
+}
+
+/** Whether a confirmed role's submitted response was closed by a scope gate
+ *  (read from the Register's own gate items, never a list of instruments). */
+async function respondedClosedByScopeGate(
+  pool: Pool,
+  row: RegulatorEngagementRow,
+  instrumentCode: string | null,
+): Promise<boolean> {
+  if (!instrumentCode || row.status !== 'confirmed' || !row.respondentId) return false;
+  const gates = (await getInstrumentItems(pool, instrumentCode)).filter((i) => i.scopeGate);
+  if (gates.length === 0) return false;
+  const responses = await getResponsesForRespondent(pool, row.respondentId);
+  return gates.some((g) =>
+    responses.some((r) => r.questionId === g.id && closesScope(g, r.answer)),
+  );
+}
+
 async function toView(
   pool: Pool,
   row: RegulatorEngagementRow,
@@ -217,6 +279,8 @@ async function toView(
   withHistory: boolean,
 ): Promise<RegulatorEngagementView> {
   const state = deriveState(row);
+  const instrumentCode = await assignedInstrument(pool, row);
+  const questionnaireFrozen = await questionnaireFrozenFor(pool, row.editionId, instrumentCode);
   const history = withHistory
     ? await listRegulatorHistory(pool, row.editionId, row.institutionId, row.familyCode)
     : [];
@@ -224,14 +288,18 @@ async function toView(
     institutionId: row.institutionId,
     familyCode: row.familyCode,
     name: row.institutionName,
-    mandate: mandateFor(row.institutionName, row.familyCode),
+    mandate: mandateFor(row.institutionName, row.familyCode, row.roleMandate),
+    instrumentCode,
+    questionnaireAssigned: instrumentCode !== null,
+    questionnaireFrozen,
+    closedByScopeGate: await respondedClosedByScopeGate(pool, row, instrumentCode),
     status: row.status,
     state,
     contact: row.contact,
     surveyLink: row.surveyLink,
     targetBy: row.targetBy ? dbDateStr(row.targetBy) : null,
     overdue: isOverdue(row, asOf),
-    nextStep: nextStepFor(state),
+    nextStep: nextStepFor(state, instrumentCode !== null, questionnaireFrozen),
     history,
   };
 }
@@ -259,6 +327,13 @@ export async function listRegulators(
   editionId: string,
   asOf: Date = new Date(),
 ): Promise<RegulatorEngagementView[]> {
+  // Register-driven (UX-OPS-007 v2.10): every role of every registered
+  // (active) institution in the Market Institutions Register appears for a
+  // live edition — an institution registered after the edition was created
+  // is picked up here, never typed in. Idempotent; locked editions untouched.
+  if (acceptsResponses(await getEditionStatus(pool, editionId))) {
+    await seedInstitutionEngagement(pool, editionId);
+  }
   const rows = await listRegulatorEngagement(pool, editionId);
   return Promise.all(rows.map((r) => toView(pool, r, asOf, false)));
 }
@@ -393,10 +468,24 @@ export async function issueSurveyLink(
       'CONTACT_REQUIRED_FIRST',
     );
   }
+  // UX-OPS-007 institution_without_instrument: no link without an assigned,
+  // loaded bespoke questionnaire.
+  const instrumentCode = await assignedInstrument(pool, row);
+  if (!instrumentCode) {
+    throw new RegulatorEngagementError(
+      'Questionnaire not assigned: this institution has no bespoke questionnaire in the Survey Register yet, so no survey link can be issued',
+      'QUESTIONNAIRE_NOT_ASSIGNED',
+    );
+  }
+  if (!(await questionnaireFrozenFor(pool, editionId, instrumentCode))) {
+    throw new RegulatorEngagementError(
+      'Questionnaire not frozen for this edition: freeze the new instrument on the Surveys page (it needs a second person) before a survey link can be issued',
+      'QUESTIONNAIRE_NOT_FROZEN',
+    );
+  }
   // A link issued after the lock could only ever be refused: issue none.
   await assertCollectionOpen(pool, editionId);
   const targetDate = parseTargetBy(input.targetBy);
-  const instrumentCode = instrumentCodeForFamily(familyCode);
 
   // Mint the real access token into the UX-INS-003 runtime (anonymous respondent).
   const respondent = await createRespondent(pool, {

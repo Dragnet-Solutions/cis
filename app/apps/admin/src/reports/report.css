@@ -704,6 +704,13 @@
 }
 
 /* Institutional Perspectives — one card per institutional reading. */
+/* Section 10: readings grouped by role. */
+.rpt-igroup {
+  margin-top: 18px;
+}
+.rpt-igroup > .rpt-eyebrow {
+  margin-bottom: 8px;
+}
 .rpt-icard {
   background: var(--rpt-card);
   border: 1px solid var(--rpt-line);

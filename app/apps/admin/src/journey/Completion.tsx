@@ -28,12 +28,16 @@ export function Completion({
   editionId,
   instrumentCode,
   canRefer,
+  closedByScopeGate = false,
   onReferralStarted,
 }: {
   respondentId: string;
   editionId: string;
   instrumentCode: string;
   canRefer: boolean;
+  /** The survey closed at a scope gate (Q0 "Rare" / "Effectively none"): a
+   *  neutral thank-you, with no promise of a published reading. */
+  closedByScopeGate?: boolean;
   onReferralStarted: (newRespondentId: string) => void;
 }): JSX.Element {
   const [delivery, setDelivery] = useState('email');
@@ -65,6 +69,19 @@ export function Completion({
       setError(err instanceof ApiError ? err.message : 'Could not start a referral');
       setReferBusy(false);
     }
+  }
+
+  if (closedByScopeGate) {
+    return (
+      <div className="journey">
+        <p className="eyebrow">All done</p>
+        <h1 tabIndex={-1}>Thank you</h1>
+        <p className="lede">
+          Thank you for your time. Your organisation’s response is recorded, and nothing further is
+          needed.
+        </p>
+      </div>
+    );
   }
 
   return (

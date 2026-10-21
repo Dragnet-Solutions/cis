@@ -154,16 +154,16 @@ describe('D33 — collection closed: nothing new starts once results are locked'
 });
 
 describe('D1 — regulator reviews open only through the issued named-contact link', () => {
-  it('knows exactly the four institution-family instruments', () => {
-    for (const code of ['I-SEC', 'I-NGX', 'I-CSCS', 'I-DEP']) {
-      expect(isRegulatorInstrument(code)).toBe(true);
+  it('reads the regulator instruments from the Register, the bespoke three included', async () => {
+    for (const code of ['I-SEC', 'I-NGX', 'I-CSCS', 'I-DEP', 'I-LCFE', 'I-NASD', 'I-FMDQ']) {
+      expect(await isRegulatorInstrument(pool, code)).toBe(true);
     }
-    for (const code of ['S1', 'S2', 'S3', 'S4', 'S5a', 'S5b']) {
-      expect(isRegulatorInstrument(code)).toBe(false);
+    for (const code of ['S1', 'S2', 'S3', 'S4', 'S5a', 'S5b', 'I-UNKNOWN']) {
+      expect(await isRegulatorInstrument(pool, code)).toBe(false);
     }
   });
 
-  it.each(['I-SEC', 'I-NGX', 'I-CSCS', 'I-DEP'])(
+  it.each(['I-SEC', 'I-NGX', 'I-CSCS', 'I-DEP', 'I-LCFE', 'I-NASD', 'I-FMDQ'])(
     'refuses to self-start %s (public start or colleague invite)',
     async (instrumentCode) => {
       await expect(

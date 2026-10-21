@@ -56,7 +56,9 @@ export const DEFAULT_TARGETS: Targets = {
   retail: 1111,
   local: 25,
   foreign: 15,
-  regulators: 4,
+  // One per active Market Institutions role: SEC, NGX, CSCS (clearing and
+  // depository), LCFE, NASD, FMDQ.
+  regulators: 7,
 };
 
 export interface PlanOptions {

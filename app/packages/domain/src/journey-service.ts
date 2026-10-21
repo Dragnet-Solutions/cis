@@ -17,8 +17,11 @@ import {
   getEditionStatus,
   withTransaction,
   listEmailsFor,
+  isRespondentLinkInvalidated,
+  listInstrumentDefinitions,
 } from '@cis/db';
 import {
+  applyScopeGate,
   buildJourneySequence,
   firmContextAt,
   isAnswered,
@@ -49,6 +52,28 @@ export class ReviewGapError extends DomainError {
     public readonly outstanding: Array<{ questionId: string; ratedFirmId: string | null }>,
   ) {
     super('The survey has unanswered required items and cannot be submitted', 'REVIEW_GAP');
+  }
+}
+
+/** The link was replaced (cancel and start again): it no longer works, and
+ *  anything started on it was discarded (UX-INS-003 link_invalidated). */
+export class LinkInvalidatedError extends DomainError {
+  constructor() {
+    super(
+      'This link no longer works. The survey has been sent to someone else, and anything started on this link was discarded.',
+      'LINK_INVALIDATED',
+    );
+  }
+}
+
+async function assertLinkValid(pool: Pool, respondentId: string): Promise<void> {
+  if (await isRespondentLinkInvalidated(pool, respondentId)) throw new LinkInvalidatedError();
+}
+
+/** An answer to an item after a scope gate that has closed the instrument. */
+export class ScopeClosedError extends DomainError {
+  constructor(questionId: string) {
+    super(`${questionId} is not part of this survey: an earlier answer closed it.`, 'SCOPE_CLOSED');
   }
 }
 
@@ -116,7 +141,9 @@ export async function startJourney(
     referredByRespondentId?: string | null;
   },
 ): Promise<Respondent> {
-  if (isRegulatorInstrument(data.instrumentCode)) throw new RegulatorLinkRequiredError();
+  if (await isRegulatorInstrument(pool, data.instrumentCode)) {
+    throw new RegulatorLinkRequiredError();
+  }
   await assertCollectionOpen(pool, data.editionId);
   return createRespondent(pool, {
     editionId: data.editionId,
@@ -271,6 +298,7 @@ export async function saveDraftAnswer(
   const respondent = await getRespondentById(pool, respondentId);
   if (!respondent) throw new DomainError('Respondent not found', 'RESPONDENT_NOT_FOUND');
   if (respondent.withdrawnAt) throw new ParticipationClosedError();
+  await assertLinkValid(pool, respondentId);
   await assertCollectionOpen(pool, respondent.editionId);
 
   const items = await getInstrumentItems(pool, respondent.instrumentCode);
@@ -283,6 +311,20 @@ export async function saveDraftAnswer(
     }
   } else if (data.ratedFirmId !== null) {
     throw new ResponseScopeError(`${data.questionId} is a shared item and takes no rated firm`);
+  }
+
+  // A scope gate already answered with a closing option ends the instrument:
+  // nothing after it may be answered (the same shared route the renderer and
+  // the submit check use). Changing the gate's own answer stays open.
+  const sequence = buildJourneySequence(items, respondent.ratedFirmIds);
+  const drafts = await listDraftsForRespondent(pool, respondentId);
+  const saved = new Map(drafts.map((d) => [`${d.questionId}::${d.ratedFirmId ?? ''}`, d.answer]));
+  const gated = applyScopeGate(sequence, (s) => saved.get(`${s.item.id}::${s.ratedFirmId ?? ''}`));
+  if (
+    gated.closedAt !== null &&
+    !gated.steps.some((s) => s.item.id === data.questionId && s.ratedFirmId === data.ratedFirmId)
+  ) {
+    throw new ScopeClosedError(data.questionId);
   }
 
   const draft = await upsertDraft(pool, {
@@ -300,6 +342,9 @@ export async function saveDraftAnswer(
 
 export interface ResumeState {
   respondent: Respondent;
+  /** The instrument, resolved from the Survey Register (UX-INS-003
+   *  register_resolved_instrument): its name and type drive the start screen. */
+  instrument: { code: string; name: string; instrumentType: string } | null;
   items: SurveyItem[];
   drafts: RespondentDraft[];
   firmContext: { ratedFirmId: string | null; firmIndex: number; firmCount: number };
@@ -314,7 +359,13 @@ export async function getResume(pool: Pool, respondentId: string): Promise<Resum
   const drafts = await listDraftsForRespondent(pool, respondentId);
   const sequence = buildJourneySequence(items, respondent.ratedFirmIds);
   const firmContext = firmContextAt(sequence, respondent.resumeStep);
-  return { respondent, items, drafts, firmContext };
+  const def = (await listInstrumentDefinitions(pool)).find(
+    (d) => d.code === respondent.instrumentCode,
+  );
+  const instrument = def
+    ? { code: def.code, name: def.name, instrumentType: def.instrumentType }
+    : null;
+  return { respondent, instrument, items, drafts, firmContext };
 }
 
 /** Resume by recovery token (emailed link, or device-bound token for no-contact
@@ -335,6 +386,7 @@ export async function submitJourney(pool: Pool, respondentId: string): Promise<R
   const respondent = await getRespondentById(pool, respondentId);
   if (!respondent) throw new DomainError('Respondent not found', 'RESPONDENT_NOT_FOUND');
   if (respondent.withdrawnAt) throw new ParticipationClosedError();
+  await assertLinkValid(pool, respondentId);
   await assertCollectionOpen(pool, respondent.editionId);
 
   if (requiresConsent(respondent.instrumentCode) && !respondent.consentAccepted) {
@@ -342,10 +394,19 @@ export async function submitJourney(pool: Pool, respondentId: string): Promise<R
   }
 
   const items = await getInstrumentItems(pool, respondent.instrumentCode);
-  const sequence = buildJourneySequence(items, respondent.ratedFirmIds);
   const drafts = await listDraftsForRespondent(pool, respondentId);
   const draftKey = (qid: string, firmId: string | null): string => `${qid}::${firmId ?? ''}`;
   const draftMap = new Map(drafts.map((d) => [draftKey(d.questionId, d.ratedFirmId), d]));
+  // The journey as the respondent saw it: a scope gate answered with a closing
+  // option (Q0 "Rare" / "Effectively none") ends it there. Nothing after the
+  // gate is required, and nothing after it is recorded — a later draft left
+  // over from before the gate was changed is ignored, never submitted.
+  const gated = applyScopeGate(
+    buildJourneySequence(items, respondent.ratedFirmIds),
+    (s) => draftMap.get(draftKey(s.item.id, s.ratedFirmId))?.answer,
+  );
+  const sequence = gated.steps;
+  const closedByScopeGate = gated.closedAt !== null;
 
   const outstanding: Array<{ questionId: string; ratedFirmId: string | null }> = [];
   for (const step of sequence) {
@@ -383,7 +444,9 @@ export async function submitJourney(pool: Pool, respondentId: string): Promise<R
     await emitCompletedForRespondent(client as unknown as Pool, respondent, { source: 'direct' });
     // A regulator answering through the link issued from the Regulators screen
     // confirms that role — nobody has to remember to record it by hand.
-    await confirmEngagementForSubmittedRespondent(client as unknown as Pool, respondentId);
+    await confirmEngagementForSubmittedRespondent(client as unknown as Pool, respondentId, {
+      closedByScopeGate,
+    });
     return written;
   });
 }

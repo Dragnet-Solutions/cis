@@ -31,6 +31,11 @@ export interface RegulatorEngagementRow {
   institutionId: string;
   familyCode: InstrumentFamilyCode;
   institutionName: string;
+  /** The role's own instrument (Register `institution_roles.instrument_code`),
+   *  or null when it answers its family's shared instrument. */
+  roleInstrumentCode: string | null;
+  /** The role's own one-line vantage, or null for the family description. */
+  roleMandate: string | null;
   status: InstitutionEngagementStatus;
   statusChangedAt: Date;
   targetBy: Date | null;
@@ -44,6 +49,8 @@ interface RawRow {
   institution_id: string;
   family_code: InstrumentFamilyCode;
   institution_name: string;
+  role_instrument_code: string | null;
+  role_mandate: string | null;
   status: InstitutionEngagementStatus;
   status_changed_at: Date;
   target_by: Date | null;
@@ -72,6 +79,8 @@ function mapRow(r: RawRow): RegulatorEngagementRow {
     institutionId: r.institution_id,
     familyCode: r.family_code,
     institutionName: r.institution_name,
+    roleInstrumentCode: r.role_instrument_code,
+    roleMandate: r.role_mandate,
     status: r.status,
     statusChangedAt: r.status_changed_at,
     targetBy: r.target_by,
@@ -83,11 +92,14 @@ function mapRow(r: RawRow): RegulatorEngagementRow {
 
 const ROW_SELECT = `
   SELECT e.edition_id, e.institution_id, e.family_code, i.name AS institution_name,
+         r.instrument_code AS role_instrument_code, r.mandate AS role_mandate,
          e.status, e.status_changed_at, e.target_by,
          e.contact_who, e.contact_role, e.contact_email, e.contact_phone, e.contact_how,
          e.survey_link, e.respondent_id
     FROM institution_engagement e
-    JOIN institutions i ON i.id = e.institution_id`;
+    JOIN institutions i ON i.id = e.institution_id
+    LEFT JOIN institution_roles r
+      ON r.institution_id = e.institution_id AND r.family_code = e.family_code`;
 
 export async function getRegulatorEngagement(
   pool: Pool,
@@ -273,6 +285,7 @@ export async function addRegulatorHistory(
 export async function confirmEngagementForSubmittedRespondent(
   pool: Pool,
   respondentId: string,
+  opts: { closedByScopeGate?: boolean } = {},
 ): Promise<boolean> {
   const res = await query<{
     edition_id: string;
@@ -293,7 +306,12 @@ export async function confirmEngagementForSubmittedRespondent(
     row.edition_id,
     row.institution_id,
     row.family_code,
-    'Submitted through their survey link. Their answers form part of the Institutional Perspectives section.',
+    opts.closedByScopeGate
+      ? // A closing scope-gate answer (Q0 "Rare" / "Effectively none") is a
+        // complete response: recorded as responded and listed among the
+        // contributors, with no attributed passage. Never worded as a decline.
+        'Responded through their survey link. Their first answer placed the rest of the survey outside their direct dealings with stockbroking firms, so it closed there. They are listed among the contributing institutions; no attributed passage is written for them.'
+      : 'Submitted through their survey link. Their answers form part of the Institutional Perspectives section.',
   );
   return true;
 }

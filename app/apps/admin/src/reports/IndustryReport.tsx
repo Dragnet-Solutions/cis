@@ -1,7 +1,7 @@
 import type { IndustryReportContent } from '../api/types';
 import type { ReportSource } from './source';
 import { useReport } from './useReport';
-import { InstitutionCard } from './institutional';
+import { InstitutionGroups } from './institutional';
 import {
   Bar,
   Brand,
@@ -639,9 +639,7 @@ export function IndustryReport({
             'PUB_10_INSTITUTIONAL_PERSPECTIVES',
             c.institutional.length ? (
               <>
-                {c.institutional.map((r) => (
-                  <InstitutionCard key={r.key} reading={r} narrative={c.narrative} />
-                ))}
+                <InstitutionGroups readings={c.institutional} narrative={c.narrative} />
                 <p className="rpt-note">
                   {c.institutionalParticipation.contributed} of{' '}
                   {c.institutionalParticipation.invited} invited institutions contributed. The full
@@ -682,8 +680,11 @@ export function IndustryReport({
             How these figures are made: every figure is computed from submitted responses. Ratings
             asked on 1–10 are shown on 0–100 using the study’s own scale conversion. A share or
             average from fewer than ten responses is withheld rather than shown. Index scores are
-            reported only once their methodology is approved. Generated{' '}
-            {new Date(c.generatedAt).toLocaleString()}.
+            reported only once their methodology is approved.
+            {c.institutionalContributors && c.institutionalContributors.length > 0
+              ? ` Institutions contributing to this edition: ${c.institutionalContributors.map((i) => i.name).join(', ')}.`
+              : ''}{' '}
+            Generated {new Date(c.generatedAt).toLocaleString()}.
           </p>
         </div>
       </div>

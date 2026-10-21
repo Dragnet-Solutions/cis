@@ -27,6 +27,7 @@ interface RawQuestionRow {
   grid_rows: string[] | null;
   grid_dimensions: Record<string, string[]> | null;
   grid_scale: { min: number; max: number } | null;
+  scope_gate: { closeOn: string[]; decision?: string } | null;
   created_at: Date;
 }
 
@@ -55,6 +56,7 @@ function mapQuestion(row: RawQuestionRow): InstrumentQuestion {
     gridRows: row.grid_rows,
     gridDimensions: row.grid_dimensions,
     gridScale: row.grid_scale,
+    scopeGate: row.scope_gate ?? null,
     createdAt: row.created_at,
   };
 }
@@ -86,6 +88,10 @@ export function toSurveyItem(q: InstrumentQuestion): SurveyItem {
   if (q.gridRows !== null) item.gridRows = q.gridRows;
   if (q.gridDimensions !== null) item.gridDimensions = q.gridDimensions;
   if (q.gridScale !== null) item.gridScale = q.gridScale;
+  if (q.scopeGate !== null) {
+    item.scopeGate = { closeOn: [...q.scopeGate.closeOn] };
+    if (q.scopeGate.decision) item.scopeGate.decision = q.scopeGate.decision;
+  }
   return item;
 }
 
@@ -112,6 +118,7 @@ export interface CreateInstrumentQuestionInput {
   gridRows?: string[] | null;
   gridDimensions?: Record<string, string[]> | null;
   gridScale?: { min: number; max: number } | null;
+  scopeGate?: { closeOn: string[]; decision?: string } | null;
 }
 
 export async function createInstrumentQuestion(
@@ -131,8 +138,8 @@ export async function createInstrumentQuestion(
         display_order, scored, is_drg_ops, is_placeholder, options,
         scale_min, scale_max, scale_anchors, rank_exactly_n, select_up_to_n,
         has_optional_comment, answer_optional, conditional_detail_on,
-        select_then_greatest, grid_rows, grid_dimensions, grid_scale)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+        select_then_greatest, grid_rows, grid_dimensions, grid_scale, scope_gate)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
      RETURNING *`,
     [
       data.instrumentDefinitionId,
@@ -157,6 +164,7 @@ export async function createInstrumentQuestion(
       jsonb(data.gridRows),
       jsonb(data.gridDimensions),
       jsonb(data.gridScale),
+      jsonb(data.scopeGate),
     ],
   );
   const row = result.rows[0];
@@ -254,4 +262,25 @@ export async function getPublicVisibleQuestions(pool: Pool): Promise<InstrumentQ
     );
   }
   return rows;
+}
+
+/**
+ * Question codes whose wording or options still carry a content marker (the
+ * Register's `REGISTER_TODO_MARKER`) — placeholder content that was never
+ * replaced by the controlled document. The instrument freeze refuses while any
+ * remain. Takes a pool or a transaction client.
+ */
+export async function listQuestionsContaining(
+  db: Pick<Pool, 'query'>,
+  marker: string,
+): Promise<string[]> {
+  const result = await db.query<{ question_code: string }>(
+    `SELECT q.question_code
+       FROM instrument_questions q
+      WHERE strpos(q.prompt_text, $1) > 0
+         OR strpos(COALESCE(q.options::text, ''), $1) > 0
+      ORDER BY q.question_code`,
+    [marker],
+  );
+  return result.rows.map((r) => r.question_code);
 }

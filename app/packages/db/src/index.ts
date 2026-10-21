@@ -53,6 +53,7 @@ export {
   INSTRUMENT_META,
   INSTRUMENT_CODES,
   REGISTER_ITEM_COUNT,
+  REGISTER_TODO_MARKER,
 } from './seed/register';
 export {
   importSurveyRegister,

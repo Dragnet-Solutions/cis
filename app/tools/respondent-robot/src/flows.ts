@@ -1,5 +1,11 @@
 import { randomInt } from 'node:crypto';
-import { buildJourneySequence, isAnswered, type AnswerValue, type SurveyItem } from '@cis/survey';
+import {
+  applyScopeGate,
+  buildJourneySequence,
+  isAnswered,
+  type AnswerValue,
+  type SurveyItem,
+} from '@cis/survey';
 import { Api, ApiError, sleep } from './api';
 import { generateAnswer, type Persona } from './answers';
 import { fakePerson } from './names';
@@ -61,6 +67,8 @@ export interface FlowContext {
   log: (line: string) => void;
   /** The firm's invitation token (from --firm-invites), if one was given. */
   inviteTokenFor: (firm: PlannedFirm) => string | null;
+  /** Share of regulators who close a scope gate (Q0); 0 = never. */
+  scopeGateCloseShare?: number;
 }
 
 /** Why a firm with no usable invitation link was not claimed. */
@@ -260,22 +268,32 @@ async function answerAndSubmit(
   persona: Persona,
   rng: Rng,
   goodnessFor: (item: SurveyItem, ratedFirmId: string | null) => number | null,
+  closeScopeGate = false,
 ): Promise<number> {
   const respondentId = resume.respondent.id;
   const key = (q: string, f: string | null): string => `${q}::${f ?? ''}`;
   const answers = new Map(resume.drafts.map((d) => [key(d.questionId, d.ratedFirmId), d.answer]));
-  const sequence = buildJourneySequence(resume.items, resume.respondent.ratedFirmIds);
-  if (sequence.length === 0)
+  const fullSequence = buildJourneySequence(resume.items, resume.respondent.ratedFirmIds);
+  if (fullSequence.length === 0)
     throw new Error(`No questions for ${resume.respondent.instrumentCode}`);
+  // The same scope-gate route the renderer and server use: a closing answer
+  // to a gate (Q0) ends the journey there, so it is recomputed per answer.
+  const route = () =>
+    applyScopeGate(fullSequence, (s) => answers.get(key(s.item.id, s.ratedFirmId))).steps;
 
   let saved = 0;
-  for (let step = 0; step < sequence.length; step++) {
-    const { item, ratedFirmId } = sequence[step]!;
+  for (let step = 0; step < route().length; step++) {
+    const { item, ratedFirmId } = route()[step]!;
     const k = key(item.id, ratedFirmId);
     if (isAnswered(item, answers.get(k)) && answers.has(k)) continue;
     if (ctx.isStopping()) throw new StopRequested();
     await sleep(ctx.thinkMs(persona, rng));
-    const answer = generateAnswer(item, { rng, persona, goodness: goodnessFor(item, ratedFirmId) });
+    const answer = generateAnswer(item, {
+      rng,
+      persona,
+      goodness: goodnessFor(item, ratedFirmId),
+      closeScopeGate,
+    });
     if (answer === null) continue; // an optional item left blank — nothing is saved
     if (!isAnswered(item, answer)) {
       throw new Error(`Generated an incomplete answer for ${item.id}: ${JSON.stringify(answer)}`);
@@ -292,7 +310,7 @@ async function answerAndSubmit(
     saved++;
   }
 
-  const gaps = sequence.filter(
+  const gaps = route().filter(
     (s) => !isAnswered(s.item, answers.get(key(s.item.id, s.ratedFirmId))),
   );
   if (gaps.length > 0) {
@@ -493,7 +511,13 @@ export async function runRegulator(ctx: FlowContext, key: string, token: string)
     | ({ kind: 'resume' } & ResumeState)
     | { kind: 'already_submitted' }
     | { kind: 'participation_closed' }
+    | { kind: 'link_invalidated' }
   >(`/journeys/resume/${encodeURIComponent(token)}`);
+  if (res.kind === 'link_invalidated') {
+    // Replaced on the Market institutions screen (cancel and start again):
+    // the new contact's link is a different one; this one is done with.
+    throw new Error('This regulator link was replaced and no longer works; pass the new link');
+  }
   if (res.kind === 'already_submitted') {
     record(ctx, key, { instrument: prev?.instrument ?? 'I-?' });
     markSubmitted(ctx, key);
@@ -511,9 +535,12 @@ export async function runRegulator(ctx: FlowContext, key: string, token: string)
   const rng = Rng.derive(ctx.plan.seed, 'answers', key);
   // A market-level view: middling, with a little spread between institutions.
   const view = clamp(0.5 + rng.normal(0, 0.12), 0, 1);
-  const saved = await answerAndSubmit(ctx, res, NORMAL, rng, () => view);
+  // Only when asked (--scope-gate-close): some institutions answer the scope
+  // question (Q0) with a closing option, so their survey ends there.
+  const closeGate = rng.chance(ctx.scopeGateCloseShare ?? 0);
+  const saved = await answerAndSubmit(ctx, res, NORMAL, rng, () => view, closeGate);
   markSubmitted(ctx, key);
-  return `${res.respondent.instrumentCode}, ${saved} answers`;
+  return `${res.respondent.instrumentCode}, ${saved} answers${closeGate ? ' (scope gate closed)' : ''}`;
 }
 
 /** Test hook: forget the per-run caches. */
