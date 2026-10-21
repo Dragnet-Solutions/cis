@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { getPool, getOrganizationById, listOrganizations } from '@cis/db';
 import {
   claimSpace,
+  firmClaimWithoutInviteAllowed,
+  TEST_FIRM_PREFIX,
   requestInvitation,
   recordFollowUpConsent,
   getSeats,
@@ -40,19 +42,27 @@ const INVESTOR_CATEGORY = z.enum([
  * that gates rating attribution on arrival-via-link.
  */
 export const firmPortalRoutes: FastifyPluginAsyncZod = async (app) => {
-  // The public firm directory — names and ids only, for claiming and for the
-  // request-an-invitation firm picker. A stockbroking firm's name is not
-  // confidential; it is the reason the study exists.
+  if (firmClaimWithoutInviteAllowed()) {
+    app.log.warn(
+      `FIRM_CLAIM_WITHOUT_INVITE=true: firms whose name starts with "${TEST_FIRM_PREFIX}" can be claimed without an invitation link. For automated test runs only — never set this in production.`,
+    );
+  }
+
+  // The public firm directory — NAMES only, for the request-an-invitation firm
+  // picker. A stockbroking firm's name is not confidential (it is the reason
+  // the study exists), but ids are not handed out: claiming needs the firm's
+  // invitation link, never an id picked from a list.
   app.get('/firm/directory', async (_request, reply) => {
     const orgs = await listOrganizations(getPool());
     return reply.send({
       firms: orgs
-        .filter((o) => o.orgType === 'firm')
-        .map((o) => ({ id: o.id, displayName: o.displayName })),
+        .filter((o) => o.orgType === 'firm' && o.isActive)
+        .map((o) => ({ displayName: o.displayName })),
     });
   });
 
-  // Claim a firm's space (privacy consent gates this; one firm, one space).
+  // Claim a firm's space with its invitation link (privacy consent gates
+  // this; one firm, one space). Without a usable invitation it is a 403.
   app.post(
     '/firm/claim',
     {
@@ -66,25 +76,32 @@ export const firmPortalRoutes: FastifyPluginAsyncZod = async (app) => {
           role: z.string().min(1),
           privacyConsent: z.boolean(),
           followUpConsent: z.boolean().optional(),
-          // From an invitation link (?invite=). Optional: a firm can claim without one.
+          // From the firm's invitation link (?invite=). Required — a claim without
+          // one is refused with 403 (the schema keeps it optional so the refusal
+          // is that plain message, not a validation error).
           inviteToken: z.string().min(1).max(100).optional(),
         }),
       },
     },
     async (request, reply) => {
-      const { claim, leadCoordinator } = await claimSpace(getPool(), {
-        organizationId: request.body.organizationId,
-        contactName: request.body.contactName,
-        contactEmail: request.body.contactEmail,
-        mobile: request.body.mobile,
-        pin: request.body.pin,
-        role: request.body.role,
-        privacyConsent: request.body.privacyConsent,
-        ...(request.body.followUpConsent !== undefined
-          ? { followUpConsent: request.body.followUpConsent }
-          : {}),
-        ...(request.body.inviteToken ? { inviteToken: request.body.inviteToken } : {}),
-      });
+      const { claim, leadCoordinator } = await claimSpace(
+        getPool(),
+        {
+          organizationId: request.body.organizationId,
+          contactName: request.body.contactName,
+          contactEmail: request.body.contactEmail,
+          mobile: request.body.mobile,
+          pin: request.body.pin,
+          role: request.body.role,
+          privacyConsent: request.body.privacyConsent,
+          ...(request.body.followUpConsent !== undefined
+            ? { followUpConsent: request.body.followUpConsent }
+            : {}),
+          ...(request.body.inviteToken ? { inviteToken: request.body.inviteToken } : {}),
+        },
+        { portalUrl: publicOrigin() },
+      );
+      kickMailDispatcher();
       return reply.status(201).send({
         claim: { id: claim.id, organizationId: claim.organizationId },
         leadCoordinator: { id: leadCoordinator.id, accessCode: leadCoordinator.accessCode },

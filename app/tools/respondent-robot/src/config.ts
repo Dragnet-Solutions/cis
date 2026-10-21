@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
+import { parseFirmInvites, type FirmInvites } from './invites';
 import { DEFAULT_PLAN_OPTIONS, DEFAULT_TARGETS, type Targets } from './plan';
 
 /** Command-line configuration. Everything has a default except the API URL. */
@@ -19,6 +20,8 @@ export interface Config {
   targets: Targets;
   firmPrefix: string;
   regulatorTokens: string[];
+  /** Firm invitation links (--firm-invites): claiming a firm needs its link. */
+  firmInvites: FirmInvites;
   dryRun: boolean;
   setupOnly: boolean;
   confirmHost: string | null;
@@ -115,6 +118,9 @@ Where:
   --confirm-host <host>     Required for any non-local base URL: repeat its host name
   --regulator-links <file>  Regulator links issued on the Regulators screen, one per line
   --regulator-link <link>   ...or one link/token at a time (repeatable)
+  --firm-invites <file>     Firm invitation links: the CSV from the Firm team screen
+                            ("Download open links", firm,email,link,expires) or one link
+                            per line. Claiming a firm needs its link.
 
 Rounds and state:
   --fraction <0..1>         Cumulative share of every target to have done after this run (default 1)
@@ -165,6 +171,7 @@ export function parseConfig(argv: string[], cwd: string): Config | 'help' {
       'firm-prefix': { type: 'string' },
       'regulator-links': { type: 'string' },
       'regulator-link': { type: 'string', multiple: true },
+      'firm-invites': { type: 'string' },
       'dry-run': { type: 'boolean' },
       'setup-only': { type: 'boolean' },
       'confirm-host': { type: 'string' },
@@ -214,6 +221,9 @@ export function parseConfig(argv: string[], cwd: string): Config | 'help' {
     },
     firmPrefix: values['firm-prefix'] ?? '[Test]',
     regulatorTokens,
+    firmInvites: values['firm-invites']
+      ? parseFirmInvites(readFileSync(abs(values['firm-invites']), 'utf8'))
+      : { byName: new Map(), unnamed: [] },
     dryRun: !!values['dry-run'],
     setupOnly: !!values['setup-only'],
     confirmHost: values['confirm-host'] ?? null,

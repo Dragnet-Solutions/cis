@@ -69,7 +69,7 @@ export async function assertRunOfficialUsable(
 ): Promise<void> {
   const run = await getCalculationRun(pool, runId);
   if (!run) throw new CandidateScoringError(`Calculation run ${runId} not found`, 'NOT_FOUND');
-  if (run.methodologyStatus === 'TEST_UNAPPROVED') {
+  if (run.methodologyStatus !== 'APPROVED') {
     throw new CandidateScoringError(
       `Run ${runId} was produced under a TEST_UNAPPROVED methodology (${run.methodologyVersion}) ` +
         `and cannot feed ${useContext}. Await methodology approval.`,

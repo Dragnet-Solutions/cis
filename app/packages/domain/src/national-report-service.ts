@@ -21,7 +21,20 @@ import {
   getReportPublication,
   listReviewItems,
   getNarrativeCheckerHealth,
+  recordNationalReportOpening,
+  hasOpenedNationalReport,
+  createCriticalAction,
+  getPendingCriticalActionForEdition,
+  withTransaction,
 } from '@cis/db';
+import {
+  canApproveCriticalAction,
+  canRequestCriticalAction,
+  MakerCheckerViolationError,
+  PermissionDeniedError,
+  type RbacContext,
+} from '@cis/auth';
+import { writeAudit } from '@cis/audit';
 import type {
   NationalReport,
   NationalReportSection,
@@ -29,8 +42,15 @@ import type {
   SectionSufficiencyDisposition,
   ReviewDisposition,
   AdversaryHealth,
+  CriticalAction,
 } from '@cis/shared-types';
-import { DomainError } from './errors';
+import {
+  CriticalActionStateError,
+  DomainError,
+  InvalidReasonError,
+  MIN_REASON_LENGTH,
+} from './errors';
+import type { ActorContext } from './edition-service';
 import { assertRunOfficialUsable } from './candidate-scoring-service';
 
 /**
@@ -468,45 +488,197 @@ export async function narrativeUnderReview(pool: Pool, editionId: string): Promi
   return (await getLatestReportNarrative(pool, editionId, 'industry', null))?.id ?? null;
 }
 
-export async function openDraft(pool: Pool, reportId: string): Promise<void> {
+/**
+ * Record that the draft was opened. With `userId`, also who opened it: the
+ * approver of the national report must have opened the draft themselves.
+ */
+export async function openDraft(pool: Pool, reportId: string, userId?: string): Promise<void> {
+  const report = await getNationalReport(pool, reportId);
+  if (!report) throw new NationalReportError('Report not found', 'NOT_FOUND');
   await markDraftOpened(pool, reportId);
-}
-
-export async function requestNationalApproval(
-  pool: Pool,
-  reportId: string,
-  data: { requestedBy: string; reason: string },
-): Promise<void> {
-  const pre = await nationalApprovalPreconditions(pool, reportId);
-  if (!pre.ok) throw new NationalReportError(pre.reasons.join(' '), 'PRECONDITIONS_UNMET');
-  await setNationalRequest(pool, reportId, {
-    requestedBy: data.requestedBy,
-    requestedReason: data.reason,
-  });
+  if (userId) await recordNationalReportOpening(pool, reportId, userId);
 }
 
 /**
- * Approve for release. All four preconditions must hold, and the approver must be
- * a different person from the requester (maker-checker).
+ * Approving the national report is a critical action on the shared
+ * `critical_actions` maker-checker, like releasing the firm reports and
+ * approving the methodology:
+ *
+ *   1. One person REQUESTS approval with a reason, once every precondition
+ *      holds. The request names the report and the draft (narrative) it covers.
+ *   2. A DIFFERENT person approves. There is no approval without a pending
+ *      request for this report and this draft; the approver must have opened
+ *      the draft themselves; the preconditions are checked again.
+ *
+ * Identities come from the session (the RBAC context), never a request body.
  */
-export async function approveNational(
+export const NATIONAL_REPORT_APPROVAL_ACTION = 'national_report_approval';
+
+/** The pending approval request for this report, if any. */
+export async function getPendingNationalApproval(
   pool: Pool,
   reportId: string,
-  approvedBy: string,
-): Promise<NationalReport> {
+): Promise<CriticalAction | null> {
+  const report = await getNationalReport(pool, reportId);
+  if (!report) return null;
+  const action = await getPendingCriticalActionForEdition(
+    pool,
+    report.editionId,
+    NATIONAL_REPORT_APPROVAL_ACTION,
+  );
+  return action && action.payload['reportId'] === reportId ? action : null;
+}
+
+/** Maker step: request approval of the national report. */
+export async function requestNationalApproval(
+  pool: Pool,
+  rbac: RbacContext,
+  reportId: string,
+  data: { reason: string; requestedByLabel?: string },
+  ctx: ActorContext = {},
+): Promise<CriticalAction> {
+  const reason = data.reason.trim();
+  if (reason.length < MIN_REASON_LENGTH) throw new InvalidReasonError();
+  if (!canRequestCriticalAction(rbac, NATIONAL_REPORT_APPROVAL_ACTION)) {
+    throw new PermissionDeniedError(rbac.userId, `request:${NATIONAL_REPORT_APPROVAL_ACTION}`);
+  }
   const report = await getNationalReport(pool, reportId);
   if (!report) throw new NationalReportError('Report not found', 'NOT_FOUND');
-
+  if (report.status === 'approved') {
+    throw new NationalReportError('This national report is already approved', 'ALREADY_APPROVED');
+  }
   const pre = await nationalApprovalPreconditions(pool, reportId);
   if (!pre.ok) throw new NationalReportError(pre.reasons.join(' '), 'PRECONDITIONS_UNMET');
 
-  if (report.requestedBy && report.requestedBy === approvedBy) {
-    throw new NationalReportError(
-      'The approver must be a different person from the requester',
-      'SELF_APPROVAL',
+  const narrativeId = await narrativeUnderReview(pool, report.editionId);
+  // One request at a time per edition. A request for this same draft is
+  // already waiting; one for another report or an older draft is stale and is
+  // withdrawn by the new request.
+  const pending = await getPendingCriticalActionForEdition(
+    pool,
+    report.editionId,
+    NATIONAL_REPORT_APPROVAL_ACTION,
+  );
+  if (
+    pending &&
+    pending.payload['reportId'] === reportId &&
+    (pending.payload['narrativeId'] ?? null) === narrativeId
+  ) {
+    throw new CriticalActionStateError(
+      'A request to approve this national report is already awaiting a decision',
     );
   }
-  return dbApprove(pool, reportId, approvedBy);
+
+  const action = await withTransaction(pool, async (client) => {
+    const c = client as unknown as Pool;
+    await c.query(
+      `UPDATE critical_actions SET status = 'cancelled'
+        WHERE edition_id = $1 AND action_type = $2 AND status = 'pending'`,
+      [report.editionId, NATIONAL_REPORT_APPROVAL_ACTION],
+    );
+    const created = await createCriticalAction(c, {
+      actionType: NATIONAL_REPORT_APPROVAL_ACTION,
+      requestedBy: rbac.userId,
+      payload: { reportId, narrativeId, reason },
+      editionId: report.editionId,
+    });
+    await setNationalRequest(c, reportId, {
+      requestedBy: data.requestedByLabel ?? rbac.userId,
+      requestedReason: reason,
+    });
+    return created;
+  });
+
+  await writeAudit(pool, {
+    actorId: rbac.userId,
+    actionType: 'critical_action.requested',
+    entityType: 'critical_action',
+    entityId: action.id,
+    editionId: report.editionId,
+    newValue: { actionType: NATIONAL_REPORT_APPROVAL_ACTION, reportId, narrativeId },
+    reason,
+    ipAddress: ctx.ipAddress ?? null,
+    userAgent: ctx.userAgent ?? null,
+  });
+  return action;
+}
+
+/**
+ * Checker step: approve the national report. Refused unless a request for this
+ * report and this draft is pending, the approver is a different person from
+ * the requester, the approver has opened the draft, and every precondition
+ * still holds.
+ */
+export async function approveNational(
+  pool: Pool,
+  rbac: RbacContext,
+  reportId: string,
+  data: { approvedByLabel?: string } = {},
+  ctx: ActorContext = {},
+): Promise<NationalReport> {
+  const report = await getNationalReport(pool, reportId);
+  if (!report) throw new NationalReportError('Report not found', 'NOT_FOUND');
+  if (report.status === 'approved') {
+    throw new NationalReportError('This national report is already approved', 'ALREADY_APPROVED');
+  }
+
+  const pending = await getPendingNationalApproval(pool, reportId);
+  if (!pending) {
+    throw new NationalReportError(
+      'There is no pending request to approve this national report. One person requests approval, then a different person approves it.',
+      'NO_PENDING_REQUEST',
+    );
+  }
+  if (!canApproveCriticalAction(rbac, NATIONAL_REPORT_APPROVAL_ACTION)) {
+    throw new PermissionDeniedError(rbac.userId, `approve:${NATIONAL_REPORT_APPROVAL_ACTION}`);
+  }
+  if (rbac.userId === pending.requestedBy) {
+    throw new MakerCheckerViolationError(rbac.userId, pending.id);
+  }
+  const narrativeId = await narrativeUnderReview(pool, report.editionId);
+  if ((pending.payload['narrativeId'] ?? null) !== narrativeId) {
+    throw new NationalReportError(
+      'The draft has changed since approval was requested. Ask for a fresh request.',
+      'REQUEST_STALE',
+    );
+  }
+
+  const pre = await nationalApprovalPreconditions(pool, reportId);
+  if (!pre.ok) throw new NationalReportError(pre.reasons.join(' '), 'PRECONDITIONS_UNMET');
+  if (!(await hasOpenedNationalReport(pool, reportId, rbac.userId))) {
+    throw new NationalReportError(
+      'Open the draft report yourself before approving it.',
+      'NOT_OPENED',
+    );
+  }
+
+  const approved = await withTransaction(pool, async (client) => {
+    const c = client as unknown as Pool;
+    const a = await c.query(
+      `UPDATE critical_actions
+          SET status = 'approved', approved_by = $1, approved_at = NOW()
+        WHERE id = $2 AND status = 'pending' AND requested_by <> $1`,
+      [rbac.userId, pending.id],
+    );
+    if (a.rowCount === 0) {
+      throw new CriticalActionStateError('The approval request could not be approved');
+    }
+    return dbApprove(c, reportId, data.approvedByLabel ?? rbac.userId);
+  });
+
+  await writeAudit(pool, {
+    actorId: rbac.userId,
+    actionType: 'critical_action.approved',
+    entityType: 'critical_action',
+    entityId: pending.id,
+    editionId: report.editionId,
+    oldValue: { status: 'pending' },
+    newValue: { status: 'approved', actionType: NATIONAL_REPORT_APPROVAL_ACTION, reportId },
+    reason: typeof pending.payload['reason'] === 'string' ? pending.payload['reason'] : null,
+    ipAddress: ctx.ipAddress ?? null,
+    userAgent: ctx.userAgent ?? null,
+  });
+  return approved;
 }
 
 export async function getSections(pool: Pool, reportId: string): Promise<NationalReportSection[]> {

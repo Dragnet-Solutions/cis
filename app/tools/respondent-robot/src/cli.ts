@@ -2,6 +2,7 @@
 import { Api, ApiError, sleep } from './api';
 import type { Persona } from './answers';
 import { isLocalUrl, parseConfig, USAGE, type Config } from './config';
+import { inviteResolver } from './invites';
 import {
   FatalError,
   StopRequested,
@@ -207,6 +208,34 @@ async function main(): Promise<number> {
     stop('interrupted (Ctrl-C again to quit at once; the state file is up to date)');
   });
 
+  // Firm invitation links: CSV rows name their firm; a bare link is looked up
+  // (public, rate-limited) to learn which firm it is for — only if needed.
+  const invitesById = new Map<string, string>();
+  const needSetup = plan.firms.some((f) => !firmSetupComplete(st.firmState[f.id]));
+  if (needSetup && config.firmInvites.unnamed.length > 0) {
+    log(`Looking up ${config.firmInvites.unnamed.length} firm invitation link(s)...`);
+    for (const t of config.firmInvites.unnamed) {
+      try {
+        const { invitation } = await api.get<{
+          invitation: { organizationId: string; firmName: string };
+        }>(`/firm/invitations/${encodeURIComponent(t)}`);
+        invitesById.set(invitation.organizationId, t);
+      } catch (e) {
+        if (!(e instanceof ApiError) || e.status >= 500 || e.status === 0) throw e;
+        log(`invitation link …${t.slice(-6)} cannot be used: ${e.message}`);
+      }
+    }
+  }
+  const inviteCount = config.firmInvites.byName.size + invitesById.size;
+  if (needSetup) {
+    log(
+      inviteCount > 0
+        ? `${inviteCount} firm invitation link(s) available for claiming.`
+        : 'note: no firm invitation links given (--firm-invites); unclaimed firms can only be ' +
+            'claimed if the API runs with FIRM_CLAIM_WITHOUT_INVITE=true ([Test] firms only).',
+    );
+  }
+
   const ctx: FlowContext = {
     api,
     plan,
@@ -216,6 +245,7 @@ async function main(): Promise<number> {
     thinkMs: thinkFn(config),
     isStopping: () => stopping,
     log,
+    inviteTokenFor: inviteResolver(config.firmInvites, invitesById),
   };
   const runCounts: Record<string, { ok: number; failed: number }> = {};
   const count = (instrument: string, ok: boolean): void => {
@@ -258,7 +288,18 @@ async function main(): Promise<number> {
 
   // ── Phase 2: the respondents ──────────────────────────────────────────────
   const round = selectRound(plan, st, config.fraction, config.regulatorTokens);
-  const tasks = config.setupOnly || stopping ? [] : roundTasks(round, config.seed);
+  const allTasks = config.setupOnly || stopping ? [] : roundTasks(round, config.seed);
+  // A firm that is not set up (no invitation link, or claimed by someone else)
+  // has no seat links: its seats wait for a later run instead of failing.
+  const tasks = allTasks.filter(
+    (t) => t.kind !== 'seat' || firmSetupComplete(st.firmState[t.seat.firmId]),
+  );
+  if (tasks.length < allTasks.length) {
+    log(
+      `${allTasks.length - tasks.length} seat respondent(s) skipped this run: their firm is not ` +
+        'set up (see the firm lines above).',
+    );
+  }
   if (config.regulatorTokens.length === 0 && !config.setupOnly) {
     log(
       'note: no regulator links given (--regulator-links); the four regulator roles are skipped.',

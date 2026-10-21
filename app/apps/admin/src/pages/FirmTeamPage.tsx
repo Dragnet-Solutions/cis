@@ -150,6 +150,36 @@ const shortDate = (iso: string) =>
   new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 
 /**
+ * Copies an invitation's link, so an operator can pass it on when the email
+ * cannot be relied on (or hand it to a test run). Falls back to a prompt the
+ * operator can copy from when the clipboard is unavailable.
+ */
+function CopyLinkButton({ link, disabled }: { link: string; disabled?: boolean }): JSX.Element {
+  const [copied, setCopied] = useState(false);
+  async function copy(): Promise<void> {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('no clipboard');
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      window.prompt('Copy this invitation link', link);
+    }
+  }
+  return (
+    <button
+      type="button"
+      className="btn-2"
+      disabled={disabled}
+      title={link}
+      onClick={() => void copy()}
+    >
+      {copied ? 'Copied' : 'Copy link'}
+    </button>
+  );
+}
+
+/**
  * Invite the selected firm: email its contact a personal link that opens the
  * firm portal's set-up view for this firm. The link expires (14 days unless
  * configured otherwise) and can be resent or revoked. Sending to the same
@@ -334,6 +364,7 @@ function FirmInvitationsCard({
                     )}
                   </td>
                   <td className="actions">
+                    {inv.link && <CopyLinkButton link={inv.link} disabled={busy} />}
                     {open && !claimed && (
                       <button
                         type="button"
@@ -384,7 +415,8 @@ function FirmInvitationsCard({
 /**
  * Every firm invitation in this edition at a glance: who was invited, when it
  * expires, whether it was accepted and whether the email got out — with the
- * same Resend/Revoke actions as the per-firm box.
+ * same Copy link/Resend/Revoke actions as the per-firm box, a CSV of the open
+ * links (firm,email,link,expires), and a bulk "invite all unclaimed firms".
  */
 function EditionInvitationsCard({
   client,
@@ -401,6 +433,8 @@ function EditionInvitationsCard({
 }): JSX.Element {
   const [invitations, setInvitations] = useState<FirmInvitation[]>([]);
   const [filter, setFilter] = useState<InvitationFilter>('all');
+  const [bulkPrefix, setBulkPrefix] = useState('');
+  const [bulkEmail, setBulkEmail] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -434,6 +468,47 @@ function EditionInvitationsCard({
 
   const shown = filterInvitations(invitations, filter);
 
+  async function downloadCsv(): Promise<void> {
+    setError(null);
+    try {
+      const blob = await client.downloadFirmInvitationsCsv(editionId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'firm-invitations.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not download the links');
+    }
+  }
+
+  async function inviteAll(): Promise<void> {
+    const pattern = bulkEmail.trim();
+    const prefix = bulkPrefix.trim();
+    if (
+      !window.confirm(
+        `Invite every firm in this edition${prefix ? ` whose name starts with “${prefix}”` : ''} that has no space and no open invitation, at ${pattern}?`,
+      )
+    )
+      return;
+    await act(async () => {
+      const r = await client.bulkInviteFirms(editionId, {
+        emailTemplate: pattern,
+        ...(prefix ? { namePrefix: prefix } : {}),
+      });
+      const parts = [
+        `${firmCount(r.invited)} invited`,
+        r.skippedClaimed ? `${firmCount(r.skippedClaimed)} already set up` : null,
+        r.skippedPending ? `${firmCount(r.skippedPending)} already had an open invitation` : null,
+        r.failed.length
+          ? `${firmCount(r.failed.length)} not invited (${r.failed.map((f) => `${f.firmName}: ${f.message}`).join('; ')})`
+          : null,
+      ].filter(Boolean);
+      return `${parts.join(', ')}.`;
+    });
+  }
+
   return (
     <fieldset className="contact-fields">
       <legend>Firm invitations this edition</legend>
@@ -454,6 +529,47 @@ function EditionInvitationsCard({
           ))}
         </select>
       </div>
+      <div className="actions">
+        <button type="button" className="btn-2" disabled={busy} onClick={() => void downloadCsv()}>
+          Download open links (CSV)
+        </button>
+      </div>
+      <details style={{ marginTop: 8 }}>
+        <summary>Invite all unclaimed firms</summary>
+        <p className="lede" style={{ fontSize: 13 }}>
+          Invites every firm taking part in this edition that has not set up its space and has no
+          open invitation. <code>{'{slug}'}</code> in the address becomes the firm’s short name,
+          e.g. <code>{'coordinator+{slug}@yourdomain.com'}</code>.
+        </p>
+        <div className="field">
+          <label htmlFor="ftp-bulk-prefix">Only firms whose name starts with (optional)</label>
+          <input
+            id="ftp-bulk-prefix"
+            value={bulkPrefix}
+            placeholder="[Test]"
+            onChange={(e) => setBulkPrefix(e.target.value)}
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="ftp-bulk-email">Email address pattern</label>
+          <input
+            id="ftp-bulk-email"
+            value={bulkEmail}
+            placeholder="coordinator+{slug}@yourdomain.com"
+            onChange={(e) => setBulkEmail(e.target.value)}
+          />
+        </div>
+        <div className="actions">
+          <button
+            type="button"
+            className="btn"
+            disabled={busy || !bulkEmail.trim()}
+            onClick={() => void inviteAll()}
+          >
+            {busy ? 'Inviting…' : 'Invite all unclaimed firms'}
+          </button>
+        </div>
+      </details>
       {notice && <p className="qstate ok">{notice}</p>}
       {error && <div className="err">{error}</div>}
       <table className="ftbl" style={{ marginTop: 8 }}>
@@ -510,6 +626,7 @@ function EditionInvitationsCard({
                     )}
                   </td>
                   <td className="actions">
+                    {inv.link && <CopyLinkButton link={inv.link} disabled={busy} />}
                     {open && (
                       <button
                         type="button"

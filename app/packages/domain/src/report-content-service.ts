@@ -13,6 +13,7 @@ import {
   listSampleFloors,
   type ReportAnswerRow,
 } from '@cis/db';
+import type { FirmReport } from '@cis/shared-types';
 import { investorSegmentUnitScores } from './candidate-scoring-service';
 import { DomainError } from './errors';
 import { currentSegmentSufficiency } from './eligibility-service';
@@ -642,9 +643,19 @@ const ratingsOf = (rows: ReportAnswerRow[], read: (r: ReportAnswerRow) => unknow
     }),
   );
 
+/**
+ * Which scoring run a report's indices come from. Left out, the edition's
+ * authoritative (latest signed-off) run — a live draft. A released report is
+ * frozen from its OWN run (report-snapshot-service.ts) and never rebuilt.
+ */
+export interface ReportContentOptions {
+  scoringRunId?: string;
+}
+
 export async function buildIndustryReportContent(
   pool: Pool,
   editionId: string,
+  opts: ReportContentOptions = {},
 ): Promise<IndustryReportContent> {
   const edition = await editionOf(pool, editionId);
   const report = await getLatestNationalReportForEdition(pool, editionId);
@@ -741,7 +752,7 @@ export async function buildIndustryReportContent(
     generatedAt: new Date().toISOString(),
     sections,
     participation,
-    indices: await buildIndices(pool, editionId, null),
+    indices: await buildIndices(pool, editionId, null, opts.scoringRunId),
     frictions: shareCiting(cited(of('S3', 'S3-Q1'))),
     frustrations: shareCiting(cited(of('S4', 'S4-Q9'))),
     participationImpact: shareYes(of('S4'), [
@@ -786,11 +797,14 @@ export async function buildFirmReportContent(
   pool: Pool,
   editionId: string,
   firmId: string,
+  opts: ReportContentOptions & { firmReport?: FirmReport } = {},
 ): Promise<FirmReportContent> {
   const edition = await editionOf(pool, editionId);
-  const firmReport = (await listFirmReports(pool, editionId)).find(
-    (r) => r.organizationId === firmId,
-  );
+  // A specific version when given (a release freezes the version it releases),
+  // otherwise the firm's latest.
+  const firmReport =
+    opts.firmReport ??
+    (await listFirmReports(pool, editionId)).find((r) => r.organizationId === firmId);
   if (!firmReport) {
     throw new ReportContentError(
       'No report has been generated for this firm in this edition',
@@ -861,7 +875,7 @@ export async function buildFirmReportContent(
       releaseState: firmReport.releaseState,
     },
     margin,
-    indices: await buildIndices(pool, editionId, firmId),
+    indices: await buildIndices(pool, editionId, firmId, opts.scoringRunId),
     dimensions,
     selfVsInvestors,
     retailCut: {
@@ -939,9 +953,10 @@ async function buildIndices(
   pool: Pool,
   editionId: string,
   firmId: string | null,
+  scoringRunId?: string,
 ): Promise<Indices> {
-  const signoff = await getAuthoritativeSignoff(pool, editionId);
-  const run = signoff ? await getCalculationRun(pool, signoff.calculationRunId) : null;
+  const runId = scoringRunId ?? (await getAuthoritativeSignoff(pool, editionId))?.calculationRunId;
+  const run = runId ? await getCalculationRun(pool, runId) : null;
   if (!run || run.methodologyStatus !== 'APPROVED') return INDICES_PENDING;
 
   const results = await listCalculatedResults(pool, run.id);

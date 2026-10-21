@@ -23,6 +23,7 @@ import {
   truncateAllTables,
   closeTestPool,
 } from '../../../packages/db/tests/setup';
+import { approveMethodologyForTests } from '../../../packages/db/tests/methodology-approval';
 
 const PASSWORD = 'ChangeMe!2026';
 
@@ -37,6 +38,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await truncateAllTables(getTestPool());
+  await approveMethodologyForTests(getTestPool());
 });
 
 afterAll(async () => {

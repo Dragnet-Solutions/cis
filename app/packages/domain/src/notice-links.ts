@@ -20,10 +20,6 @@ export function siteOrigin(portalUrl?: string | null): string {
 export const firmPortalLink = (portalUrl?: string | null): string =>
   `${siteOrigin(portalUrl)}/firm`;
 
-/** The firm portal's claim view for one firm. */
-export const firmClaimLink = (portalUrl: string | null | undefined, organizationId: string) =>
-  `${siteOrigin(portalUrl)}/firm?claim=${encodeURIComponent(organizationId)}`;
-
 /** A respondent's own link back into their survey. */
 export const surveyResumeLink = (portalUrl: string | null | undefined, recoveryToken: string) =>
   `${siteOrigin(portalUrl)}/survey?resume=${encodeURIComponent(recoveryToken)}`;

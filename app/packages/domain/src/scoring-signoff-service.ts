@@ -27,7 +27,7 @@ import type {
 } from '@cis/shared-types';
 import { DomainError } from './errors';
 import { runScoring, type ScoringRunResult } from './calculation-service';
-import { runCandidateScoring } from './candidate-scoring-service';
+import { assertRunOfficialUsable, runCandidateScoring } from './candidate-scoring-service';
 import { isMethodologyApproved } from './methodology-approval-service';
 
 /**
@@ -183,6 +183,9 @@ export async function requestSignoff(
       'RUN_NOT_SCOREABLE',
     );
   }
+  // A run made before the methodology was approved is a test run: it can never
+  // become official, so it can never be signed off.
+  await assertRunOfficialUsable(pool, input.calculationRunId, 'a scoring sign-off');
 
   const existing = await getLiveSignoffForRun(pool, input.calculationRunId);
   if (existing) {
@@ -225,6 +228,7 @@ export async function approveSignoff(
       'SELF_APPROVAL',
     );
   }
+  await assertRunOfficialUsable(pool, signoff.calculationRunId, 'a scoring sign-off');
 
   return withTransaction(pool, async (client) => {
     const c = client as unknown as Pool;

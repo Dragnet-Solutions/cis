@@ -160,3 +160,8 @@ export async function deliverQueuedEmails(
 export function resetMailTransportForTests(): void {
   envTransport = undefined;
 }
+
+/** For tests: use this transport (or `null` = none) instead of the environment's. */
+export function setMailTransportForTests(transport: MailTransport | null): void {
+  envTransport = transport;
+}

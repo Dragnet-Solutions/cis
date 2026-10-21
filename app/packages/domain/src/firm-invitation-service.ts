@@ -14,6 +14,8 @@ import {
   markFirmInvitationSent,
   revokeFirmInvitation as dbRevokeFirmInvitation,
   listEmailsFor,
+  hasOpenFirmInvitation,
+  listEditionFirmsForInvitation,
   type FirmInvitation,
   type FirmInvitationWithFirm,
   type EmailStatus,
@@ -196,6 +198,92 @@ async function queueInvitationEmail(
   });
 }
 
+export interface FirmInvitationRecordInput {
+  organizationId: string;
+  editionId?: string | null;
+  email: string;
+  contactName?: string | null;
+  /** The operator the invitation is from (recorded as invited_by). */
+  actorId: string;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+  /** Recorded in the audit entry, e.g. 'invitation-batch'. */
+  via?: string;
+}
+
+/**
+ * Creates a firm invitation row and audits it — WITHOUT emailing it. Run it
+ * inside the caller's transaction. `inviteFirm` adds its own invitation
+ * email; other senders (an invitation batch, an answered access request) put
+ * the invitation's link in the email they send instead. The caller checks the
+ * firm may be invited and the address is valid.
+ */
+export async function createFirmInvitationRecord(
+  db: Pool,
+  input: FirmInvitationRecordInput,
+): Promise<FirmInvitation> {
+  const email = input.email.trim();
+  const contactName = input.contactName?.trim() || null;
+  const inv = await createFirmInvitation(db, {
+    organizationId: input.organizationId,
+    editionId: input.editionId ?? null,
+    email,
+    contactName,
+    expiresAt: newExpiry(),
+    invitedBy: input.actorId,
+  });
+  await writeAudit(db, {
+    actorId: input.actorId,
+    actionType: 'firm_invitation.sent',
+    entityType: 'firm_invitation',
+    entityId: inv.id,
+    editionId: inv.editionId,
+    newValue: {
+      organizationId: input.organizationId,
+      email,
+      contactName,
+      expiresAt: inv.expiresAt.toISOString(),
+      ...(input.via ? { via: input.via } : {}),
+    },
+    ipAddress: input.ipAddress ?? null,
+    userAgent: input.userAgent ?? null,
+  });
+  return inv;
+}
+
+/**
+ * The firm's usable invitation for `email`, WITHOUT emailing it: the open one
+ * as it is, an expired-but-pending one given a fresh expiry (same link), or a
+ * new one. For senders that put the link in their own email. Run inside the
+ * caller's transaction.
+ */
+export async function ensureFirmInvitationRecord(
+  db: Pool,
+  input: FirmInvitationRecordInput,
+  now = new Date(),
+): Promise<FirmInvitation> {
+  const existing = await getPendingFirmInvitation(db, input.organizationId, input.email.trim());
+  if (!existing) return createFirmInvitationRecord(db, input);
+  if (existing.expiresAt.getTime() > now.getTime()) return existing;
+  const next = await markFirmInvitationSent(db, existing.id, newExpiry(now));
+  await writeAudit(db, {
+    actorId: input.actorId,
+    actionType: 'firm_invitation.resent',
+    entityType: 'firm_invitation',
+    entityId: existing.id,
+    editionId: existing.editionId,
+    oldValue: { expiresAt: existing.expiresAt.toISOString(), sendCount: existing.sendCount },
+    newValue: {
+      expiresAt: next.expiresAt.toISOString(),
+      sendCount: next.sendCount,
+      ...(input.via ? { via: input.via } : {}),
+    },
+    ipAddress: input.ipAddress ?? null,
+    userAgent: input.userAgent ?? null,
+  });
+  return next;
+}
+
 /**
  * Invite a firm by email. If an open invitation for the same firm and address
  * exists, it is sent again (fresh expiry) rather than duplicated.
@@ -234,30 +322,16 @@ export async function inviteFirm(
   try {
     created = await withTransaction(pool, async (client) => {
       const c = client as unknown as Pool;
-      const inv = await createFirmInvitation(c, {
+      const inv = await createFirmInvitationRecord(c, {
         organizationId: org.id,
         editionId: input.editionId ?? null,
         email,
         contactName,
-        expiresAt: newExpiry(),
-        invitedBy: rbac.userId,
-      });
-      await queueInvitationEmail(c, inv, org.displayName, ctx.portalUrl);
-      await writeAudit(c, {
         actorId: rbac.userId,
-        actionType: 'firm_invitation.sent',
-        entityType: 'firm_invitation',
-        entityId: inv.id,
-        editionId: inv.editionId,
-        newValue: {
-          organizationId: org.id,
-          email,
-          contactName,
-          expiresAt: inv.expiresAt.toISOString(),
-        },
         ipAddress: ctx.ipAddress ?? null,
         userAgent: ctx.userAgent ?? null,
       });
+      await queueInvitationEmail(c, inv, org.displayName, ctx.portalUrl);
       return inv;
     });
   } catch (err) {
@@ -371,6 +445,162 @@ export async function listInvitations(
       ? await listFirmInvitationsForOrganization(pool, scope.organizationId)
       : await listFirmInvitationsForEdition(pool, scope.editionId);
   return toViews(pool, rows);
+}
+
+/**
+ * An invitation as operators see it, with its claim link while it can still
+ * be used (pending and unexpired) — so an operator with the "access:send"
+ * right can copy it, the same way regulator links are shown. Operator
+ * responses only: the public lookup never returns a link or token.
+ */
+export interface FirmInvitationLinkView extends FirmInvitationView {
+  link: string | null;
+}
+
+/** listInvitations, plus each usable invitation's link. */
+export async function listInvitationsWithLinks(
+  pool: Pool,
+  rbac: RbacContext,
+  scope: { organizationId: string } | { editionId: string },
+  portalUrl: string,
+): Promise<FirmInvitationLinkView[]> {
+  requirePermission(rbac, SEND_PERMISSION);
+  const rows =
+    'organizationId' in scope
+      ? await listFirmInvitationsForOrganization(pool, scope.organizationId)
+      : await listFirmInvitationsForEdition(pool, scope.editionId);
+  const views = await toViews(pool, rows);
+  const tokens = new Map(rows.map((r) => [r.id, r.token]));
+  return views.map((v) => {
+    const token = tokens.get(v.id);
+    return { ...v, link: v.state === 'pending' && token ? invitationLink(portalUrl, token) : null };
+  });
+}
+
+function csvCell(value: string): string {
+  // A leading = + - @ would be read as a formula by a spreadsheet.
+  const safe = /^[=+\-@]/.test(value) ? `'${value}` : value;
+  return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+}
+
+/**
+ * The edition's usable (pending, unexpired) invitations as CSV —
+ * `firm,email,link,expires` — for handing links to a test run or to people
+ * who cannot read the invited mailbox. Needs "access:send".
+ */
+export async function pendingInvitationsCsv(
+  pool: Pool,
+  rbac: RbacContext,
+  editionId: string,
+  portalUrl: string,
+): Promise<string> {
+  const list = await listInvitationsWithLinks(pool, rbac, { editionId }, portalUrl);
+  const lines = ['firm,email,link,expires'];
+  for (const inv of list) {
+    if (!inv.link) continue;
+    lines.push(
+      [inv.firmName, inv.email, inv.link, inv.expiresAt.toISOString()].map(csvCell).join(','),
+    );
+  }
+  return `${lines.join('\r\n')}\r\n`;
+}
+
+export interface BulkInviteInput {
+  editionId: string;
+  /** These firms; otherwise every participating firm whose name starts with `namePrefix`. */
+  organizationIds?: string[];
+  namePrefix?: string;
+  /** The address to invite; `{slug}` becomes the firm's slug, e.g. "coordinator+{slug}@test.example". */
+  emailTemplate?: string;
+}
+
+export interface BulkInviteResult {
+  considered: number;
+  invited: number;
+  skippedClaimed: number;
+  skippedPending: number;
+  failed: Array<{ organizationId: string; firmName: string; message: string }>;
+}
+
+/**
+ * Invite many firms at once: each listed firm (or each participating firm in
+ * the edition whose name starts with `namePrefix`) that has no space yet and
+ * no open invitation is invited at `emailTemplate`, with `{slug}` replaced by
+ * the firm's slug. Each invitation is sent and audited exactly as a single
+ * one; firms already claimed or already holding an open invitation are
+ * counted and left alone.
+ */
+export async function bulkInviteFirms(
+  pool: Pool,
+  rbac: RbacContext,
+  input: BulkInviteInput,
+  ctx: InviteContext,
+): Promise<BulkInviteResult> {
+  requirePermission(rbac, SEND_PERMISSION);
+  const template = input.emailTemplate?.trim() ?? '';
+  if (!emailOk(template.replace(/\{slug\}/g, 'firm'))) {
+    throw new FirmInvitationError(
+      'Give the address pattern to invite, e.g. coordinator+{slug}@yourdomain.com',
+      'EMAIL_INVALID',
+    );
+  }
+  const edition = await getEditionById(pool, input.editionId);
+  if (!edition) throw new FirmInvitationError('That edition was not found', 'EDITION_NOT_FOUND');
+
+  let targets: Array<{ id: string; slug: string; displayName: string }>;
+  if (input.organizationIds && input.organizationIds.length > 0) {
+    targets = [];
+    for (const id of [...new Set(input.organizationIds)]) {
+      const org = await getOrganizationById(pool, id);
+      if (!org)
+        throw new FirmInvitationError('That firm is not in the directory', 'FIRM_NOT_FOUND');
+      targets.push({ id: org.id, slug: org.slug, displayName: org.displayName });
+    }
+  } else {
+    const prefix = (input.namePrefix ?? '').trim().toLowerCase();
+    targets = (await listEditionFirmsForInvitation(pool, input.editionId)).filter((f) =>
+      f.displayName.trim().toLowerCase().startsWith(prefix),
+    );
+  }
+
+  const result: BulkInviteResult = {
+    considered: targets.length,
+    invited: 0,
+    skippedClaimed: 0,
+    skippedPending: 0,
+    failed: [],
+  };
+  for (const firm of targets) {
+    if (await isFirmClaimed(pool, firm.id)) {
+      result.skippedClaimed++;
+      continue;
+    }
+    if (await hasOpenFirmInvitation(pool, firm.id)) {
+      result.skippedPending++;
+      continue;
+    }
+    try {
+      await inviteFirm(
+        pool,
+        rbac,
+        {
+          organizationId: firm.id,
+          editionId: input.editionId,
+          email: template.replace(/\{slug\}/g, firm.slug),
+        },
+        ctx,
+      );
+      result.invited++;
+    } catch (err) {
+      if (!(err instanceof FirmInvitationError)) throw err;
+      result.failed.push({
+        organizationId: firm.id,
+        firmName: firm.displayName,
+        message: err.message,
+      });
+    }
+  }
+  return result;
 }
 
 /** Whether the firm already has a space (a claim or an active lead coordinator). */

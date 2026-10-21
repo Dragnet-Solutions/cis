@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { AdminClient } from '../api/client';
 import { ApiError, type MissionCard, type MissionSeverity } from '../api/types';
 import type { EditionPhase } from '../editionPhase';
+import { MailServiceBanner } from './MailPage';
 
 /**
  * UX-OPS-001 — Study Operations Home & Mission Board. One board, one audience:
@@ -133,6 +134,8 @@ export function MissionBoardPage({
     <main>
       <p className="eyebrow">Study operations · current edition</p>
       <h1 tabIndex={-1}>What needs a person today</h1>
+      {/* Email silently not going out is itself something that needs a person. */}
+      <MailServiceBanner client={client} />
       <p className="lede">
         Ranked by consequence. A card is here because the current trajectory threatens an agreed
         outcome and there is a concrete action available — never because a number is merely low.

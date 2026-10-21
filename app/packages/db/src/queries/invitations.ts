@@ -337,60 +337,74 @@ export async function orgIdsInvitedThisEdition(pool: Pool, editionId: string): P
 }
 
 /** Aggregate a batch's delivery counts, and whether opens/clicks were reported
- *  at all (any non-null across the batch's recipients). */
+ *  at all (any non-null across the batch's recipients).
+ *
+ *  `accepted`: the mail service took the message and it has not bounced since —
+ *  the recipient's outbox email is `sent`, or the provider reported it
+ *  `delivered`. ZeptoMail never reports a delivery, so this is "accepted by the
+ *  mail service", never "delivered to the inbox". A recipient whose email was
+ *  only recorded (no mail service), is still queued, or failed is NOT counted. */
 export async function batchDeliveryAggregate(
   pool: Pool,
   batchId: string,
 ): Promise<{
   firms: number;
-  delivered: number;
+  accepted: number;
   bounced: number;
   opened: number;
   clicked: number;
   opensReported: boolean;
   clicksReported: boolean;
-  deliveredNeverOpened: number;
+  acceptedNeverOpened: number;
   openedNotClicked: number;
   notSent: number;
 }> {
   const res = await query<{
     firms: string;
-    delivered: string;
+    accepted: string;
     bounced: string;
     opened: string;
     clicked: string;
     opens_reported: boolean;
     clicks_reported: boolean;
-    delivered_never_opened: string;
+    accepted_never_opened: string;
     opened_not_clicked: string;
     not_sent: string;
   }>(
     pool,
-    `SELECT
+    `WITH rec AS (
+       SELECT r.*,
+              (r.delivery_state = 'delivered'
+               OR (r.delivery_state = 'sent' AND EXISTS (
+                     SELECT 1 FROM email_outbox e WHERE e.ref_id = r.id AND e.status = 'sent'))
+              ) AS is_accepted
+         FROM message_recipients r WHERE r.batch_id = $1
+     )
+     SELECT
        COUNT(*) FILTER (WHERE delivery_state <> 'not_sent')::text AS firms,
        COUNT(*) FILTER (WHERE delivery_state = 'not_sent')::text AS not_sent,
-       COUNT(*) FILTER (WHERE delivery_state = 'delivered')::text AS delivered,
+       COUNT(*) FILTER (WHERE is_accepted)::text AS accepted,
        COUNT(*) FILTER (WHERE delivery_state = 'bounced')::text AS bounced,
        COUNT(*) FILTER (WHERE opened_at IS NOT NULL)::text AS opened,
        COUNT(*) FILTER (WHERE clicked_at IS NOT NULL)::text AS clicked,
        (COUNT(*) FILTER (WHERE opened_at IS NOT NULL) > 0) AS opens_reported,
        (COUNT(*) FILTER (WHERE clicked_at IS NOT NULL) > 0) AS clicks_reported,
-       COUNT(*) FILTER (WHERE delivery_state = 'delivered' AND opened_at IS NULL)::text AS delivered_never_opened,
+       COUNT(*) FILTER (WHERE is_accepted AND opened_at IS NULL)::text AS accepted_never_opened,
        COUNT(*) FILTER (WHERE opened_at IS NOT NULL AND clicked_at IS NULL)::text AS opened_not_clicked
-     FROM message_recipients WHERE batch_id = $1`,
+     FROM rec`,
     [batchId],
   );
   const r = res.rows[0];
   const num = (v: string | undefined) => parseInt(v ?? '0', 10);
   return {
     firms: num(r?.firms),
-    delivered: num(r?.delivered),
+    accepted: num(r?.accepted),
     bounced: num(r?.bounced),
     opened: num(r?.opened),
     clicked: num(r?.clicked),
     opensReported: !!r?.opens_reported,
     clicksReported: !!r?.clicks_reported,
-    deliveredNeverOpened: num(r?.delivered_never_opened),
+    acceptedNeverOpened: num(r?.accepted_never_opened),
     openedNotClicked: num(r?.opened_not_clicked),
     notSent: num(r?.not_sent),
   };

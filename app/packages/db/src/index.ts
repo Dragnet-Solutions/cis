@@ -67,5 +67,8 @@ export type {
   RegisterInstrumentMeta,
 } from './seed/register-ingestion';
 export * from './queries/report-content';
+export * from './queries/report-snapshots';
 export * from './queries/email-outbox';
+export * from './queries/mail-health';
+export * from './queries/password-set-tokens';
 export * from './queries/national-review';

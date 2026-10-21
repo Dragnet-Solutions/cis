@@ -38,10 +38,26 @@ import { assertUsableInvitation, FirmInvitationError } from './firm-invitation-s
 import { createLeadCoordinator, setCoordinatorPin } from './firm-team-service';
 import { assertCollectionOpen, startJourney } from './journey-service';
 import { queueNotice } from './email-content';
-import { firmSeatLink } from './notice-links';
+import { firmPortalLink, firmSeatLink } from './notice-links';
 
 /** Outbox kind of the email to a newly assigned seat holder; ref_id is the seat. */
 export const SEAT_ASSIGNED_EMAIL_KIND = 'firm-seat-assigned';
+
+/** Outbox kind of the confirmation to whoever just claimed a firm's space; ref_id is the claim. */
+export const FIRM_SPACE_CLAIMED_EMAIL_KIND = 'firm-space-claimed';
+
+/** Firms whose name starts with this may claim without an invitation when the escape hatch is on. */
+export const TEST_FIRM_PREFIX = '[Test]';
+
+/**
+ * FIRM_CLAIM_WITHOUT_INVITE=true lets automated test runs claim a firm with no
+ * invitation link — but ONLY a firm whose name starts with "[Test]". Off by
+ * default and never set in the deployment manifests; the API logs a warning
+ * at startup when it is on.
+ */
+export function firmClaimWithoutInviteAllowed(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env['FIRM_CLAIM_WITHOUT_INVITE']?.trim().toLowerCase() === 'true';
+}
 
 /**
  * Firm claim / portal / seats / outreach — UX-FRM-001.
@@ -95,6 +111,16 @@ export class AlreadyClaimedError extends FirmPortalError {
   }
 }
 
+/** A claim came without a usable invitation link for the firm. */
+export class InvitationRequiredError extends FirmPortalError {
+  constructor() {
+    super(
+      "You need an invitation link to set up your firm's space. Ask the CIS team, or request an invitation.",
+      'INVITATION_REQUIRED',
+    );
+  }
+}
+
 /** The same address cannot hold two seats in one firm/edition. */
 export class SeatConflictError extends FirmPortalError {
   constructor() {
@@ -143,7 +169,7 @@ export interface ClaimInput {
   role: string;
   privacyConsent: boolean;
   followUpConsent?: boolean;
-  /** The token from an invitation link, if the claimant arrived by one. Optional. */
+  /** The token from the firm's invitation link. Required (see claimSpace). */
   inviteToken?: string | null;
 }
 
@@ -152,13 +178,17 @@ export interface ClaimInput {
  * required and length-validated; one firm, one space. The claimant becomes the
  * lead coordinator (Phase 3 UX-FRM-007 schema) and chooses a PIN.
  *
- * An invitation token is optional. When given, it must be open, unexpired and
- * for this firm; the claim uses it up and records it (firm_claims.invitation_id).
- * Everything is written in one transaction.
+ * An invitation is REQUIRED: the token must be open, unexpired and for this
+ * firm; the claim uses it up and records it (firm_claims.invitation_id).
+ * Without one the claim is refused (InvitationRequiredError) — except, for
+ * automated test runs, a "[Test]" firm while FIRM_CLAIM_WITHOUT_INVITE=true.
+ * Everything, including the claimant's confirmation email, is written in one
+ * transaction.
  */
 export async function claimSpace(
   pool: Pool,
   input: ClaimInput,
+  notify: { portalUrl?: string | null } = {},
 ): Promise<{ claim: FirmClaim; leadCoordinator: FirmCoordinator }> {
   if (!input.privacyConsent) throw new PrivacyConsentRequiredError();
   if (!input.contactName.trim()) throw new FirmPortalError('A name is required', 'NAME_REQUIRED');
@@ -177,10 +207,18 @@ export async function claimSpace(
   const pin = input.pin.replace(/[^0-9]/g, '');
   const inviteToken = input.inviteToken?.trim() || null;
 
-  // One firm, one space — redirect without disclosing the first claimant.
-  // Checked up front for a fast answer, and again by the UNIQUE constraint.
-  // An invitation link is checked first: a used link says so plainly.
+  // No invitation, no claim — unless the test-run escape hatch is on and this
+  // is a "[Test]" firm. Checked before anything else so a tokenless request
+  // learns nothing about the firm (not even whether it is already claimed).
   if (!inviteToken) {
+    const org = firmClaimWithoutInviteAllowed()
+      ? await getOrganizationById(pool, input.organizationId)
+      : null;
+    if (!org || org.orgType !== 'firm' || !org.displayName.startsWith(TEST_FIRM_PREFIX)) {
+      throw new InvitationRequiredError();
+    }
+    // One firm, one space — redirect without disclosing the first claimant.
+    // Checked up front for a fast answer, and again by the UNIQUE constraint.
     const existing = await getFirmClaim(pool, input.organizationId);
     if (existing) throw new AlreadyClaimedError();
   }
@@ -246,6 +284,7 @@ export async function claimSpace(
           },
         });
       }
+      await queueClaimConfirmation(c, claim, input.contactName.trim(), notify.portalUrl);
       return { claim, leadCoordinator: lead };
     });
   } catch (err) {
@@ -256,6 +295,37 @@ export async function claimSpace(
     }
     throw err;
   }
+}
+
+/**
+ * The claimant's confirmation: the space is set up, how to sign in, what to do
+ * next. Never carries the PIN — only that it is the one they chose.
+ */
+async function queueClaimConfirmation(
+  db: Pool,
+  claim: FirmClaim,
+  contactName: string,
+  portalUrl: string | null | undefined,
+): Promise<void> {
+  const org = await getOrganizationById(db, claim.organizationId);
+  const firmName = org?.displayName ?? 'Your firm';
+  const signIn = firmPortalLink(portalUrl);
+  await queueNotice(db, {
+    kind: FIRM_SPACE_CLAIMED_EMAIL_KIND,
+    refId: claim.id,
+    to: claim.claimingContactEmail,
+    toName: contactName,
+    subject: `${firmName}'s space is set up — CIS × Dragnet benchmark`,
+    heading: `${firmName}'s space is set up`,
+    paragraphs: [
+      `Dear ${contactName},`,
+      `You have set up ${firmName}'s space for the CIS × Dragnet benchmark, and you are its lead coordinator.`,
+      `To sign in, go to ${signIn} and use this email address (${claim.claimingContactEmail}) with the six-digit PIN you chose. We never send your PIN by email; if you forget it, ask the CIS team to reset it.`,
+      'Next steps: assign the three seats (Managing Director or CEO, Compliance and Operations) so each holder gets their own survey link, then share your outreach links with your clients.',
+    ],
+    action: { label: "Sign in to your firm's space", url: signIn },
+    footer: 'If you did not set this up, reply to this email and the CIS team will help.',
+  });
 }
 
 /** Change the per-firm follow-up consent. Gates nothing — the firm takes part

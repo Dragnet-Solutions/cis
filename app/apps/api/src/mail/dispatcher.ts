@@ -68,6 +68,11 @@ export function startMailDispatcher(
   };
 }
 
+/** Whether the background dispatcher is running in this process. */
+export function isMailDispatcherRunning(): boolean {
+  return runOnce !== null;
+}
+
 /**
  * Ask the dispatcher to run soon (debounced) — call after queueing a notice so
  * it goes out within seconds. A no-op when the dispatcher is not running

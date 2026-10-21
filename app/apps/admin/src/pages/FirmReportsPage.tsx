@@ -437,10 +437,12 @@ export function FirmReportsPage({
                         {notices[r.id] && (
                           <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
                             {notices[r.id]!.sent > 0
-                              ? `Emailed ${notices[r.id]!.sent}`
+                              ? `Email accepted by the mail service (${notices[r.id]!.sent})`
                               : notices[r.id]!.failed > 0
                                 ? `Email failed (${notices[r.id]!.failed})`
-                                : 'Notice recorded, not sent'}
+                                : notices[r.id]!.queued > 0
+                                  ? `Email waiting to go (${notices[r.id]!.queued})`
+                                  : 'Notice recorded, not sent'}
                           </div>
                         )}
                       </td>
@@ -601,7 +603,11 @@ export function FirmReportsPage({
 /** How a release's notices to the firms' coordinators went, in one line. */
 function noticeLine(n: { sent: number; logged: number; failed: number; retried?: number }): string {
   const parts: string[] = [];
-  if (n.sent) parts.push(`${n.sent} coordinator email${n.sent === 1 ? '' : 's'} sent`);
+  if (n.sent) {
+    parts.push(
+      `${n.sent} coordinator email${n.sent === 1 ? '' : 's'} accepted by the mail service`,
+    );
+  }
   if (n.logged) {
     parts.push(
       `${n.logged} coordinator notice${n.logged === 1 ? '' : 's'} recorded but not sent — no mail service is configured`,

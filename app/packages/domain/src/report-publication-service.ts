@@ -8,16 +8,18 @@ import {
   listActiveCoordinators,
   listReviewedNarrativeIds,
   getLatestNationalReportForEdition,
+  withTransaction,
+  insertReportSnapshot,
   type ReportNarrative,
   type ReportPublication,
 } from '@cis/db';
 import type { FirmReport } from '@cis/shared-types';
+import type { FirmReportContent, IndustryReportContent } from './report-content-service';
 import {
-  buildFirmReportContent,
-  buildIndustryReportContent,
-  type FirmReportContent,
-  type IndustryReportContent,
-} from './report-content-service';
+  industryReportSnapshotData,
+  publishedIndustryReportContent,
+  releasedFirmReportContent,
+} from './report-snapshot-service';
 import {
   ensureIndustryNarrative,
   getFirmNarrative,
@@ -91,13 +93,21 @@ export async function publishIndustryReport(
       'NO_FIGURES',
     );
   }
-  return insertReportPublication(pool, {
-    editionId,
-    kind: 'industry',
-    subjectId: null,
-    firmReportId: null,
-    narrativeId: narrative.id,
-    publishedBy,
+  // Published and frozen together: the public report is served from this
+  // snapshot from now on, never recomputed from a later sign-off.
+  const frozen = await industryReportSnapshotData(pool, editionId, publishedBy);
+  return withTransaction(pool, async (client) => {
+    const c = client as unknown as Pool;
+    const publication = await insertReportPublication(c, {
+      editionId,
+      kind: 'industry',
+      subjectId: null,
+      firmReportId: null,
+      narrativeId: narrative.id,
+      publishedBy,
+    });
+    await insertReportSnapshot(c, frozen);
+    return publication;
   });
 }
 
@@ -113,7 +123,8 @@ export async function getPublishedIndustryReport(
       'NOT_PUBLISHED',
     );
   }
-  const content = await buildIndustryReportContent(pool, editionId);
+  // Served from the snapshot frozen at publication — never recomputed.
+  const { content } = await publishedIndustryReportContent(pool, editionId);
   return {
     ...content,
     narrative: publicNarrative(await getIndustryNarrative(pool, editionId)),
@@ -129,7 +140,10 @@ export async function getReleasedFirmReport(
 ): Promise<(FirmReportContent & { narrative: PublicNarrative | null; releasedAt: Date }) | null> {
   const published = await getReportPublication(pool, editionId, 'firm', firmId);
   if (!published) return null;
-  const content = await buildFirmReportContent(pool, editionId, firmId);
+  // The newest released version, served from the snapshot frozen at release.
+  const released = await releasedFirmReportContent(pool, editionId, firmId);
+  if (!released) return null;
+  const { content } = released;
   return {
     ...content,
     narrative: publicNarrative(await getFirmNarrative(pool, editionId, firmId)),

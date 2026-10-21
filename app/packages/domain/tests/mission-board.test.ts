@@ -93,7 +93,7 @@ describe('Zeptomail delivery data flows through the Phase 9 abstraction', () => 
     ).toBe(false);
 
     const report = await getBatchReport(pool, batch.id);
-    expect(report.delivered).toBe(1);
+    expect(report.accepted).toBe(1);
     expect(report.bounced).toBe(1);
     expect(report.opensReported).toBe(true);
     expect(report.opened).toBe(1);

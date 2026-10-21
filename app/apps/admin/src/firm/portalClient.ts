@@ -106,8 +106,8 @@ export class InvitationLinkError extends ApiError {
   }
 }
 
+/** A firm's name, for the request-an-invitation picker. No ids: claiming needs an invitation link. */
 export interface FirmDirectoryEntry {
-  id: string;
   displayName: string;
 }
 
@@ -185,8 +185,8 @@ export const firmPublic = {
     role: string;
     privacyConsent: boolean;
     followUpConsent?: boolean;
-    /** From an invitation link; optional. */
-    inviteToken?: string;
+    /** From the firm's invitation link (?invite=). Required: the server refuses a claim without one. */
+    inviteToken: string;
   }) =>
     request<{
       claim: { id: string; organizationId: string };

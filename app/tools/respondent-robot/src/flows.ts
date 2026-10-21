@@ -19,7 +19,8 @@ import type { FirmState, RespondentState, RobotState } from './state';
  * Each flow plays one real person through the same HTTP calls the browser
  * pages make (apps/admin/src/journey/*, the firm portal), in the same order:
  *
- *  - coordinator: POST /firm/claim → POST /portal/auth/login → GET /portal/me
+ *  - coordinator: POST /firm/claim (with the firm's invitation token) →
+ *    POST /portal/auth/login → GET /portal/me
  *    → GET /portal/seats → POST /portal/seats/:code/assign (empty seats only)
  *    → GET /portal/can-invite → GET /portal/outreach
  *  - seat holder: GET /firm-seats/:t/context → POST start → answers → submit
@@ -58,7 +59,15 @@ export interface FlowContext {
   thinkMs: (persona: Persona, rng: Rng) => number;
   isStopping: () => boolean;
   log: (line: string) => void;
+  /** The firm's invitation token (from --firm-invites), if one was given. */
+  inviteTokenFor: (firm: PlannedFirm) => string | null;
 }
+
+/** Why a firm with no usable invitation link was not claimed. */
+export const NO_INVITE_REASON =
+  'no invitation link for this firm — pass --firm-invites <file> (the CSV from the Firm team ' +
+  'screen\'s "Download open links"), or run the API with FIRM_CLAIM_WITHOUT_INVITE=true ' +
+  '(test runs only; [Test] firms only)';
 
 interface ResumeState {
   respondent: {
@@ -132,7 +141,10 @@ export async function setupFirm(ctx: FlowContext, firm: PlannedFirm): Promise<st
   }
   const coord = fs.coordinator;
 
+  // Set when the server refused the claim for want of a usable invitation.
+  let refused: string | null = null;
   if (fs.claim !== 'claimed') {
+    const inviteToken = ctx.inviteTokenFor(firm);
     try {
       await ctx.api.post('/firm/claim', {
         organizationId: firm.id,
@@ -143,10 +155,19 @@ export async function setupFirm(ctx: FlowContext, firm: PlannedFirm): Promise<st
         role: 'Investor Relations Lead',
         privacyConsent: true,
         followUpConsent: false,
+        ...(inviteToken ? { inviteToken } : {}),
       });
     } catch (e) {
-      if (!(e instanceof ApiError && e.errorName === 'AlreadyClaimedError')) throw e;
-      // Either our own earlier claim (crash before saving) or someone else's.
+      if (!(e instanceof ApiError)) throw e;
+      if (e.errorName === 'InvitationRequiredError' || e.errorName === 'FirmInvitationError') {
+        // No link, or the link was refused (used, expired, withdrawn, another
+        // firm's). A used link may be our own earlier claim (crash before
+        // saving), so signing in below decides.
+        refused = inviteToken ? `the invitation link was refused: ${e.message}` : NO_INVITE_REASON;
+      } else if (e.errorName !== 'AlreadyClaimedError') {
+        throw e;
+      }
+      // AlreadyClaimed: either our own earlier claim or someone else's.
     }
   }
 
@@ -159,6 +180,11 @@ export async function setupFirm(ctx: FlowContext, firm: PlannedFirm): Promise<st
       })
     ).token;
   } catch (e) {
+    if (e instanceof ApiError && e.status === 401 && refused) {
+      fs.lastError = `Not claimed: ${refused}`;
+      ctx.save();
+      return `skipped — ${refused}`;
+    }
     if (e instanceof ApiError && e.status === 401) {
       fs.claim = 'other';
       fs.lastError = 'Firm was already claimed by someone else';

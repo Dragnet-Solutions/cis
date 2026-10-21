@@ -247,3 +247,39 @@ export async function setFirmClaimInvitation(
     invitationId,
   ]);
 }
+
+/** Whether the firm has a pending invitation that has not yet expired. */
+export async function hasOpenFirmInvitation(db: Db, organizationId: string): Promise<boolean> {
+  const res = await query<{ open: boolean }>(
+    asPool(db),
+    `SELECT EXISTS (
+       SELECT 1 FROM firm_invitations
+        WHERE organization_id = $1 AND status = 'pending' AND expires_at > NOW()
+     ) AS open`,
+    [organizationId],
+  );
+  return res.rows[0]?.open ?? false;
+}
+
+/**
+ * The active firms taking part in an edition (any participation status except
+ * withdrawn), by name — the candidates for a bulk invitation.
+ */
+export async function listEditionFirmsForInvitation(
+  db: Db,
+  editionId: string,
+): Promise<Array<{ id: string; slug: string; displayName: string }>> {
+  const res = await query<{ id: string; slug: string; display_name: string }>(
+    asPool(db),
+    `SELECT o.id, o.slug, o.display_name
+       FROM organizations o
+       JOIN edition_participation ep ON ep.organization_id = o.id
+      WHERE ep.edition_id = $1
+        AND ep.status <> 'withdrawn'
+        AND o.org_type = 'firm'
+        AND o.is_active = TRUE
+      ORDER BY o.display_name`,
+    [editionId],
+  );
+  return res.rows.map((r) => ({ id: r.id, slug: r.slug, displayName: r.display_name }));
+}

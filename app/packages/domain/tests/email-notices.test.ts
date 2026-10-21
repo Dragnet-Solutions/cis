@@ -21,6 +21,7 @@ import {
   listRecipients,
   listTemplates,
   insertInvitationRequest,
+  listFirmInvitationsForOrganization,
   type OutboxEmail,
 } from '@cis/db';
 import {
@@ -43,6 +44,9 @@ import {
   setReminderSchedule,
   setReminderCap,
   renderTemplateText,
+  claimSpace,
+  lookupInvitation,
+  FIRM_INVITATION_EMAIL_KIND,
   INVITATION_BATCH_EMAIL_KIND,
   INVITATION_REQUEST_EMAIL_KIND,
   REGULATOR_SURVEY_LINK_EMAIL_KIND,
@@ -51,7 +55,7 @@ import {
   COORDINATOR_PIN_SET_EMAIL_KIND,
   SURVEY_RESUME_EMAIL_KIND,
   FIRM_DIGEST_EMAIL_KIND,
-  OPERATOR_ACCESS_EMAIL_KIND,
+  OPERATOR_SET_PASSWORD_EMAIL_KIND,
   RESPONDENT_REMINDER_EMAIL_KIND,
 } from '../src';
 import { getTestPool, runMigrations, truncateAllTables, closeTestPool } from '../../db/tests/setup';
@@ -206,27 +210,94 @@ describe('Invitation batches render the template and resolve each firm’s addre
     expect(again.skippedDuplicates).toBe(3);
   });
 
-  it('an unclaimed firm with no open invitation gets the claim link; templates without the link get a button', async () => {
+  it('an unclaimed firm whose invitation expired gets the same invitation reopened; templates without the link get a button', async () => {
     const f = await firm('Claim Me Ltd');
-    await createFirmInvitation(pool, {
+    const old = await createFirmInvitation(pool, {
       organizationId: f.id,
       editionId,
       email: 'old@claim.example',
-      expiresAt: new Date(Date.now() - 86_400_000), // expired: address kept, link not
+      expiresAt: new Date(Date.now() - 86_400_000), // expired: address kept, link reopened
       invitedBy: makerUserId,
     });
     const r = await sendBatch(pool, {
       editionId,
       templateId: await templateId('Nobody assigned yet'),
       audienceId: 'all',
+      sentBy: makerUserId,
       portalUrl: PORTAL,
     });
     expect(r.sent).toBe(1);
     const [rec] = await listRecipients(pool, r.batch.id);
     const [email] = await listEmailsFor(pool, INVITATION_BATCH_EMAIL_KIND, [rec!.id]);
     expect(email!.toAddress).toBe('old@claim.example');
-    expect(email!.bodyText).toContain(`${PORTAL}/firm?claim=${f.id}`);
+    expect(email!.bodyText).toContain(`${PORTAL}/firm?invite=${old.token}`);
+    expect(email!.bodyText).not.toContain('claim=');
     expect(email!.bodyHtml).toContain('Set up your firm');
+    // Reopened, not duplicated: the link works again.
+    const invs = await listFirmInvitationsForOrganization(pool, f.id);
+    expect(invs).toHaveLength(1);
+    expect(invs[0]!.expiresAt.getTime()).toBeGreaterThan(Date.now());
+    await expect(lookupInvitation(pool, old.token)).resolves.toMatchObject({
+      organizationId: f.id,
+    });
+  });
+
+  it('an uploaded firm with no space and no invitation gets a real, claimable invitation in the batch email (and no second email)', async () => {
+    const f = await firm('Upload Me Ltd');
+    const r = await sendBatch(pool, {
+      editionId,
+      templateId: await templateId('First invitation'),
+      audienceId: 'upload',
+      uploadRows: [
+        { firmName: 'Upload Me Ltd', email: 'boss@upload.example', organizationId: f.id },
+      ],
+      sentBy: makerUserId,
+      portalUrl: PORTAL,
+    });
+    expect(r.sent).toBe(1);
+    const invs = await listFirmInvitationsForOrganization(pool, f.id);
+    expect(invs).toHaveLength(1);
+    const inv = invs[0]!;
+    expect(inv.email).toBe('boss@upload.example');
+    expect(inv.status).toBe('pending');
+    expect(inv.editionId).toBe(editionId);
+
+    const [rec] = await listRecipients(pool, r.batch.id);
+    expect(rec!.code).toBe(`${PORTAL}/firm?invite=${inv.token}`);
+    const [email] = await listEmailsFor(pool, INVITATION_BATCH_EMAIL_KIND, [rec!.id]);
+    expect(email!.toAddress).toBe('boss@upload.example');
+    expect(email!.bodyText).toContain(`${PORTAL}/firm?invite=${inv.token}`);
+    expect(email!.bodyText).not.toContain('claim=');
+    // The batch email is the invitation: no separate invitation email.
+    expect(await listEmailsFor(pool, FIRM_INVITATION_EMAIL_KIND, [inv.id])).toHaveLength(0);
+
+    // The link really sets up the firm's space.
+    const { claim } = await claimSpace(pool, {
+      organizationId: f.id,
+      contactName: 'Boss',
+      contactEmail: 'boss@upload.example',
+      mobile: '+234 800 000 0000',
+      pin: '135790',
+      role: 'Operations',
+      privacyConsent: true,
+      inviteToken: inv.token,
+    });
+    expect(claim.organizationId).toBe(f.id);
+
+    // Once claimed, the next batch signs in instead of inviting again.
+    const again = await sendBatch(pool, {
+      editionId,
+      templateId: await templateId('Reminder'),
+      audienceId: 'upload',
+      uploadRows: [
+        { firmName: 'Upload Me Ltd', email: 'boss@upload.example', organizationId: f.id },
+      ],
+      sentBy: makerUserId,
+      portalUrl: PORTAL,
+    });
+    const [rec2] = await listRecipients(pool, again.batch.id);
+    expect(rec2!.code).toBe(`${PORTAL}/firm`);
+    expect(await listFirmInvitationsForOrganization(pool, f.id)).toHaveLength(1);
   });
 
   it('uploaded and regulator audiences are emailed at their given addresses', async () => {
@@ -264,11 +335,22 @@ describe('Invitation batches render the template and resolve each firm’s addre
     await resolveInvitationRequest(pool, {
       requestId: req.id,
       resolution: 'code_issued',
+      resolvedBy: makerUserId,
       portalUrl: PORTAL,
     });
+    // An invitation is opened for the requester, and its link is emailed —
+    // in this one email, not a second invitation email.
+    const [inv] = await listFirmInvitationsForOrganization(pool, f.id);
+    expect(inv!.email).toBe('tunde@requested.example');
+    expect(await listEmailsFor(pool, FIRM_INVITATION_EMAIL_KIND, [inv!.id])).toHaveLength(0);
     const [email] = await listEmailsFor(pool, INVITATION_REQUEST_EMAIL_KIND, [req.id]);
     expect(email!.toAddress).toBe('tunde@requested.example');
-    expect(email!.bodyText).toContain(`${PORTAL}/firm?claim=${f.id}`);
+    expect(email!.bodyText).toContain(`${PORTAL}/firm?invite=${inv!.token}`);
+    expect(email!.bodyText).not.toContain('claim=');
+    await expect(lookupInvitation(pool, inv!.token)).resolves.toMatchObject({
+      organizationId: f.id,
+      email: 'tunde@requested.example',
+    });
 
     // With a reissue template: rendered and recorded as a one-recipient batch.
     const req2 = await insertInvitationRequest(pool, {
@@ -282,11 +364,30 @@ describe('Invitation batches render the template and resolve each firm’s addre
       requestId: req2.id,
       resolution: 'code_issued',
       reissueTemplateId: await templateId('Reissued code'),
+      resolvedBy: makerUserId,
       portalUrl: PORTAL,
     });
     const batchEmails = await allEmails(INVITATION_BATCH_EMAIL_KIND);
     expect(batchEmails.map((e) => e.toAddress)).toEqual(['bola@requested.example']);
     expect(batchEmails[0]!.bodyText).toContain('Dear Requested Firm,');
+    // The firm already has an open invitation (Tunde's): its link is sent.
+    expect(batchEmails[0]!.bodyText).toContain(`${PORTAL}/firm?invite=${inv!.token}`);
+
+    // A request whose firm is not in the register cannot be issued a link.
+    const req4 = await insertInvitationRequest(pool, {
+      editionId,
+      firmName: 'Unknown Firm',
+      requesterName: 'Kemi',
+      email: 'kemi@unknown.example',
+    });
+    await expect(
+      resolveInvitationRequest(pool, {
+        requestId: req4.id,
+        resolution: 'code_issued',
+        resolvedBy: makerUserId,
+        portalUrl: PORTAL,
+      }),
+    ).rejects.toMatchObject({ code: 'FIRM_NOT_MATCHED' });
 
     // Marking done sends nothing.
     const req3 = await insertInvitationRequest(pool, {
@@ -447,7 +548,7 @@ describe('Firm digest, new operators and respondent reminders are emailed', () =
     expect(email!.bodyText).toContain(`${PORTAL}/firm`);
   });
 
-  it('tells a new operator they have access, without any credential', async () => {
+  it('tells a new operator they have access, with a link to choose their own password', async () => {
     const person = await addPerson(
       pool,
       {
@@ -459,10 +560,10 @@ describe('Firm digest, new operators and respondent reminders are emailed', () =
       },
       { portalUrl: PORTAL },
     );
-    const [email] = await listEmailsFor(pool, OPERATOR_ACCESS_EMAIL_KIND, [person.userId]);
+    const [email] = await listEmailsFor(pool, OPERATOR_SET_PASSWORD_EMAIL_KIND, [person.userId]);
     expect(email!.toAddress).toBe('new.op@cis.example');
-    expect(email!.bodyText).toContain('administrator will set your password');
-    expect(email!.bodyText).not.toMatch(/placeholder|unusable/);
+    expect(email!.bodyText).toMatch(new RegExp(`${PORTAL}/set-password\\?token=[A-Za-z0-9_-]{43}`));
+    expect(email!.bodyText).not.toMatch(/placeholder|unusable|password:/i);
   });
 
   it('emails a due reminder to an investor who chose email, with STOP only after the first', async () => {

@@ -6,13 +6,14 @@ import { RespondentApp } from './journey/RespondentApp';
 import { FirmPortal } from './firm/FirmPortal';
 import { PrintReport } from './reports/PrintReport';
 import { PublicReport } from './reports/PublicReport';
+import { SetPasswordPage } from './pages/SetPasswordPage';
 
 const root = document.getElementById('root');
 if (!root) throw new Error('Root element #root not found');
 
 // Strictly separate surfaces by path: the firm portal (/firm), the respondent
-// journey app (/survey) and the published reports (/reports) never render the
-// operator admin portal.
+// journey app (/survey), the published reports (/reports) and the public
+// set-password page (/set-password) never render the operator admin portal.
 const path = window.location.pathname;
 const surface = path.startsWith('/print/') ? (
   <PrintReport />
@@ -22,6 +23,8 @@ const surface = path.startsWith('/print/') ? (
   <FirmPortal />
 ) : path.startsWith('/survey') ? (
   <RespondentApp />
+) : path === '/set-password' ? (
+  <SetPasswordPage />
 ) : (
   <App />
 );

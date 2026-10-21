@@ -189,13 +189,15 @@ export interface BatchReport {
   batch: MessageBatch;
   templateName: string;
   firms: number;
-  delivered: number;
+  /** The mail service accepted it and it has not bounced. Not "delivered":
+   *  ZeptoMail sends no delivered event. */
+  accepted: number;
   bounced: number;
   opened: number;
   clicked: number;
   opensReported: boolean;
   clicksReported: boolean;
-  deliveredNeverOpened: number;
+  acceptedNeverOpened: number;
   openedNotClicked: number;
   /** Recipients with no email address on file — nothing was sent. */
   notSent: number;
@@ -287,6 +289,17 @@ export interface FirmInvitation {
     error: string | null;
     at: string;
   } | null;
+  /** The claim link while the invitation can be used (list responses only; null otherwise). */
+  link?: string | null;
+}
+
+/** POST /editions/:id/firm-invitations/bulk. */
+export interface BulkFirmInviteResult {
+  considered: number;
+  invited: number;
+  skippedClaimed: number;
+  skippedPending: number;
+  failed: Array<{ organizationId: string; firmName: string; message: string }>;
 }
 
 // ─── National report (UX-ADM-005) ───────────────────────────────────────────
@@ -375,6 +388,10 @@ export interface NationalReportDetailResponse {
   preconditions: NationalApprovalPreconditions;
   /** Display name per operator identifier on the report. */
   operatorNames: Record<string, string>;
+  /** The approval request waiting for a second person, if any. */
+  pendingApproval?: { id: string; requestedAt: string } | null;
+  /** Whether the signed-in operator has opened the draft (needed to approve). */
+  openedByYou?: boolean;
 }
 
 // ─── Firm reports (UX-ADM-006) ──────────────────────────────────────────────
@@ -465,12 +482,17 @@ export interface PersonAccess {
   rights: Record<AccessRightKey, boolean>;
   canRequest: boolean;
   canApprove: boolean;
+  /** Still to choose a password (never signed in, no link used yet). */
+  awaitingPassword: boolean;
 }
 
 export interface PeopleResponse {
   people: PersonAccess[];
   approvers: number;
   criticalActions: Array<{ action: string; where: string; why: string }>;
+  /** What the signed-in operator may do here. The server enforces it; the
+   *  surface only hides what would be refused. */
+  viewer: { canManage: boolean; grantable: Array<Exclude<AccessRightKey, 'view'>> };
 }
 
 export interface PersonInput {
@@ -478,6 +500,40 @@ export interface PersonInput {
   email: string;
   organization: AccessOrg;
   rights: Partial<Record<Exclude<AccessRightKey, 'view'>, boolean>>;
+}
+
+/** A set-password link's owner, for the public set-password page. */
+export interface PasswordSetInfo {
+  email: string;
+  name: string;
+  purpose: 'invite' | 'reset';
+}
+
+// ─── Mail health ─────────────────────────────────────────────────────────────
+
+export type MailOutboxStatus = 'queued' | 'sent' | 'logged' | 'failed';
+
+export interface MailStatus {
+  /** 'none' = notices are recorded but NOT sent. */
+  transport: 'zeptomail' | 'smtp' | 'none';
+  from: string | null;
+  apiHost: string | null;
+  webhookConfigured: boolean;
+  dispatcherRunning: boolean;
+  /** Outbox notices created in the last 7 days, by status. */
+  outbox: Record<MailOutboxStatus, number>;
+  oldestQueuedAt: string | null;
+  recentFailures: Array<{ kind: string; to: string; error: string | null; at: string }>;
+  recentLogged: number;
+}
+
+export interface MailTestResult {
+  emailId: string;
+  status: MailOutboxStatus;
+  retrying: boolean;
+  provider: string | null;
+  providerMessageId: string | null;
+  error: string | null;
 }
 
 // ─── Responses monitoring (UX-OPS-003) ──────────────────────────────────────

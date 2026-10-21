@@ -20,6 +20,7 @@ import { ResponsesPage } from './pages/ResponsesPage';
 import { UnfinishedPage } from './pages/UnfinishedPage';
 import { WordingPage } from './pages/WordingPage';
 import { DragnetPage } from './pages/DragnetPage';
+import { MailPage } from './pages/MailPage';
 
 type Tab =
   | 'board'
@@ -36,7 +37,8 @@ type Tab =
   | 'national'
   | 'firmreports'
   | 'wording'
-  | 'dragnet';
+  | 'dragnet'
+  | 'mail';
 
 /**
  * Which nav tabs are relevant in which edition phase (UX-OPS-001: "sections
@@ -59,6 +61,7 @@ const TAB_PHASES: Record<Tab, EditionPhase[]> = {
   national: ['closed'],
   firmreports: ['closed'],
   wording: ['before_launch', 'collection_open', 'closing_week', 'closed'],
+  mail: ['before_launch', 'collection_open', 'closing_week', 'closed'],
   dragnet: ['before_launch', 'collection_open', 'closing_week', 'closed'],
 };
 
@@ -269,6 +272,10 @@ export function App(): JSX.Element {
         <NavTab tabKey="wording" tab={tab} phase={phase} setTab={setTab}>
           Wording
         </NavTab>
+        <span aria-hidden="true">·</span>
+        <NavTab tabKey="mail" tab={tab} phase={phase} setTab={setTab}>
+          Mail
+        </NavTab>
         {session.user.hasDragnetRight && (
           <>
             <span aria-hidden="true">·</span>
@@ -323,6 +330,8 @@ export function App(): JSX.Element {
         <ScoresSignoffPage client={client} editionId={editionId} viewer={session.user} />
       ) : tab === 'national' ? (
         <NationalReportPage client={client} editionId={editionId} viewer={session.user} />
+      ) : tab === 'mail' ? (
+        <MailPage client={client} />
       ) : tab === 'wording' ? (
         <WordingPage client={client} />
       ) : tab === 'dragnet' && editionId && session.user.hasDragnetRight ? (

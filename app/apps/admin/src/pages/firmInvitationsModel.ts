@@ -13,7 +13,8 @@ export function deliveryLabel(d: FirmInvitation['delivery']): { text: string; cl
   if (!d) return { text: '—', cls: '' };
   switch (d.status) {
     case 'sent':
-      return { text: 'Sent', cls: 'tag ok' };
+      // The mail service took it; ZeptoMail does not confirm inbox delivery.
+      return { text: 'Accepted', cls: 'tag ok' };
     case 'logged':
       return { text: 'Not sent — no mail service', cls: 'tag soft' };
     case 'failed':

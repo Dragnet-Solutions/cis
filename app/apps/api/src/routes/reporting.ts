@@ -10,6 +10,7 @@ import {
   listEmailsFor,
   getUserById,
   listFirmReportOpenings,
+  hasOpenedNationalReport,
 } from '@cis/db';
 import { loadRbacContext } from '@cis/auth';
 import {
@@ -18,6 +19,7 @@ import {
   nationalApprovalPreconditions,
   requestNationalApproval,
   approveNational,
+  getPendingNationalApproval,
   getSections,
   generateFirmReports,
   openFirmReport,
@@ -38,6 +40,8 @@ import {
   ensureIndustryNarrative,
   ensureFirmNarrative,
   publishIndustryReport,
+  publishedIndustryReportContent,
+  releasedFirmReportContent,
   queueReleaseNotices,
   prepareNationalReview,
   getNationalReview,
@@ -124,9 +128,13 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
     { preHandler: [app.authenticate], schema: { params: z.object({ id: z.string().uuid() }) } },
     async (request, reply) => {
       const pool = getPool();
-      const content = await buildIndustryReportContent(pool, request.params.id);
-      const narrative = await getIndustryNarrative(pool, request.params.id);
       const published = await getReportPublication(pool, request.params.id, 'industry', null);
+      // Once published, the report is what was frozen then — never recomputed
+      // from a later sign-off. Before that, it is a live draft.
+      const content = published
+        ? (await publishedIndustryReportContent(pool, request.params.id)).content
+        : await buildIndustryReportContent(pool, request.params.id);
+      const narrative = await getIndustryNarrative(pool, request.params.id);
       return reply.send({
         ...content,
         narrative: narrativeView(narrative),
@@ -144,7 +152,14 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
     async (request, reply) => {
       const pool = getPool();
       const { id, firmId } = request.params;
-      const content = await buildFirmReportContent(pool, id, firmId);
+      // The firm's newest version: when it has been released, its frozen
+      // snapshot; otherwise (a draft, or a correction not yet released) live.
+      const latest = (await getFirmReports(pool, id)).find((r) => r.organizationId === firmId);
+      const content =
+        latest?.releaseState === 'released'
+          ? ((await releasedFirmReportContent(pool, id, firmId))?.content ??
+            (await buildFirmReportContent(pool, id, firmId)))
+          : await buildFirmReportContent(pool, id, firmId);
       const narrative = await getFirmNarrative(pool, id, firmId);
       const published = await getReportPublication(pool, id, 'firm', firmId);
       return reply.send({
@@ -387,7 +402,24 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
         report.requestedBy ?? '',
         report.approvedBy ?? '',
       ]);
-      return reply.send({ report, sections, preconditions, operatorNames });
+      // Whether a request is waiting for a second person, and whether the
+      // viewer has opened the draft themselves (needed to approve it).
+      const pending = await getPendingNationalApproval(pool, request.params.id);
+      const openedByYou = await hasOpenedNationalReport(
+        pool,
+        request.params.id,
+        request.session.sub,
+      );
+      return reply.send({
+        report,
+        sections,
+        preconditions,
+        operatorNames,
+        pendingApproval: pending
+          ? { id: pending.id, requestedAt: pending.requestedAt.toISOString() }
+          : null,
+        openedByYou,
+      });
     },
   );
 
@@ -395,7 +427,9 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
     '/national-reports/:id/open',
     { preHandler: [app.authenticate], schema: { params: z.object({ id: z.string().uuid() }) } },
     async (request, reply) => {
-      await openDraft(getPool(), request.params.id);
+      // Who opened it is the signed-in operator: the approver must have opened
+      // the draft themselves.
+      await openDraft(getPool(), request.params.id, request.session.sub);
       return reply.send({ opened: true });
     },
   );
@@ -460,11 +494,18 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
       },
     },
     async (request, reply) => {
-      await requestNationalApproval(getPool(), request.params.id, {
-        requestedBy: request.session.email,
-        reason: request.body.reason,
-      });
-      return reply.send({ requested: true });
+      // Approving the national report is a critical action: the request is a
+      // pending maker-checker record, made by the signed-in operator.
+      const pool = getPool();
+      const rbac = await loadRbacContext(pool, request.session.sub);
+      const action = await requestNationalApproval(
+        pool,
+        rbac,
+        request.params.id,
+        { reason: request.body.reason, requestedByLabel: request.session.email },
+        { ipAddress: request.ip, userAgent: request.headers['user-agent'] ?? null },
+      );
+      return reply.send({ requested: true, criticalActionId: action.id });
     },
   );
 
@@ -479,8 +520,17 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
     },
     async (request, reply) => {
       // The approver is the signed-in operator, never a body field — see
-      // routes/scoring.ts for why a client-supplied identity is refused.
-      const report = await approveNational(getPool(), request.params.id, request.session.email);
+      // routes/scoring.ts for why a client-supplied identity is refused. There
+      // is no approval without a pending request from a different person (409).
+      const pool = getPool();
+      const rbac = await loadRbacContext(pool, request.session.sub);
+      const report = await approveNational(
+        pool,
+        rbac,
+        request.params.id,
+        { approvedByLabel: request.session.email },
+        { ipAddress: request.ip, userAgent: request.headers['user-agent'] ?? null },
+      );
       // Approval publishes the Industry report. Drafting its analysis can take a
       // minute, so it runs after the response; if it fails, the report screen
       // says so and offers to publish again.

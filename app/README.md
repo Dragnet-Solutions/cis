@@ -3220,7 +3220,9 @@ The claim flow drops the mockup's fictional manually-typed invitation code entir
 faked: `GET /firm/directory` (names + ids only — a stockbroking firm's name is not confidential; it
 is the reason the study exists) replaces a hardcoded `FIRMS` array, and `GET /portal/auth/lookup`
 (does this email belong to a sign-in-capable coordinator, without ever disclosing which firm) backs
-the email-first branch the artefact's own copy already commits to.
+the email-first branch the artefact's own copy already commits to. (Since superseded: a claim now needs the
+firm's emailed invitation link — `POST /firm/claim` answers 403 without one — and
+`GET /firm/directory` returns names only, for the request-an-invitation picker.)
 
 Team, seats, and outreach are wired to Part 2's routes (real add/handover/remove, real seat
 assign/replace with the real replacement-cost warning text, real per-segment outreach volumes —
