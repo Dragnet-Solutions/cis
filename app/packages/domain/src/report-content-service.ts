@@ -11,14 +11,17 @@ import {
   getCalculationRun,
   listCalculatedResults,
   listSampleFloors,
+  getInstrumentItems,
   type ReportAnswerRow,
 } from '@cis/db';
+import { closesScope, type SurveyItem } from '@cis/survey';
 import type { FirmReport } from '@cis/shared-types';
 import { investorSegmentUnitScores } from './candidate-scoring-service';
 import { DomainError } from './errors';
 import { currentSegmentSufficiency } from './eligibility-service';
 import { getSections, NATIONAL_SECTIONS } from './national-report-service';
 import { listRegulators } from './regulator-engagement-service';
+import { FAMILY_META } from './institution-family-service';
 import { applyTransform, isSubstantive } from './scoring-transforms';
 import { SUPPRESS_BELOW } from './sufficiency-service';
 
@@ -156,8 +159,18 @@ export interface IndustryReportContent {
   } | null;
   selfVsInvestors: { firmSelfBelief: Rating; investorExperience: Rating };
   institutional: InstitutionalReading[];
-  /** Institutions invited to give a reading, and how many gave one. */
+  /**
+   * Institutions invited to give a reading, and how many responded. A response
+   * closed by a scope gate (Q0 "Rare" / "Effectively none") counts as
+   * contributed: the institution responded, it simply gets no reading.
+   */
   institutionalParticipation: { invited: number; contributed: number };
+  /**
+   * Every institution that responded, for the methodology note — including
+   * those whose scope-gate answer closed the survey, which have no reading.
+   * Never a list of who declined.
+   */
+  institutionalContributors: Array<{ name: string; code: string }>;
   /**
    * Operational themes the institutions' readings name (most frequent issues and
    * greatest consequences), with which institutions name each — computed from
@@ -179,6 +192,13 @@ export interface InstitutionalReading {
   /** Short name, e.g. "SEC". */
   code: string;
   familyCode: string;
+  /** (Absent from readings frozen before it existed.) The role the reading is grouped under in Section 10 ("Exchange /
+   *  Market Operator", ...), from the institution's register role. */
+  roleLabel?: string;
+  /** What each answer on the card answers, taken verbatim from this
+   *  instrument's own Register items (Q1–Q5) — never a fixed per-family label,
+   *  so an LCFE card never reads "exchange efficiency". */
+  labels?: InstitutionalLabels;
   /** The institution's own mandate: its vantage on stockbroking operations. */
   vantage: string;
   responses: number;
@@ -193,6 +213,15 @@ export interface InstitutionalReading {
   consequence: { greatest: string | null; others: string[] };
   /** Q5: the institution's overall assessment of the profession's capability. */
   capability: string | null;
+}
+
+/** Card labels for one reading — each its instrument's own item text. */
+export interface InstitutionalLabels {
+  issue: string;
+  frequency: string;
+  marks: string;
+  consequence: string;
+  capability: string;
 }
 
 export interface InvestorDimension {
@@ -549,13 +578,12 @@ const SEGMENT_LABEL: Record<string, string> = {
   local_institution: 'Local institutional investors',
   foreign_institution: 'Foreign institutional investors',
 };
-/** Each institutional family's instrument, and the prefix of its five questions. */
-const INSTITUTIONAL: Record<string, { code: string; q: string }> = {
-  A: { code: 'I-SEC', q: 'I-SEC-Q' },
-  B: { code: 'I-NGX', q: 'I-NGX-Q' },
-  C: { code: 'I-CSCS', q: 'I-CSCS-Q' },
-  D: { code: 'I-DEP', q: 'D-Q' },
-};
+/** An institutional instrument's question for a position in the shared Q1–Q5
+ *  structure, found by its Register id ("I-SEC-Q1", "D-Q1", "I-LCFE-Q1") —
+ *  read from the instrument's own items, never a per-family prefix table. */
+function institutionalQuestionId(items: SurveyItem[], n: number): string | null {
+  return items.find((i) => new RegExp(`(^|-)Q${n}$`).test(i.id))?.id ?? null;
+}
 
 /** The short names the market uses; anything else falls back to its initials. */
 const SHORT_NAME: Record<string, string> = {
@@ -575,6 +603,24 @@ export const shortNameOf = (name: string): string =>
     .filter((w) => /^[A-Z]/.test(w))
     .map((w) => w[0])
     .join('');
+
+const FAMILY_INSTRUMENT: Record<string, string> = Object.fromEntries(
+  Object.values(FAMILY_META).map((f) => [f.code, f.instrumentCode]),
+);
+
+/** A role's short code: the institution's market short name, or — for a role
+ *  that answers its own bespoke instrument (I-LCFE, I-FMDQ, ...) — the
+ *  instrument's own identifier, which is the institution's short code. */
+function shortCodeOf(r: {
+  name: string;
+  familyCode: string;
+  instrumentCode: string | null;
+}): string {
+  const family = FAMILY_INSTRUMENT[r.familyCode];
+  return family && r.instrumentCode && r.instrumentCode !== family
+    ? r.instrumentCode.replace(/^I-/, '')
+    : shortNameOf(r.name);
+}
 
 /**
  * Operational themes, for reading the institutions together. Each institution's
@@ -678,12 +724,20 @@ export async function buildIndustryReportContent(
     meets: !!sufficiency[segment]?.meets,
   }));
 
+  const roles = await listRegulators(pool, editionId);
+  const institutionalCodes = [
+    ...new Set(roles.flatMap((r) => (r.instrumentCode ? [r.instrumentCode] : []))),
+  ];
   const answers = await listSubmittedAnswers(pool, editionId, [
     'S1',
     'S3',
     ...INVESTOR_CODES,
-    ...Object.values(INSTITUTIONAL).map((i) => i.code),
+    ...institutionalCodes,
   ]);
+  const itemsByInstrument = new Map<string, SurveyItem[]>();
+  for (const code of institutionalCodes) {
+    itemsByInstrument.set(code, await getInstrumentItems(pool, code));
+  }
   const of = (code: string, q?: string) =>
     answers.filter((a) => a.instrumentCode === code && (!q || a.questionId === q));
   const cited = (rows: ReportAnswerRow[]) =>
@@ -693,7 +747,6 @@ export async function buildIndustryReportContent(
   const foreign = of('S5b');
   const q = (rows: ReportAnswerRow[], id: string) => rows.filter((r) => r.questionId === id);
 
-  const roles = await listRegulators(pool, editionId);
   const single = (rows: ReportAnswerRow[]): string | null => {
     const a = rows[0]?.answer;
     return typeof a === 'string' ? a : null;
@@ -705,34 +758,56 @@ export async function buildIndustryReportContent(
     const greatest = typeof g === 'string' && g !== 'Other' ? g : (picked[0] ?? null);
     return { greatest, others: picked.filter((o) => o !== greatest) };
   };
-  const institutional: InstitutionalReading[] = roles
-    .filter((r) => r.state === 'confirmed')
+  const confirmed = roles.filter((r) => r.state === 'confirmed');
+  /** A role whose response was closed by a scope gate (Q0 answered "Rare" /
+   *  "Effectively none"): it responded, but no attributed passage is ever
+   *  generated for it. Read from the Register's own gate, per instrument. */
+  const closedByScopeGate = (r: (typeof roles)[number]): boolean => {
+    const items = itemsByInstrument.get(r.instrumentCode ?? '') ?? [];
+    const rows = of(r.instrumentCode ?? '').filter((a) => a.institutionName === r.name);
+    return items.some((item) =>
+      rows.some((a) => a.questionId === item.id && closesScope(item, a.answer)),
+    );
+  };
+  const institutional: InstitutionalReading[] = confirmed
+    .filter((r) => !closedByScopeGate(r))
     .map((r) => {
-      const inst = INSTITUTIONAL[r.familyCode]!;
-      const rows = of(inst.code).filter((a) => a.institutionName === r.name);
+      const instrument = r.instrumentCode ?? '';
+      const items = itemsByInstrument.get(instrument) ?? [];
+      const qid = (n: number) => institutionalQuestionId(items, n) ?? `${instrument}-Q${n}`;
+      const rows = of(instrument).filter((a) => a.institutionName === r.name);
       const issues = new Map<string, number>();
-      for (const a of q(rows, `${inst.q}1`)) {
+      for (const a of q(rows, qid(1))) {
         for (const o of pickedOptions(a.answer)) {
           if (o !== 'Other') issues.set(o, (issues.get(o) ?? 0) + 1);
         }
       }
-      const code = shortNameOf(r.name);
+      const code = shortCodeOf(r);
+      const textOf = (n: number) => items.find((i) => i.id === qid(n))?.text ?? '';
       return {
         key: `${r.familyCode}_${code.replace(/[^A-Za-z0-9]+/g, '')}`,
         role: r.name,
         code,
         familyCode: r.familyCode,
+        roleLabel: FAMILY_META[r.familyCode as keyof typeof FAMILY_META]?.label ?? r.familyCode,
+        labels: {
+          issue: textOf(1),
+          frequency: textOf(2),
+          marks: textOf(3),
+          consequence: textOf(4),
+          capability: textOf(5),
+        },
         vantage: r.mandate,
         responses: new Set(rows.map((a) => a.respondentId)).size,
         topIssues: [...issues.entries()]
           .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
           .slice(0, 3)
           .map(([label, count]) => ({ label, count, pct: 0 })),
-        issue: greatestOf(q(rows, `${inst.q}1`)),
-        frequency: single(q(rows, `${inst.q}2`)),
-        marks: pickedOptions(q(rows, `${inst.q}3`)[0]?.answer).filter((o) => o !== 'Other'),
-        consequence: greatestOf(q(rows, `${inst.q}4`)),
-        capability: single(q(rows, `${inst.q}5`)),
+        issue: greatestOf(q(rows, qid(1))),
+        frequency: single(q(rows, qid(2))),
+        marks: pickedOptions(q(rows, qid(3))[0]?.answer).filter((o) => o !== 'Other'),
+        consequence: greatestOf(q(rows, qid(4))),
+        capability: single(q(rows, qid(5))),
       };
     })
     .filter((r) => r.responses > 0);
@@ -740,9 +815,16 @@ export async function buildIndustryReportContent(
   const askedNames = new Set(
     roles.filter((r) => ['invited', 'confirmed', 'declined'].includes(r.state)).map((r) => r.name),
   );
+  // Contributors are the institutions that responded — a reading or not. One
+  // closed by its scope gate is listed here and never described as declining.
+  const contributorNames = [...new Set(confirmed.map((r) => r.name))];
+  const institutionalContributors = contributorNames.map((name) => ({
+    name,
+    code: shortCodeOf(confirmed.find((r) => r.name === name)!),
+  }));
   const institutionalParticipation = {
     invited: askedNames.size,
-    contributed: new Set(institutional.map((r) => r.role)).size,
+    contributed: contributorNames.length,
   };
 
   const investorRows = answers.filter((a) => INVESTOR_CODES.includes(a.instrumentCode));
@@ -789,6 +871,7 @@ export async function buildIndustryReportContent(
     },
     institutional,
     institutionalParticipation,
+    institutionalContributors,
     institutionalThemes: institutionalThemes(institutional),
   };
 }

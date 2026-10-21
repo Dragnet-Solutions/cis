@@ -102,15 +102,15 @@ describe('institutional completions derive the correct funnel segment', () => {
  * "Local institutions 2 of 1" with no S5a response at all.
  */
 describe('regulator submissions never count toward an investor segment', () => {
-  it('maps no regulator instrument to a segment', () => {
-    for (const code of ['I-SEC', 'I-NGX', 'I-CSCS', 'I-DEP']) {
+  it('maps no regulator instrument to a segment', async () => {
+    for (const code of ['I-SEC', 'I-NGX', 'I-CSCS', 'I-DEP', 'I-LCFE', 'I-NASD', 'I-FMDQ']) {
       expect(segmentForInstrument(code)).toBeNull();
-      expect(isRegulatorInstrument(code)).toBe(true);
+      expect(await isRegulatorInstrument(pool, code)).toBe(true);
       expect(isInvestorInstrument(code)).toBe(false);
     }
     expect(isInvestorInstrument('S5a')).toBe(true);
     expect(isInvestorInstrument('S1')).toBe(false);
-    expect(isRegulatorInstrument('S5a')).toBe(false);
+    expect(await isRegulatorInstrument(pool, 'S5a')).toBe(false);
   });
 
   async function submit(instrumentCode: string, institutionName: string): Promise<string> {

@@ -1,3 +1,5 @@
+import { Pool } from 'pg';
+import { query } from '@cis/db';
 import type { InstrumentFamilyCode } from '@cis/shared-types';
 
 /**
@@ -53,11 +55,33 @@ export function instrumentCodeForFamily(familyCode: InstrumentFamilyCode): strin
   return FAMILY_META[familyCode].instrumentCode;
 }
 
-/** Whether an instrument is one of the institution-family (regulator /
- *  market-infrastructure) reviews. These are answered only through the
- *  named-contact link issued from the Regulators screen, never self-started. */
-export function isRegulatorInstrument(instrumentCode: string): boolean {
-  return Object.values(FAMILY_META).some((f) => f.instrumentCode === instrumentCode);
+/**
+ * The instrument one institution role answers, exactly as the Market
+ * Institutions Register assigns it (`institution_roles.instrument_code`:
+ * I-SEC, I-NGX, I-CSCS, I-DEP, I-LCFE, I-NASD, I-FMDQ). One registered
+ * institution maps to one bespoke instrument (UX-OPS-007 v2.10); a role with
+ * none assigned is "Questionnaire not assigned" and cannot be sent a link —
+ * there is deliberately no fallback to a family's instrument.
+ */
+export function instrumentCodeForRole(role: { instrumentCode?: string | null }): string | null {
+  return role.instrumentCode ?? null;
+}
+
+/** Whether an instrument is one of the regulator / market-infrastructure
+ *  reviews — read from the Register (`instrument_definitions.instrument_type
+ *  = 'regulator'`), never a list of codes, so a bespoke institutional
+ *  instrument is covered the moment it is registered. These are answered only
+ *  through the named-contact link issued from the Regulators screen, never
+ *  self-started. */
+export async function isRegulatorInstrument(pool: Pool, instrumentCode: string): Promise<boolean> {
+  const res = await query<{ found: boolean }>(
+    pool,
+    `SELECT EXISTS (
+       SELECT 1 FROM instrument_definitions WHERE code = $1 AND instrument_type = 'regulator'
+     ) AS found`,
+    [instrumentCode],
+  );
+  return res.rows[0]?.found === true;
 }
 
 /**

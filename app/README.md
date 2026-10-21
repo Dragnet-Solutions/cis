@@ -174,6 +174,22 @@ loader — never hardcoded as a literal in application or renderer code.
   ID, text, kind, scope, option-set, or flag mismatch. This is the permanent
   regression gate for content updates — it fails on a missing ID rather than
   passing on a plausible paraphrase.
+- **I-LCFE, I-NASD, I-FMDQ and the Q0 scope gate** (Oct 2026): the three
+  bespoke institutional instruments are Register data in
+  `survey-register-seed.json` (items under `instruments`, metadata under
+  `instrument_meta`, provenance under `supplements`), transcribed verbatim from
+  `CIS_Dragnet_Institutional_Instruments_LCFE_NASD_FMDQ_for_CIS_Review.pdf`.
+  Each opens with Q0, which carries `scope_gate: {close_on, decision}`.
+  SV-010 §4a records that the Register has no branching; the gate is admitted
+  only because a later controlled decision (CIS sign-off, 21 October 2026)
+  expressly supersedes §4a for the instruments that carry Q0, and the loader
+  refuses a gate that does not name its decision. The SV-010 gate test
+  compares the runtime branch with the Register's, decision included, so the
+  gate is a controlled branch, not a divergence. The route itself
+  (`applyScopeGate` in `packages/survey`) is shared by the renderer, the
+  server's draft/submit checks and the respondent robot. Existing databases
+  receive the three through migration `20261022000000_institutional-instruments`.
+  The instrument freeze refuses while any item carries `[TODO]`.
 - **Shared renderer** (`packages/survey` logic + `apps/admin/src/renderer`
   controls): one control per Register `kind`, driven entirely by item data —
   ported faithfully from the approved `UX-X-RENDER-001` v2.0. Renderer logic is

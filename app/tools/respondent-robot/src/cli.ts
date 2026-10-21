@@ -246,6 +246,7 @@ async function main(): Promise<number> {
     isStopping: () => stopping,
     log,
     inviteTokenFor: inviteResolver(config.firmInvites, invitesById),
+    scopeGateCloseShare: config.scopeGateCloseShare,
   };
   const runCounts: Record<string, { ok: number; failed: number }> = {};
   const count = (instrument: string, ok: boolean): void => {
@@ -301,9 +302,7 @@ async function main(): Promise<number> {
     );
   }
   if (config.regulatorTokens.length === 0 && !config.setupOnly) {
-    log(
-      'note: no regulator links given (--regulator-links); the four regulator roles are skipped.',
-    );
+    log('note: no regulator links given (--regulator-links); the regulator roles are skipped.');
   }
   if (tasks.length > 0) {
     log(

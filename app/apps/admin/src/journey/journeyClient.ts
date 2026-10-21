@@ -59,7 +59,10 @@ export interface ResumeState {
     resumeStep: number;
     consentAccepted: boolean;
     recoveryToken: string | null;
+    institutionName?: string | null;
   };
+  /** The instrument, resolved from the Survey Register. */
+  instrument?: { code: string; name: string; instrumentType: string } | null;
   items: SurveyItem[];
   drafts: DraftRow[];
   firmContext: FirmContext;
@@ -129,6 +132,7 @@ export const journeyApi = {
       | ({ kind: 'resume' } & ResumeState)
       | { kind: 'already_submitted' }
       | { kind: 'participation_closed' }
+      | { kind: 'link_invalidated' }
     >(`/journeys/resume/${encodeURIComponent(token)}`),
 
   /** Stops survey reminders for the respondent behind a recovery link. */

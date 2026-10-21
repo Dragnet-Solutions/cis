@@ -21,24 +21,87 @@ function mapInstitution(r: RawInstitutionRow): Institution {
 }
 
 /**
+ * The bespoke-instrument roles (client decision, Institutional Instruments for
+ * Three New Market Institutions, Sept 2026): one registered institution, one
+ * bespoke questionnaire, one attributed passage. Each row names the role's own
+ * instrument and its one-line vantage (the instrument's "Strap"). The same
+ * values are written to existing databases by migration
+ * 20261022000000_institutional-instruments.js.
+ */
+export const BESPOKE_INSTRUMENT_ROLES: ReadonlyArray<{
+  institutionName: string;
+  familyCode: InstrumentFamilyCode;
+  instrumentCode: string;
+  mandate: string;
+}> = [
+  {
+    institutionName: 'Lagos Commodities and Futures Exchange',
+    familyCode: 'B',
+    instrumentCode: 'I-LCFE',
+    mandate: 'Commodities and derivatives view',
+  },
+  {
+    institutionName: 'NASD OTC Securities Exchange',
+    familyCode: 'B',
+    instrumentCode: 'I-NASD',
+    mandate: 'OTC market view',
+  },
+  {
+    institutionName: 'FMDQ Group',
+    familyCode: 'B',
+    instrumentCode: 'I-FMDQ',
+    mandate: 'Fixed income, currencies and post-trade view',
+  },
+];
+
+/**
+ * The instruments the original roles answer, made explicit register
+ * assignments (UX-OPS-007 v2.10: instrument assignment comes from the
+ * register; a role without one cannot be sent a link).
+ */
+export const EXISTING_INSTRUMENT_ASSIGNMENTS: ReadonlyArray<{
+  institutionName: string;
+  familyCode: InstrumentFamilyCode;
+  instrumentCode: string;
+}> = [
+  {
+    institutionName: 'Securities and Exchange Commission',
+    familyCode: 'A',
+    instrumentCode: 'I-SEC',
+  },
+  { institutionName: 'Nigerian Exchange Limited', familyCode: 'B', instrumentCode: 'I-NGX' },
+  {
+    institutionName: 'Central Securities Clearing System',
+    familyCode: 'C',
+    instrumentCode: 'I-CSCS',
+  },
+  {
+    institutionName: 'Central Securities Clearing System',
+    familyCode: 'D',
+    instrumentCode: 'I-DEP',
+  },
+];
+
+/**
  * Seed the institutions/roles named in the controlled extension's mapping
  * table. Idempotent (ON CONFLICT DO NOTHING on the unique institution name /
  * (institution, family) pair) — safe to call every time `seedReferenceData`
  * runs, exactly like every other piece of reference data it seeds.
  */
 export async function seedInstitutions(pool: Pool): Promise<void> {
-  // LCFE, NASD OTC and the three FMDQ entities are under CIS review — "not
-  // registered and not in collection" per the Engineering Screen Stitching
-  // Guide §8. Seeded inactive; `seedInstitutionEngagement` skips inactive
-  // institutions, so they carry no engagement row until CIS registers them
-  // and someone flips this flag — a data change, not a code change.
+  // LCFE and NASD OTC are registered (Sept 2026 client decision) and answer
+  // their own bespoke instruments. FMDQ registers as ONE entity, FMDQ Group,
+  // for this edition; the three FMDQ subsidiaries named in the earlier
+  // extension stay unregistered ("not in collection") and keep their rows.
+  // `seedInstitutionEngagement` skips inactive institutions.
   await query(
     pool,
     `INSERT INTO institutions (name, is_active) VALUES
        ('Securities and Exchange Commission', TRUE),
        ('Nigerian Exchange Limited', TRUE),
-       ('NASD OTC Securities Exchange', FALSE),
-       ('Lagos Commodities and Futures Exchange', FALSE),
+       ('NASD OTC Securities Exchange', TRUE),
+       ('Lagos Commodities and Futures Exchange', TRUE),
+       ('FMDQ Group', TRUE),
        ('FMDQ Securities Exchange Limited', FALSE),
        ('Central Securities Clearing System', TRUE),
        ('FMDQ Clear Limited', FALSE),
@@ -52,7 +115,8 @@ export async function seedInstitutions(pool: Pool): Promise<void> {
      UNION ALL
      SELECT id, 'B' FROM institutions WHERE name IN (
        'Nigerian Exchange Limited', 'NASD OTC Securities Exchange',
-       'Lagos Commodities and Futures Exchange', 'FMDQ Securities Exchange Limited'
+       'Lagos Commodities and Futures Exchange', 'FMDQ Group',
+       'FMDQ Securities Exchange Limited'
      )
      UNION ALL
      SELECT id, 'C' FROM institutions WHERE name IN (
@@ -64,6 +128,28 @@ export async function seedInstitutions(pool: Pool): Promise<void> {
      )
      ON CONFLICT (institution_id, family_code) DO NOTHING`,
   );
+  for (const r of EXISTING_INSTRUMENT_ASSIGNMENTS) {
+    await query(
+      pool,
+      `UPDATE institution_roles ir
+          SET instrument_code = $3
+         FROM institutions i
+        WHERE i.id = ir.institution_id AND i.name = $1 AND ir.family_code = $2
+          AND ir.instrument_code IS NULL`,
+      [r.institutionName, r.familyCode, r.instrumentCode],
+    );
+  }
+  for (const r of BESPOKE_INSTRUMENT_ROLES) {
+    await query(
+      pool,
+      `UPDATE institution_roles ir
+          SET instrument_code = $3, mandate = COALESCE(ir.mandate, $4)
+         FROM institutions i
+        WHERE i.id = ir.institution_id AND i.name = $1 AND ir.family_code = $2
+          AND ir.instrument_code IS NULL`,
+      [r.institutionName, r.familyCode, r.instrumentCode, r.mandate],
+    );
+  }
 }
 
 export async function listInstitutions(pool: Pool): Promise<Institution[]> {
@@ -82,10 +168,17 @@ export async function getInstitutionById(pool: Pool, id: string): Promise<Instit
 interface RawRoleRow {
   institution_id: string;
   family_code: InstrumentFamilyCode;
+  instrument_code: string | null;
+  mandate: string | null;
 }
 
 function mapRole(r: RawRoleRow): InstitutionRole {
-  return { institutionId: r.institution_id, familyCode: r.family_code };
+  return {
+    institutionId: r.institution_id,
+    familyCode: r.family_code,
+    instrumentCode: r.instrument_code,
+    mandate: r.mandate,
+  };
 }
 
 /** Every (institution, family) role in the estate — the structural source of
@@ -93,7 +186,7 @@ function mapRole(r: RawRoleRow): InstitutionRole {
 export async function listInstitutionRoles(pool: Pool): Promise<InstitutionRole[]> {
   const res = await query<RawRoleRow>(
     pool,
-    `SELECT institution_id, family_code FROM institution_roles
+    `SELECT institution_id, family_code, instrument_code, mandate FROM institution_roles
       ORDER BY family_code, institution_id`,
   );
   return res.rows.map(mapRole);
@@ -107,7 +200,7 @@ export async function listInstitutionRoles(pool: Pool): Promise<InstitutionRole[
 export async function listActiveInstitutionRoles(pool: Pool): Promise<InstitutionRole[]> {
   const res = await query<RawRoleRow>(
     pool,
-    `SELECT r.institution_id, r.family_code
+    `SELECT r.institution_id, r.family_code, r.instrument_code, r.mandate
        FROM institution_roles r
        JOIN institutions i ON i.id = r.institution_id
       WHERE i.is_active = TRUE
@@ -123,7 +216,7 @@ export async function listRolesForInstitution(
 ): Promise<InstitutionRole[]> {
   const res = await query<RawRoleRow>(
     pool,
-    `SELECT institution_id, family_code FROM institution_roles
+    `SELECT institution_id, family_code, instrument_code, mandate FROM institution_roles
       WHERE institution_id = $1 ORDER BY family_code`,
     [institutionId],
   );
@@ -134,15 +227,28 @@ export async function listRolesForInstitution(
  *  (e.g. the mission board's per-role display name). */
 export interface InstitutionWithRole extends Institution {
   familyCode: InstrumentFamilyCode;
+  instrumentCode: string | null;
+  mandate: string | null;
 }
 
 export async function listInstitutionsWithRoles(pool: Pool): Promise<InstitutionWithRole[]> {
-  const res = await query<RawInstitutionRow & { family_code: InstrumentFamilyCode }>(
+  const res = await query<
+    RawInstitutionRow & {
+      family_code: InstrumentFamilyCode;
+      instrument_code: string | null;
+      mandate: string | null;
+    }
+  >(
     pool,
-    `SELECT i.*, r.family_code
+    `SELECT i.*, r.family_code, r.instrument_code, r.mandate
        FROM institutions i
        JOIN institution_roles r ON r.institution_id = i.id
       ORDER BY r.family_code, i.name`,
   );
-  return res.rows.map((r) => ({ ...mapInstitution(r), familyCode: r.family_code }));
+  return res.rows.map((r) => ({
+    ...mapInstitution(r),
+    familyCode: r.family_code,
+    instrumentCode: r.instrument_code,
+    mandate: r.mandate,
+  }));
 }

@@ -38,12 +38,16 @@ are `+234 000 555 ….`, and institution names start with `[Test]`.
    Every investor gives consent, an optional fake contact and their firm choices, then answers
    one question at a time and submits.
 
-4. **Answers the four regulator roles** (I-SEC, I-NGX, I-CSCS, I-DEP), but only through the links
-   that a person issued on the Regulators screen. You pass those links in.
+4. **Answers the regulator roles** (I-SEC, I-NGX, I-CSCS, I-DEP, I-LCFE, I-NASD, I-FMDQ: one per
+   active Market Institutions role), but only through the links that a person issued on the
+   Regulators screen. You pass those links in. Where an instrument opens with a scope question
+   (Q0), the robot answers an option that keeps the survey going, so full surveys run. With
+   `--scope-gate-close <share>` that share of regulators answer a closing option ("Rare" /
+   "Effectively none") instead, and their survey ends there, as it does for a real respondent.
 
 The robot asks for the questions in the same way the survey page does, using
 `GET /journeys/:id/resume`. It walks them with the shared `@cis/survey` sequencing: shared items
-once, firm-specific items once per rated firm. It writes the exact answer shapes the controls
+once, firm-specific items once per rated firm, cut at a closing scope-gate answer. It writes the exact answer shapes the controls
 write:
 
 | Question type | Answer shape                                                |

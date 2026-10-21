@@ -59,6 +59,8 @@ export interface DrgOpsQuestion {
 
 export interface InstrumentsResponse {
   frozen: boolean;
+  /** Frozen edition only: instruments registered since and not yet frozen. */
+  pendingInstruments?: string[];
   pendingFreeze: PendingAction | null;
   instruments: Instrument[];
   drgOps: DrgOpsQuestion[];
@@ -643,6 +645,15 @@ export interface RegulatorView {
   familyCode: RegulatorFamilyCode;
   name: string;
   mandate: string;
+  /** The bespoke instrument the register assigns (e.g. I-SEC, I-LCFE), or null. */
+  instrumentCode?: string | null;
+  /** False: "Questionnaire not assigned" — no link can be issued. */
+  questionnaireAssigned?: boolean;
+  /** False: "Questionnaire not frozen for this edition" — no link yet. */
+  questionnaireFrozen?: boolean;
+  /** Responded, and the scope question closed the survey: a contributor with
+   *  no attributed passage (never a decline). */
+  closedByScopeGate?: boolean;
   status: 'not_started' | 'invited' | 'in_progress' | 'confirmed' | 'declined';
   state: RegulatorSurveyState;
   contact: RegulatorContact | null;
@@ -704,6 +715,16 @@ export interface InstitutionalReading {
   role: string;
   code: string;
   familyCode: string;
+  /** Section 10 groups by this role (absent from reports frozen before it). */
+  roleLabel?: string;
+  /** Each answer's label: its own instrument's Register item text. */
+  labels?: {
+    issue: string;
+    frequency: string;
+    marks: string;
+    consequence: string;
+    capability: string;
+  };
   vantage: string;
   responses: number;
   topIssues: ReportShare[];
@@ -762,6 +783,9 @@ export interface IndustryReportContent {
   selfVsInvestors: { firmSelfBelief: ReportRating; investorExperience: ReportRating };
   institutional: InstitutionalReading[];
   institutionalParticipation: { invited: number; contributed: number };
+  /** Every institution that responded, with or without a reading (absent from
+   *  reports frozen before it existed). */
+  institutionalContributors?: Array<{ name: string; code: string }>;
   institutionalThemes: { themes: Array<{ theme: string; codes: string[] }>; standsApart: string[] };
   narrative: ReportNarrativeView | null;
   /** When the document left CIS (released to its firm / published); then final. */

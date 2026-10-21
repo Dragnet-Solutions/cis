@@ -23,7 +23,7 @@ import {
 } from '@cis/domain';
 import { kickMailDispatcher } from '../mail/dispatcher';
 import { publicOrigin } from '../public-url';
-import { getRespondentByRecoveryToken, setReportDelivery } from '@cis/db';
+import { getRespondentByRecoveryToken, isRevokedRecoveryToken, setReportDelivery } from '@cis/db';
 import type { AnswerValue } from '@cis/survey';
 
 const not = (reply: FastifyReply, code: number, error: string, message: string) =>
@@ -198,7 +198,14 @@ export const journeyRoutes: FastifyPluginAsyncZod = async (app) => {
     async (request, reply) => {
       const pool = getPool();
       const respondent = await getRespondentByRecoveryToken(pool, request.params.token);
-      if (!respondent) return not(reply, 404, 'Not Found', 'No journey for this recovery link');
+      if (!respondent) {
+        // A link replaced by "cancel and start again" says so (UX-INS-003
+        // link_invalidated), rather than looking like a mistyped link.
+        if (await isRevokedRecoveryToken(pool, request.params.token)) {
+          return reply.send({ kind: 'link_invalidated' });
+        }
+        return not(reply, 404, 'Not Found', 'No journey for this recovery link');
+      }
       if (respondent.withdrawnAt) {
         return reply.send({ kind: 'participation_closed' });
       }

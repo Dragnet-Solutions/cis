@@ -35,6 +35,23 @@ export interface SurveyItem {
   gridRows?: string[];
   gridDimensions?: Record<string, string[]>;
   gridScale?: { min: number; max: number };
+  /**
+   * A scope gate (a conditional route, not a control): when this item is
+   * answered with one of `closeOn`, the instrument closes there — no later
+   * item is presented, asked for, or recorded, and the response is complete.
+   * Declared per item in the Register (`scope_gate`), so any instrument can
+   * carry one; only a `single` item can be a gate.
+   */
+  scopeGate?: ScopeGate;
+}
+
+/** See `SurveyItem.scopeGate`. */
+export interface ScopeGate {
+  /** The option labels that close the instrument, verbatim from the item. */
+  closeOn: string[];
+  /** The controlled decision that authorises this branch (SV-010 §4a records
+   *  the Register as having none; a gate exists only by a later decision). */
+  decision?: string;
 }
 
 /**

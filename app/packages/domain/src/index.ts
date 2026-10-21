@@ -11,7 +11,12 @@ export {
 } from './edition-service';
 export type { ActorContext, LockDecision, AutoOpenResult } from './edition-service';
 
-export { requestFreeze, decideFreeze, INSTRUMENT_FREEZE_ACTION } from './instrument-service';
+export {
+  requestFreeze,
+  decideFreeze,
+  INSTRUMENT_FREEZE_ACTION,
+  RegisterContentIncompleteError,
+} from './instrument-service';
 export type { FreezeDecision } from './instrument-service';
 
 export {
@@ -42,6 +47,8 @@ export {
   ReviewGapError,
   CollectionClosedError,
   RegulatorLinkRequiredError,
+  ScopeClosedError,
+  LinkInvalidatedError,
   acceptsResponses,
   assertCollectionOpen,
   getPublicConsentContent,
@@ -489,6 +496,7 @@ export {
 export {
   FAMILY_META,
   instrumentCodeForFamily,
+  instrumentCodeForRole,
   isRegulatorInstrument,
 } from './institution-family-service';
 export type { FamilyMeta } from './institution-family-service';

@@ -108,7 +108,7 @@ export function RegulatorsPage({
     try {
       setRegs((await client.getRegulators(editionId)).regulators);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load the regulators');
+      setError(err instanceof ApiError ? err.message : 'Could not load the market institutions');
     }
   }, [client, editionId]);
 
@@ -133,19 +133,26 @@ export function RegulatorsPage({
 
   return (
     <main>
-      <h1 tabIndex={-1}>Regulators</h1>
+      <h1 tabIndex={-1}>Market institutions</h1>
       <p className="lede">
-        Each institutional role contributes the Institutional Perspectives section and is approached
-        separately, answering once — including an institution holding more than one role, which
-        appears once per role below.
+        The institutions in the Market Institutions Register contribute the Institutional
+        Perspectives section. Each is approached separately and answers its own questionnaire once —
+        an institution holding more than one role appears once per role below.
       </p>
       {error && <div className="err">{error}</div>}
       {regs.length === 0 ? (
-        <p>No institutional roles are set up for this edition.</p>
+        <p>No market institutions are registered for this edition.</p>
       ) : (
         <div>
           {regs.map((r) => {
-            const pill = PILL[r.state];
+            const pill =
+              r.questionnaireAssigned === false &&
+              (r.state === 'no_contact' || r.state === 'contact_added')
+                ? { cls: 'nocontact', label: 'No questionnaire' }
+                : r.questionnaireFrozen === false &&
+                    (r.state === 'no_contact' || r.state === 'contact_added')
+                  ? { cls: 'nocontact', label: 'Not frozen' }
+                  : PILL[r.state];
             return (
               <button
                 key={`${r.institutionId}-${r.familyCode}`}
@@ -157,7 +164,10 @@ export function RegulatorsPage({
               >
                 <span className="who">
                   <b>{r.name}</b>
-                  <span>{r.mandate}</span>
+                  <span>
+                    {r.mandate}
+                    {r.instrumentCode ? ` · ${r.instrumentCode}` : ''}
+                  </span>
                 </span>
                 <span className="next">
                   {r.overdue ? `Overdue since ${fmtDate(r.targetBy)}` : r.nextStep}
@@ -169,8 +179,8 @@ export function RegulatorsPage({
         </div>
       )}
       <p className="owner">
-        The section cannot be written without every role above, so each is a single point of failure
-        for a promised output. That is why each holds its own lead time rather than a shared
+        The section cannot be written without the institutions above, so each is a single point of
+        failure for a promised output. That is why each holds its own lead time rather than a shared
         deadline.
       </p>
     </main>
@@ -204,7 +214,7 @@ function RegulatorDetail({
       })
       .catch((err: unknown) => {
         if (!cancelled) {
-          setError(err instanceof ApiError ? err.message : 'Could not load this regulator');
+          setError(err instanceof ApiError ? err.message : 'Could not load this institution');
         }
       });
     return () => {
@@ -427,7 +437,7 @@ function ContactSection(props: {
           </>
         ) : (
           <>
-            <p>Nobody is named for this regulator yet.</p>
+            <p>Nobody is named for this institution yet.</p>
             <div className="actions">
               <button type="button" className="btn" onClick={props.startEdit}>
                 Add a contact
@@ -456,7 +466,18 @@ function SurveySection(props: {
   let pill: { cls: string; text: string };
   let stageCls = 'stage';
 
-  if (r.state === 'confirmed') {
+  if (r.state === 'confirmed' && r.closedByScopeGate) {
+    // A scope-gate close is a submission, never a decline.
+    stageCls = 'stage done';
+    pill = { cls: 'confirmed', text: 'Submitted' };
+    body = (
+      <p>
+        <span className="tick">✓</span> Submitted. The institution reported little or no direct
+        dealing with stockbroking firms, so its survey closed after the first question. It is listed
+        among the contributing institutions and contributes no passage.
+      </p>
+    );
+  } else if (r.state === 'confirmed') {
     stageCls = 'stage done';
     pill = { cls: 'confirmed', text: 'Submitted' };
     body = (
@@ -492,6 +513,24 @@ function SurveySection(props: {
           </button>
         </div>
       </>
+    );
+  } else if (r.questionnaireAssigned === false) {
+    // UX-OPS-007 institution_without_instrument.
+    pill = { cls: 'nocontact', text: 'Questionnaire not assigned' };
+    body = (
+      <p>
+        This institution is in the Market Institutions Register, but its bespoke questionnaire is
+        not yet assigned. No survey link can be issued.
+      </p>
+    );
+  } else if (r.questionnaireFrozen === false && r.state !== 'invited') {
+    pill = { cls: 'nocontact', text: 'Questionnaire not frozen for this edition' };
+    body = (
+      <p>
+        This institution’s questionnaire was added to the register after this edition’s instruments
+        were frozen. Freeze it for this edition on the Surveys page (it needs a second person)
+        before a survey link can be issued.
+      </p>
     );
   } else if (!r.contact) {
     pill = { cls: 'nocontact', text: 'Not yet' };

@@ -4,15 +4,21 @@ import { ApiError } from '../api/types';
 import { isAnswered, outstanding, type SurveyItem } from '@cis/survey';
 import { ItemControl } from '../renderer/controls';
 
-const CODES = ['S1', 'S2', 'S3', 'S4', 'S5a', 'S5b', 'I-SEC', 'I-NGX', 'I-CSCS'];
-
 /**
  * Preview surface for the shared question renderer — the production React port
  * of UX-X-RENDER-001. Not a respondent journey (those arrive in Phase 3); this
  * confirms every control renders from live Register data and reports its own
  * answered/outstanding state.
  */
-export function RendererPage({ client }: { client: AdminClient }): JSX.Element {
+export function RendererPage({
+  client,
+  editionId,
+}: {
+  client: AdminClient;
+  editionId: string;
+}): JSX.Element {
+  // Every instrument in the Register, in its own order — never a fixed list.
+  const [codes, setCodes] = useState<string[]>([]);
   const [code, setCode] = useState<string>('S1');
   const [items, setItems] = useState<SurveyItem[]>([]);
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
@@ -33,6 +39,19 @@ export function RendererPage({ client }: { client: AdminClient }): JSX.Element {
   );
 
   useEffect(() => {
+    let cancelled = false;
+    client.getInstruments(editionId).then(
+      (r) => {
+        if (!cancelled) setCodes(r.instruments.map((i) => i.code));
+      },
+      () => undefined,
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [client, editionId]);
+
+  useEffect(() => {
     void load(code);
   }, [load, code]);
 
@@ -48,7 +67,7 @@ export function RendererPage({ client }: { client: AdminClient }): JSX.Element {
       </p>
 
       <div className="actions" style={{ marginBottom: 14 }}>
-        {CODES.map((c) => (
+        {codes.map((c) => (
           <button
             key={c}
             type="button"

@@ -6,6 +6,7 @@ export type {
   YesNoAnswer,
   SelectGreatestAnswer,
   GridAnswer,
+  ScopeGate,
 } from './types';
 export { getCanonical, putCanonical, setAnswer, setComment } from './answer';
 export {
@@ -21,3 +22,5 @@ export {
 } from './logic';
 export { buildJourneySequence, firmContextAt } from './sequence';
 export type { JourneyStep, FirmContext } from './sequence';
+export { closesScope, applyScopeGate } from './scope-gate';
+export type { ScopeGatedSteps } from './scope-gate';

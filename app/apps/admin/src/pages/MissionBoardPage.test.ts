@@ -73,7 +73,7 @@ describe('Mission Board rail — no stale "not built" claim for a routed surface
   it('Regulators, Monitoring and Dragnet analysis are marked built — the three confirmed-shipped surfaces', () => {
     const byKey = new Map(RAIL.map((s) => [s.key, s]));
     expect(byKey.get('regulators')?.built).toBe(true);
-    expect(byKey.get('regulators')?.label).toBe('Regulators');
+    expect(byKey.get('regulators')?.label).toBe('Market institutions');
     expect(byKey.get('monitoring')?.built).toBe(true);
     expect(byKey.get('monitoring')?.label).toBe('Monitoring');
     expect(byKey.get('dragnet')?.built).toBe(true);

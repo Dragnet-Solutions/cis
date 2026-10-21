@@ -1,5 +1,5 @@
 import type { IndustryReportContent } from '../api/types';
-import { InstitutionCard } from './institutional';
+import { InstitutionGroups } from './institutional';
 import {
   Brand,
   Cover,
@@ -62,7 +62,14 @@ export function InstitutionalReport({
     (s) => s.id === 'PUB_10_INSTITUTIONAL_PERSPECTIVES' && s.disposition === 'suppressed',
   );
   const readings = c.institutional;
-  const institutions = [...new Map(readings.map((r) => [r.role, r])).values()];
+  // Every institution that responded, reading or not: one whose scope answer
+  // closed its survey is a contributor with no passage, never "declined".
+  const institutions =
+    c.institutionalContributors ??
+    [...new Map(readings.map((r) => [r.role, r])).values()].map((r) => ({
+      name: r.role,
+      code: r.code,
+    }));
   const p = c.institutionalParticipation;
   const shared = c.institutionalThemes.themes.filter((t) => t.codes.length > 1);
 
@@ -158,21 +165,23 @@ export function InstitutionalReport({
                     </tr>
                   </thead>
                   <tbody>
-                    {institutions.map((r) => (
-                      <tr key={r.role}>
-                        <td>
-                          <b>{r.code}</b>
-                        </td>
-                        <td>
-                          {r.role} —{' '}
-                          {readings
-                            .filter((x) => x.role === r.role)
-                            .map((x) => x.vantage.toLowerCase())
-                            .join('; ')}
-                          .
-                        </td>
-                      </tr>
-                    ))}
+                    {institutions.map((r) => {
+                      const vantage = readings
+                        .filter((x) => x.role === r.name)
+                        .map((x) => x.vantage.toLowerCase())
+                        .join('; ');
+                      return (
+                        <tr key={r.name}>
+                          <td>
+                            <b>{r.code}</b>
+                          </td>
+                          <td>
+                            {r.name}
+                            {vantage ? ` — ${vantage}` : ''}.
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               ) : null}
@@ -192,9 +201,7 @@ export function InstitutionalReport({
                 title="What each institution observes"
               />
               {readings.length ? (
-                readings.map((r) => (
-                  <InstitutionCard key={r.key} reading={r} narrative={c.narrative} />
-                ))
+                <InstitutionGroups readings={readings} narrative={c.narrative} />
               ) : (
                 <div className="rpt-pending">
                   <b>No institutional readings yet</b>

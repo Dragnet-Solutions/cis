@@ -16,7 +16,7 @@ export function RunJourney({
 }: {
   respondentId: string;
   firms: ParticipatingFirm[];
-  onSubmitted: () => void;
+  onSubmitted: (outcome: { closedByScopeGate: boolean }) => void;
 }): JSX.Element {
   const [state, setState] = useState<ResumeState | null>(null);
   const [error, setError] = useState<string | null>(null);

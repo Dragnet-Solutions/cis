@@ -38,8 +38,9 @@ describe('DRG-OPS exclusion from public questions', () => {
     for (const id of DRG_OPS_IDS) {
       expect(publicCodes.has(id), `${id} must be excluded from public questions`).toBe(false);
     }
-    // Public count = 95 total (Phase 19 added Family D's 5-item I-DEP) − 7 DRG-OPS.
-    expect(publicQuestions.length).toBe(88);
+    // Public count = 113 total (Phase 19 added Family D's 5-item I-DEP; the
+    // Sept 2026 decision added I-LCFE / I-NASD / I-FMDQ, 6 items each) − 7 DRG-OPS.
+    expect(publicQuestions.length).toBe(106);
   });
 
   it('DRG-OPS items ARE part of the respondent runtime (folded into the flow)', async () => {

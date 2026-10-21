@@ -110,10 +110,10 @@ describe('Phase 21 §2.2 — six-institution exclusion is structural, not a name
   it('the institutional/regulator instrument set structurally covers every named institution, including the three under CIS review', async () => {
     const institutions = await listInstitutions(pool);
     const names = institutions.map((i) => i.name);
-    // SEC, NGX, CSCS (active) and LCFE, NASD OTC, FMDQ Securities Exchange,
-    // FMDQ Clear, FMDQ Depository (is_active: false — under CIS review, per
-    // Item 5's fix below). All eight roster the same way; the six-institution
-    // exclusion this test covers is unaffected by which are currently active.
+    // SEC, NGX, CSCS, LCFE, NASD OTC and FMDQ Group (active) and FMDQ
+    // Securities Exchange, FMDQ Clear, FMDQ Depository (is_active: false —
+    // FMDQ registers as one entity this edition). The exclusion this test
+    // covers is unaffected by which are currently active.
     expect(names).toEqual(
       expect.arrayContaining([
         'Securities and Exchange Commission',
@@ -124,16 +124,23 @@ describe('Phase 21 §2.2 — six-institution exclusion is structural, not a name
         'Central Securities Clearing System',
         'FMDQ Clear Limited',
         'FMDQ Depository Limited',
+        'FMDQ Group',
       ]),
     );
-    // NASD/LCFE/FMDQ Securities Exchange share Family B's single I-NGX
-    // instrument; FMDQ Clear shares Family C's I-CSCS; FMDQ Depository shares
-    // Family D's I-DEP (Phase 19). So the exclusion below already covers all
-    // eight institutions via four instrument codes — never a per-institution
-    // allowlist, and no code change is needed if a 9th or 10th institution of
-    // an existing family is registered later (Item 1, above).
+    // LCFE, NASD and FMDQ Group answer their own bespoke instruments (Sept
+    // 2026 decision); FMDQ's subsidiaries, if ever registered, share their
+    // family's instrument. The exclusion below covers them all by
+    // instrument_type — never a per-institution allowlist.
     const institutionalCodes = await getInstitutionalInstrumentCodes(pool);
-    expect([...institutionalCodes].sort()).toEqual(['I-CSCS', 'I-DEP', 'I-NGX', 'I-SEC']);
+    expect([...institutionalCodes].sort()).toEqual([
+      'I-CSCS',
+      'I-DEP',
+      'I-FMDQ',
+      'I-LCFE',
+      'I-NASD',
+      'I-NGX',
+      'I-SEC',
+    ]);
   });
 
   it('no active metric definition ever reads an institutional/regulator question code', async () => {

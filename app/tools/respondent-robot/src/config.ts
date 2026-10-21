@@ -33,6 +33,9 @@ export interface Config {
   outreachShare: number;
   speederShare: number;
   straightlinerShare: number;
+  /** Share of regulator respondents who answer a scope gate (Q0) with a
+   *  closing option, ending their survey there. Default 0: full surveys. */
+  scopeGateCloseShare: number;
 }
 
 export const DEFAULT_STATE_FILE = resolve(__dirname, '..', '.state', 'robot-state.json');
@@ -136,12 +139,15 @@ Pace:
   --think <min-max>         Pause per question for a normal respondent (default 2s-8s; 0 = none)
 
 Targets (defaults are the study minimums):
-  --firms 80 --retail 1111 --local 25 --foreign 15 --regulators 4
+  --firms 80 --retail 1111 --local 25 --foreign 15 --regulators 7
   --firm-prefix "[Test]"    Only firms whose name starts with this are used
 
 Shape:
   --zipf 1.0 --tail-share 0.1 --head-min 12 --outreach-share 0.8
   --speeders 0.03 --straightliners 0.03
+  --scope-gate-close 0      Share of regulators who answer a scope question (Q0) with a
+                            closing option ("Rare" / "Effectively none"), so their survey
+                            ends there. Default 0: every regulator answers the full survey.
 
 Safety:
   --max-consecutive-failures 8   Stop cleanly after this many respondents fail in a row
@@ -183,6 +189,7 @@ export function parseConfig(argv: string[], cwd: string): Config | 'help' {
       'outreach-share': { type: 'string' },
       speeders: { type: 'string' },
       straightliners: { type: 'string' },
+      'scope-gate-close': { type: 'string' },
     },
   });
   if (values.help) return 'help';
@@ -246,6 +253,7 @@ export function parseConfig(argv: string[], cwd: string): Config | 'help' {
       'straightliners',
       DEFAULT_PLAN_OPTIONS.straightlinerShare,
     ),
+    scopeGateCloseShare: share(values['scope-gate-close'], 'scope-gate-close', 0),
   };
   if (config.speederShare + config.straightlinerShare > 1) {
     throw new Error('--speeders plus --straightliners cannot exceed 1');

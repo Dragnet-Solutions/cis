@@ -74,6 +74,9 @@ export interface RegisterPayloadItem {
   grid_rows?: string[];
   grid_dimensions?: Record<string, string[]>;
   grid_scale?: { min: number; max: number };
+  /** A scope gate: answering one of `close_on` closes the instrument there.
+   *  `decision` names the controlled decision that authorises the branch. */
+  scope_gate?: { close_on: string[]; decision: string };
 }
 
 /** The `bindData(payload)`-shaped import: everything the loader needs to
@@ -183,6 +186,35 @@ function validateItem(
       `Register payload: ${where} (${questionId}) — "scope" must be one of ${CONTROLLED_QUESTION_SCOPES.join(', ')}, got ${JSON.stringify(item['scope'])}`,
     );
   }
+  if (item['scope_gate'] !== undefined) {
+    // A gate is a conditional route on an ordinary single-choice item: it
+    // closes on options the item actually offers, and only on a shared item
+    // (a per-firm gate would close the whole instrument from one firm).
+    const gate = item['scope_gate'] as { close_on?: unknown; decision?: unknown } | null;
+    const closeOn = gate?.close_on;
+    const options = Array.isArray(item['options']) ? (item['options'] as unknown[]) : [];
+    if (item['kind'] !== 'single' || item['scope'] !== 'shared') {
+      fail(
+        `Register payload: ${where} (${questionId}) — "scope_gate" is only allowed on a shared single-choice item`,
+      );
+    }
+    if (
+      !Array.isArray(closeOn) ||
+      closeOn.length === 0 ||
+      !closeOn.every((o) => typeof o === 'string' && options.includes(o))
+    ) {
+      fail(
+        `Register payload: ${where} (${questionId}) — "scope_gate.close_on" must list one or more of the item's own options`,
+      );
+    }
+    // SV-010 §4a: the Register has no branching. A gate is admissible only
+    // as a later controlled decision, which the item must name.
+    if (typeof gate?.decision !== 'string' || gate.decision.trim() === '') {
+      fail(
+        `Register payload: ${where} (${questionId}) — "scope_gate.decision" must name the controlled decision that authorises this branch`,
+      );
+    }
+  }
 }
 
 /** Per-instrument display metadata the loader needs — same shape
@@ -194,6 +226,9 @@ export interface RegisterInstrumentMeta {
   feeds: string;
   scored: boolean;
   instrumentType: InstrumentType;
+  /** Further document metadata (strap, audience, length, notes), recorded on
+   *  the version snapshot as-is. */
+  details?: Record<string, unknown>;
 }
 
 /**
@@ -234,6 +269,7 @@ export async function importSurveyRegister(
         registerPayloadSource: validated.source,
         registerPayloadSchemaVersion: validated.schemaVersion,
         source: validated.sourceLabel,
+        ...(meta.details ? { details: meta.details } : {}),
       },
       ...(createdBy ? { createdBy } : {}),
     });
@@ -264,6 +300,9 @@ export async function importSurveyRegister(
         gridRows: raw.grid_rows ?? null,
         gridDimensions: raw.grid_dimensions ?? null,
         gridScale: raw.grid_scale ?? null,
+        scopeGate: raw.scope_gate
+          ? { closeOn: raw.scope_gate.close_on, decision: raw.scope_gate.decision }
+          : null,
       });
     }
   }

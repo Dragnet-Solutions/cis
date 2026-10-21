@@ -58,7 +58,7 @@ export const RAIL: RailSection[] = [
   },
   {
     key: 'regulators',
-    label: 'Regulators',
+    label: 'Market institutions',
     target: 'regulators',
     built: true,
     phases: ['before_launch', 'collection_open', 'closing_week'],

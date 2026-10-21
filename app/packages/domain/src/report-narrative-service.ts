@@ -156,32 +156,38 @@ export function industryFacts(c: IndustryReportContent): NarrativeFact[] {
   const ip = c.institutionalParticipation;
   if (ip.invited > 0) {
     facts.push(
-      fact(
-        'INST.PART',
-        `${ip.contributed} of ${ip.invited} invited institutions contributed a reading.`,
-        [ip.contributed, ip.invited],
-      ),
+      fact('INST.PART', `${ip.contributed} of ${ip.invited} invited institutions contributed.`, [
+        ip.contributed,
+        ip.invited,
+      ]),
     );
   }
   for (const i of c.institutional) {
     const list = (xs: string[]) => xs.map((x) => `"${x}"`).join(', ');
+    const asked = (question: string | undefined, neutral: string) =>
+      question ? `Asked "${question}", it answered:` : `${neutral}:`;
     facts.push(
       fact(
         `INST.${i.key}`,
         [
-          `${i.role} (${i.code}; vantage: ${i.vantage.toLowerCase()}).`,
+          `${i.role} (${i.code}${i.roleLabel ? `; role: ${i.roleLabel}` : ''}; vantage: ${i.vantage.toLowerCase()}).`,
+          // Each answer is introduced by its own instrument's question, never
+          // by a fixed per-family label. A reading frozen before labels were
+          // recorded falls back to neutral, institution-agnostic wording.
           i.issue.greatest
-            ? `Most frequently cited issue: "${i.issue.greatest}"${i.issue.others.length ? `, alongside ${list(i.issue.others)}` : ''}.`
+            ? `${asked(i.labels?.issue, 'Most frequently cited issue')} "${i.issue.greatest}"${i.issue.others.length ? `, alongside ${list(i.issue.others)}` : ''}.`
             : 'Named no recurring issue.',
           i.frequency
-            ? `How often firm-level weaknesses need its intervention: "${i.frequency}".`
+            ? `${asked(i.labels?.frequency, 'How often firm-level weaknesses need its attention')} "${i.frequency}".`
             : '',
-          i.marks.length ? `What marks a firm that works well with it: ${list(i.marks)}.` : '',
+          i.marks.length
+            ? `${asked(i.labels?.marks, 'What marks a firm that works well with it')} ${list(i.marks)}.`
+            : '',
           i.consequence.greatest
-            ? `Weakness with the greatest consequence: "${i.consequence.greatest}".`
+            ? `${asked(i.labels?.consequence, 'Weakness with the greatest consequence')} "${i.consequence.greatest}".`
             : '',
           i.capability
-            ? `Its overall assessment of the profession's capability: "${i.capability}".`
+            ? `${asked(i.labels?.capability, "Its overall assessment of the profession's capability")} "${i.capability}".`
             : '',
         ]
           .filter(Boolean)

@@ -3,6 +3,54 @@
   "source_date": "2026-08-20",
   "renderer_sha256_16": "abd3cf02b549e1c5",
   "warning": "This is the banked, byte-verified content as of the functional freeze. FUNCTIONAL_FREEZE_SURVEY_ESTATE.md notes the three institutional Q5 items were still marked PENDING correction in the live Register as of freeze date. VERIFY I-SEC-Q5 / I-NGX-Q5 / I-CSCS-Q5 wording against the current controlled Register before production edition freeze.",
+  "supplements": [
+    {
+      "instruments": ["I-LCFE", "I-NASD", "I-FMDQ"],
+      "generated_from": "CIS_Dragnet_Institutional_Instruments_LCFE_NASD_FMDQ_for_CIS_Review.pdf (Dragnet Solutions Limited, September 2026), transcribed verbatim",
+      "source_date": "2026-09",
+      "source_sha256_16": "81f650500ea0b019",
+      "note": "Not covered by renderer_sha256_16, which fingerprints the UX-X-RENDER-001 fixture only. Q4 options are Q1's list (the document says 'Same option list as Q1'); Q2 and Q5 options are the document's slash-separated lists, split in order."
+    }
+  ],
+  "instrument_meta": {
+    "I-LCFE": {
+      "name": "Lagos Commodities and Futures Exchange",
+      "respondent": "Lagos Commodities and Futures Exchange",
+      "feeds": "Contextual only",
+      "scored": false,
+      "instrument_type": "regulator",
+      "strap": "Commodities and derivatives view",
+      "audience": "senior staff who deal directly with stockbroking firms trading or clearing on the Exchange",
+      "length": "about 8 minutes",
+      "source": "CIS_Dragnet_Institutional_Instruments_LCFE_NASD_FMDQ_for_CIS_Review.pdf",
+      "item_notes": {
+        "I-LCFE-Q0": "Gate applies. See Scope gate rule below."
+      }
+    },
+    "I-NASD": {
+      "name": "NASD OTC Securities Exchange",
+      "respondent": "NASD OTC Securities Exchange",
+      "feeds": "Contextual only",
+      "scored": false,
+      "instrument_type": "regulator",
+      "strap": "OTC market view",
+      "audience": "senior staff who deal directly with participating institutions in OTC trading and settlement",
+      "length": "about 8 minutes",
+      "source": "CIS_Dragnet_Institutional_Instruments_LCFE_NASD_FMDQ_for_CIS_Review.pdf"
+    },
+    "I-FMDQ": {
+      "name": "FMDQ Group",
+      "respondent": "FMDQ Group",
+      "feeds": "Contextual only",
+      "scored": false,
+      "instrument_type": "regulator",
+      "strap": "Fixed income, currencies and post-trade view",
+      "audience": "senior staff who deal directly with stockbroking firms across FMDQ's exchange, clearing and depository functions",
+      "length": "about 8 minutes",
+      "source": "CIS_Dragnet_Institutional_Instruments_LCFE_NASD_FMDQ_for_CIS_Review.pdf",
+      "registration_note": "For v1 the rule is simply applied: one registered FMDQ entity, one bespoke instrument, one attributed passage. If FMDQ later registers as three separate entities, three instruments are created at that point under the same rule. Nothing waits on that."
+    }
+  },
   "instruments": {
     "S1": [
       {
@@ -1534,6 +1582,315 @@
         "question_id": "D-Q5",
         "kind": "single",
         "text": "Overall, how would you assess the capability of licensed stockbroking firms to meet the operational requirements expected of them in their dealings with your institution?",
+        "scope": "shared",
+        "is_drg_ops": false,
+        "scored": false,
+        "options": ["Very weak", "Weak", "Adequate", "Strong", "Very strong"],
+        "has_optional_comment": 1
+      }
+    ],
+    "I-LCFE": [
+      {
+        "question_id": "I-LCFE-Q0",
+        "kind": "single",
+        "text": "How much direct operational dealing does the Exchange have with licensed stockbroking firms?",
+        "scope": "shared",
+        "is_drg_ops": false,
+        "scored": false,
+        "options": ["Regular and substantial", "Occasional", "Rare", "Effectively none"],
+        "scope_gate": {
+          "close_on": ["Rare", "Effectively none"],
+          "decision": "Controlled decision (CIS sign-off, 21 October 2026): the Q0 scope gate in CIS_Dragnet_Institutional_Instruments_LCFE_NASD_FMDQ_for_CIS_Review.pdf, 'Scope gate rule'. If Q0 is answered Rare or Effectively none, the instrument closes on a neutral thank-you, no further items are presented, no attributed Section 10 passage is generated, and the institution is recorded as responded and listed among contributors. Expressly supersedes SV-010 section 4a (no branching in the Register) for the instruments that carry Q0."
+        }
+      },
+      {
+        "question_id": "I-LCFE-Q1",
+        "kind": "select",
+        "text": "Which firm-level operational issues most frequently disrupt participation in commodities and derivatives markets?",
+        "scope": "shared",
+        "is_drg_ops": false,
+        "scored": false,
+        "options": [
+          "Margin and collateral management",
+          "Contract specification and order errors",
+          "Settlement and delivery coordination",
+          "Documentation and onboarding",
+          "Manual processes",
+          "System and technology integration",
+          "Communication delays",
+          "Client suitability and risk disclosure",
+          "Staff competence in derivatives",
+          "Other"
+        ],
+        "select_up_to_n": 3,
+        "has_optional_comment": 1,
+        "select_then_greatest": 1
+      },
+      {
+        "question_id": "I-LCFE-Q2",
+        "kind": "single",
+        "text": "How frequently do firm-level operational weaknesses create exceptions the Exchange must manage?",
+        "scope": "shared",
+        "is_drg_ops": false,
+        "scored": false,
+        "options": ["Very frequently", "Frequently", "Occasionally", "Rarely", "Never"],
+        "has_optional_comment": 1
+      },
+      {
+        "question_id": "I-LCFE-Q3",
+        "kind": "select",
+        "text": "Which characteristics consistently distinguish firms that participate most effectively in these markets?",
+        "scope": "shared",
+        "is_drg_ops": false,
+        "scored": false,
+        "options": [
+          "Margin and collateral discipline",
+          "Product and contract understanding",
+          "Technology and system integration",
+          "Operational discipline",
+          "Documentation quality",
+          "Timeliness",
+          "Communication",
+          "Risk management",
+          "Staff competence",
+          "Other"
+        ],
+        "select_up_to_n": 3,
+        "has_optional_comment": 1
+      },
+      {
+        "question_id": "I-LCFE-Q4",
+        "kind": "select",
+        "text": "Which firm-level operational weaknesses carry the greatest consequences for market integrity here?",
+        "scope": "shared",
+        "is_drg_ops": false,
+        "scored": false,
+        "options": [
+          "Margin and collateral management",
+          "Contract specification and order errors",
+          "Settlement and delivery coordination",
+          "Documentation and onboarding",
+          "Manual processes",
+          "System and technology integration",
+          "Communication delays",
+          "Client suitability and risk disclosure",
+          "Staff competence in derivatives",
+          "Other"
+        ],
+        "select_up_to_n": 3,
+        "has_optional_comment": 1,
+        "select_then_greatest": 1
+      },
+      {
+        "question_id": "I-LCFE-Q5",
+        "kind": "single",
+        "text": "Based on the Exchange's direct interactions with participating stockbroking firms, how would you assess the overall operational capability of the sector today?",
+        "scope": "shared",
+        "is_drg_ops": false,
+        "scored": false,
+        "options": ["Very weak", "Weak", "Adequate", "Strong", "Very strong"],
+        "has_optional_comment": 1
+      }
+    ],
+    "I-NASD": [
+      {
+        "question_id": "I-NASD-Q0",
+        "kind": "single",
+        "text": "How much direct operational dealing does NASD have with licensed stockbroking firms?",
+        "scope": "shared",
+        "is_drg_ops": false,
+        "scored": false,
+        "options": ["Regular and substantial", "Occasional", "Rare", "Effectively none"],
+        "scope_gate": {
+          "close_on": ["Rare", "Effectively none"],
+          "decision": "Controlled decision (CIS sign-off, 21 October 2026): the Q0 scope gate in CIS_Dragnet_Institutional_Instruments_LCFE_NASD_FMDQ_for_CIS_Review.pdf, 'Scope gate rule'. If Q0 is answered Rare or Effectively none, the instrument closes on a neutral thank-you, no further items are presented, no attributed Section 10 passage is generated, and the institution is recorded as responded and listed among contributors. Expressly supersedes SV-010 section 4a (no branching in the Register) for the instruments that carry Q0."
+        }
+      },
+      {
+        "question_id": "I-NASD-Q1",
+        "kind": "select",
+        "text": "Which firm-level operational issues most frequently affect OTC trading and settlement?",
+        "scope": "shared",
+        "is_drg_ops": false,
+        "scored": false,
+        "options": [
+          "Trade reporting accuracy and timeliness",
+          "Price discovery and quotation discipline",
+          "Settlement coordination",
+          "Documentation and record keeping",
+          "Unlisted-security transfer processing",
+          "Manual processes",
+          "System and technology integration",
+          "Communication delays",
+          "Staff competence",
+          "Other"
+        ],
+        "select_up_to_n": 3,
+        "has_optional_comment": 1,
+        "select_then_greatest": 1
+      },
+      {
+        "question_id": "I-NASD-Q2",
+        "kind": "single",
+        "text": "How frequently do firm-level operational weaknesses create exceptions NASD must manage?",
+        "scope": "shared",
+        "is_drg_ops": false,
+        "scored": false,
+        "options": ["Very frequently", "Frequently", "Occasionally", "Rarely", "Never"],
+        "has_optional_comment": 1
+      },
+      {
+        "question_id": "I-NASD-Q3",
+        "kind": "select",
+        "text": "Which characteristics consistently distinguish firms that operate most effectively in the OTC market?",
+        "scope": "shared",
+        "is_drg_ops": false,
+        "scored": false,
+        "options": [
+          "Trade-reporting discipline",
+          "Documentation quality",
+          "Settlement reliability",
+          "Technology and systems",
+          "Operational discipline",
+          "Communication",
+          "Client servicing",
+          "Corporate governance",
+          "Staff competence",
+          "Other"
+        ],
+        "select_up_to_n": 3,
+        "has_optional_comment": 1
+      },
+      {
+        "question_id": "I-NASD-Q4",
+        "kind": "select",
+        "text": "Which firm-level operational weaknesses carry the greatest consequences for OTC market efficiency?",
+        "scope": "shared",
+        "is_drg_ops": false,
+        "scored": false,
+        "options": [
+          "Trade reporting accuracy and timeliness",
+          "Price discovery and quotation discipline",
+          "Settlement coordination",
+          "Documentation and record keeping",
+          "Unlisted-security transfer processing",
+          "Manual processes",
+          "System and technology integration",
+          "Communication delays",
+          "Staff competence",
+          "Other"
+        ],
+        "select_up_to_n": 3,
+        "has_optional_comment": 1,
+        "select_then_greatest": 1
+      },
+      {
+        "question_id": "I-NASD-Q5",
+        "kind": "single",
+        "text": "Based on NASD's direct interactions with participating firms, how would you assess the overall operational capability of the sector today?",
+        "scope": "shared",
+        "is_drg_ops": false,
+        "scored": false,
+        "options": ["Very weak", "Weak", "Adequate", "Strong", "Very strong"],
+        "has_optional_comment": 1
+      }
+    ],
+    "I-FMDQ": [
+      {
+        "question_id": "I-FMDQ-Q0",
+        "kind": "single",
+        "text": "How much direct operational dealing does FMDQ have with licensed stockbroking firms?",
+        "scope": "shared",
+        "is_drg_ops": false,
+        "scored": false,
+        "options": ["Regular and substantial", "Occasional", "Rare", "Effectively none"],
+        "scope_gate": {
+          "close_on": ["Rare", "Effectively none"],
+          "decision": "Controlled decision (CIS sign-off, 21 October 2026): the Q0 scope gate in CIS_Dragnet_Institutional_Instruments_LCFE_NASD_FMDQ_for_CIS_Review.pdf, 'Scope gate rule'. If Q0 is answered Rare or Effectively none, the instrument closes on a neutral thank-you, no further items are presented, no attributed Section 10 passage is generated, and the institution is recorded as responded and listed among contributors. Expressly supersedes SV-010 section 4a (no branching in the Register) for the instruments that carry Q0."
+        }
+      },
+      {
+        "question_id": "I-FMDQ-Q1",
+        "kind": "select",
+        "text": "Which firm-level operational issues most frequently affect firms' participation across FMDQ's markets and post-trade services?",
+        "scope": "shared",
+        "is_drg_ops": false,
+        "scored": false,
+        "options": [
+          "Trade reporting and confirmation",
+          "Settlement coordination",
+          "Collateral and margin management",
+          "Account and record accuracy",
+          "Corporate-actions and asset-servicing processing",
+          "Documentation and onboarding",
+          "Manual processes",
+          "System and technology integration",
+          "Staff competence in fixed income and currencies",
+          "Other"
+        ],
+        "select_up_to_n": 3,
+        "has_optional_comment": 1,
+        "select_then_greatest": 1
+      },
+      {
+        "question_id": "I-FMDQ-Q2",
+        "kind": "single",
+        "text": "How frequently do firm-level operational weaknesses create exceptions FMDQ must manage?",
+        "scope": "shared",
+        "is_drg_ops": false,
+        "scored": false,
+        "options": ["Very frequently", "Frequently", "Occasionally", "Rarely", "Never"],
+        "has_optional_comment": 1
+      },
+      {
+        "question_id": "I-FMDQ-Q3",
+        "kind": "select",
+        "text": "Which characteristics consistently distinguish firms that operate most effectively across FMDQ's markets and services?",
+        "scope": "shared",
+        "is_drg_ops": false,
+        "scored": false,
+        "options": [
+          "Trade and settlement accuracy",
+          "Reconciliation discipline",
+          "Collateral management",
+          "Technology and system integration",
+          "Documentation quality",
+          "Operational controls",
+          "Communication",
+          "Corporate governance",
+          "Staff competence",
+          "Other"
+        ],
+        "select_up_to_n": 3,
+        "has_optional_comment": 1
+      },
+      {
+        "question_id": "I-FMDQ-Q4",
+        "kind": "select",
+        "text": "Which firm-level operational weaknesses carry the greatest consequences for market and post-trade integrity?",
+        "scope": "shared",
+        "is_drg_ops": false,
+        "scored": false,
+        "options": [
+          "Trade reporting and confirmation",
+          "Settlement coordination",
+          "Collateral and margin management",
+          "Account and record accuracy",
+          "Corporate-actions and asset-servicing processing",
+          "Documentation and onboarding",
+          "Manual processes",
+          "System and technology integration",
+          "Staff competence in fixed income and currencies",
+          "Other"
+        ],
+        "select_up_to_n": 3,
+        "has_optional_comment": 1,
+        "select_then_greatest": 1
+      },
+      {
+        "question_id": "I-FMDQ-Q5",
+        "kind": "single",
+        "text": "Based on FMDQ's direct interactions with participating stockbroking firms, how would you assess the overall operational capability of the sector today?",
         "scope": "shared",
         "is_drg_ops": false,
         "scored": false,

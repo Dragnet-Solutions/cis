@@ -46,9 +46,33 @@ interface RawItem {
   grid_rows?: string[];
   grid_dimensions?: Record<string, string[]>;
   grid_scale?: { min: number; max: number };
+  scope_gate?: { close_on: string[]; decision: string };
+}
+
+/**
+ * Instrument-level metadata carried IN the Register data for instruments added
+ * after the original nine/ten (whose metadata predates this and stays in
+ * `BASE_INSTRUMENT_META` below). Adding a further institutional instrument is
+ * a data change to `survey-register-seed.json` only: its items under
+ * `instruments`, and an entry here.
+ */
+interface RawInstrumentMeta {
+  name: string;
+  respondent: string;
+  feeds: string;
+  scored: boolean;
+  instrument_type: InstrumentType;
+  /** Document metadata, recorded on the instrument version's snapshot. */
+  strap?: string;
+  audience?: string;
+  length?: string;
+  source?: string;
+  registration_note?: string;
+  item_notes?: Record<string, string>;
 }
 
 interface RawRegister {
+  instrument_meta?: Record<string, RawInstrumentMeta>;
   instruments: Record<string, RawItem[]>;
 }
 
@@ -61,10 +85,12 @@ interface InstrumentMeta {
   feeds: string;
   scored: boolean;
   instrumentType: InstrumentType;
+  /** Extra document metadata recorded on the version snapshot. */
+  details?: Record<string, unknown>;
 }
 
-/** Canonical instrument order and display metadata. */
-export const INSTRUMENT_META: ReadonlyArray<{ code: string } & InstrumentMeta> = [
+/** Canonical instrument order and display metadata for the original ten. */
+const BASE_INSTRUMENT_META: ReadonlyArray<{ code: string } & InstrumentMeta> = [
   {
     code: 'S1',
     name: 'Managing Director / CEO survey',
@@ -151,6 +177,21 @@ export const INSTRUMENT_META: ReadonlyArray<{ code: string } & InstrumentMeta> =
   },
 ];
 
+/** Instruments whose metadata is carried in the Register data itself, in the
+ *  data's own order (I-LCFE, I-NASD, I-FMDQ, ...). */
+const DATA_INSTRUMENT_META: ReadonlyArray<{ code: string } & InstrumentMeta> = Object.entries(
+  REGISTER.instrument_meta ?? {},
+).map(([code, m]) => {
+  const { name, respondent, feeds, scored, instrument_type, ...details } = m;
+  return { code, name, respondent, feeds, scored, instrumentType: instrument_type, details };
+});
+
+/** Canonical instrument order and display metadata. */
+export const INSTRUMENT_META: ReadonlyArray<{ code: string } & InstrumentMeta> = [
+  ...BASE_INSTRUMENT_META,
+  ...DATA_INSTRUMENT_META.filter((d) => !BASE_INSTRUMENT_META.some((b) => b.code === d.code)),
+];
+
 export const INSTRUMENT_CODES: readonly string[] = INSTRUMENT_META.map((m) => m.code);
 
 /**
@@ -160,8 +201,18 @@ export const INSTRUMENT_CODES: readonly string[] = INSTRUMENT_META.map((m) => m.
  * same category as the existing 15 Family A/B/C items — neither DRG-OPS nor
  * firm-specific, so those counts (7 and 11/6/3) are unaffected. This is an
  * intentional content-estate change, not a regression — see SV-010 test.
+ * 95 → 113 (Sept 2026 client decision): I-LCFE, I-NASD and I-FMDQ add six
+ * items each (Q0 scope gate + Q1–Q5), again institutional/contextual only.
  */
-export const REGISTER_ITEM_COUNT = 95;
+export const REGISTER_ITEM_COUNT = 113;
+
+/**
+ * The marker for Register content that has not been supplied yet. Any item
+ * whose text or options contain it blocks the instrument freeze
+ * (instrument-service `requestFreeze`/`decideFreeze`), so placeholder content
+ * can never reach a launched edition.
+ */
+export const REGISTER_TODO_MARKER = '[TODO]';
 
 /**
  * Seed the controlled Survey Register through the Phase 21 §3 ingestion
