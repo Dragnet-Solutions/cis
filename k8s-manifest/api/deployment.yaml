@@ -98,7 +98,7 @@ spec:
               memory: 32Mi
       containers:
         - name: api
-          image: dragnet.azurecr.io/cis-api:8905aac7107a22acf072d797c613e3e6258d51e4
+          image: dragnet.azurecr.io/cis-api:4aaaf6fa49362c66ef9ca1f3beaada3c428ebf01
           imagePullPolicy: Always
           ports:
             - name: http

@@ -62,7 +62,7 @@ spec:
       containers:
         # Image CMD: node-pg-migrate up --migrations-dir migrations --database-url-var DATABASE_URL
         - name: migrate
-          image: dragnet.azurecr.io/cis-api-migrate:8905aac7107a22acf072d797c613e3e6258d51e4
+          image: dragnet.azurecr.io/cis-api-migrate:4aaaf6fa49362c66ef9ca1f3beaada3c428ebf01
           imagePullPolicy: Always
           envFrom:
             - configMapRef:
