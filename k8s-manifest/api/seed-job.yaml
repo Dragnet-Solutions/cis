@@ -46,7 +46,7 @@ spec:
       initContainers:
         # Step 1 — reference data (skips itself if the 2026 edition exists)
         - name: seed
-          image: dragnet.azurecr.io/cis-api:4aaaf6fa49362c66ef9ca1f3beaada3c428ebf01
+          image: dragnet.azurecr.io/cis-api:42e1a0f2b6f46a481f35e80969e18e1b9a22a5fb
           imagePullPolicy: Always
           command: ["node", "apps/api/dist/seed.js"]
           envFrom:
@@ -75,7 +75,7 @@ spec:
       containers:
         # Step 2 — set both operators' passwords from Key Vault (cis-seed-secrets)
         - name: set-operator-passwords
-          image: dragnet.azurecr.io/cis-api:4aaaf6fa49362c66ef9ca1f3beaada3c428ebf01
+          image: dragnet.azurecr.io/cis-api:42e1a0f2b6f46a481f35e80969e18e1b9a22a5fb
           imagePullPolicy: Always
           command:
             - node
