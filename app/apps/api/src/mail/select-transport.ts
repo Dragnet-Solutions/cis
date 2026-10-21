@@ -12,3 +12,12 @@ export function selectTransport(env: NodeJS.ProcessEnv = process.env): MailTrans
   if (env['SMTP_URL']?.trim()) return createSmtpTransport(env);
   return null;
 }
+
+export type TransportKind = 'zeptomail' | 'smtp' | 'none';
+
+/** Which mail service selectTransport would use — the same rule, no secrets. */
+export function transportKind(env: NodeJS.ProcessEnv = process.env): TransportKind {
+  if (env['ZEPTOMAIL_API_TOKEN']?.trim()) return 'zeptomail';
+  if (env['SMTP_URL']?.trim()) return 'smtp';
+  return 'none';
+}

@@ -19,8 +19,9 @@
  */
 
 /** The claim/sign-in views. Deliberately no `access_model` (§2c) and no
- *  invented invitation-code state — claiming has no code to check server
- *  side; the real gate is `AlreadyClaimedError` redirecting to sign-in. */
+ *  typed invitation-code state — the invitation is the emailed link
+ *  (?invite=), checked server side; a second claimant is redirected to
+ *  sign in by `AlreadyClaimedError`. */
 export const PORTAL_VIEWS = ['email', 'pin', 'unclaimed', 'claim', 'nocode', 'requested'] as const;
 
 export type PortalView = (typeof PORTAL_VIEWS)[number];
@@ -134,9 +135,11 @@ export const SEGMENT_ORDER: Segment[] = [
 ];
 
 /**
- * How the portal was opened. `?claim=<organizationId>` opens the set-up view
- * for that firm; `?invite=<token>` opens it from an emailed invitation, which
- * the portal looks up first. Both may be absent (sign in / claim by choice).
+ * How the portal was opened. `?invite=<token>` opens the set-up view from an
+ * emailed invitation, which the portal looks up first — the only way to set up
+ * a firm's space. An old `?claim=<organizationId>` link no longer opens the
+ * set-up view: it says to use the invitation link from the email (or request
+ * one). Both may be absent (sign in).
  */
 export function readPortalEntry(search: string): {
   claimOrgId: string | null;
@@ -158,6 +161,8 @@ export function invitationProblemTitle(code: string | null): string {
       return 'This invitation has already been used.';
     case 'NOT_FOUND':
       return 'We do not recognise this invitation link.';
+    case 'NEEDED':
+      return 'Use the invitation link from your email.';
     default:
       return 'We could not open this invitation.';
   }

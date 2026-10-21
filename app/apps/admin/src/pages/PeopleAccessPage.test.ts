@@ -46,12 +46,14 @@ describe('PeopleAccessPage — no local-state mockup remains reachable', () => {
       'client.addPerson',
       'client.updatePersonRights',
       'client.removePerson',
+      'client.sendPasswordLink',
     ]) {
       expect(SOURCE, `source never calls "${call}"`).toContain(call);
     }
   });
 
   it('identifies the signed-in user from the real viewer prop, not a hardcoded constant', () => {
-    expect(SOURCE).toContain('viewer.email');
+    // By user id — the same identity the server checks against the session.
+    expect(SOURCE).toContain('viewer.id');
   });
 });

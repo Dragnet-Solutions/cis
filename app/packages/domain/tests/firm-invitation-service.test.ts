@@ -3,11 +3,19 @@
  * schema. An invitation queues an email carrying a personal link, is audited,
  * needs the "access:send" right, is resent rather than duplicated, is refused
  * for a firm that already has a space, and is used up by the claim it opens.
- * A claim without an invitation still works exactly as before.
+ * A claim needs an invitation (the FIRM_CLAIM_WITHOUT_INVITE escape hatch
+ * covers "[Test]" firms only); a successful claim queues a confirmation email
+ * that never carries the PIN. Operators can list each usable link, download
+ * the edition's links as CSV, and invite many firms at once.
  */
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { Pool } from 'pg';
-import { createOrganization, getFirmClaim, listEmailsFor } from '@cis/db';
+import {
+  createOrganization,
+  getFirmClaim,
+  listEmailsFor,
+  upsertEditionParticipation,
+} from '@cis/db';
 import { getAuditEntriesForEntity } from '@cis/audit';
 import { loadRbacContext, type RbacContext } from '@cis/auth';
 import {
@@ -18,10 +26,16 @@ import {
   revokeInvitation,
   listInvitations,
   lookupInvitation,
+  listInvitationsWithLinks,
+  pendingInvitationsCsv,
+  bulkInviteFirms,
   FirmInvitationError,
   AlreadyClaimedError,
+  InvitationRequiredError,
   FIRM_INVITATION_EMAIL_KIND,
+  FIRM_SPACE_CLAIMED_EMAIL_KIND,
 } from '../src';
+import { claimWithInvitation } from './helpers/firm-claims';
 import { getTestPool, runMigrations, truncateAllTables, closeTestPool } from '../../db/tests/setup';
 
 let pool: Pool;
@@ -153,7 +167,7 @@ describe('inviteFirm', () => {
 
   it('refuses a firm that already has a space', async () => {
     const org = await firm('claimed');
-    await claimSpace(pool, { organizationId: org.id, ...CLAIM });
+    await claimWithInvitation(pool, { organizationId: org.id, ...CLAIM });
     await expect(invite(org.id)).rejects.toMatchObject({ code: 'ALREADY_CLAIMED' });
   });
 });
@@ -307,13 +321,185 @@ describe('claimSpace with an invitation', () => {
     expect(await getFirmClaim(pool, org.id)).toBeNull();
   });
 
-  it('still works without an invitation, and a second claim is still refused', async () => {
+  it('refuses a claim without an invitation, and writes nothing', async () => {
     const org = await firm('noinvite');
-    const { claim, leadCoordinator } = await claimSpace(pool, { organizationId: org.id, ...CLAIM });
-    expect(claim.organizationId).toBe(org.id);
+    const err = await claimSpace(pool, { organizationId: org.id, ...CLAIM }).catch((e) => e);
+    expect(err).toBeInstanceOf(InvitationRequiredError);
+    expect((err as Error).message).toBe(
+      "You need an invitation link to set up your firm's space. Ask the CIS team, or request an invitation.",
+    );
+    expect(await getFirmClaim(pool, org.id)).toBeNull();
+    // A blank token is no token.
+    await expect(
+      claimSpace(pool, { organizationId: org.id, ...CLAIM, inviteToken: '  ' }),
+    ).rejects.toBeInstanceOf(InvitationRequiredError);
+  });
+
+  it('queues a confirmation to the claimant that never carries the PIN', async () => {
+    const org = await firm('confirm');
+    const { invitation } = await invite(org.id);
+    const { claim } = await claimSpace(
+      pool,
+      { organizationId: org.id, ...CLAIM, inviteToken: await tokenOf(invitation.id) },
+      { portalUrl: PORTAL },
+    );
+    const emails = await listEmailsFor(pool, FIRM_SPACE_CLAIMED_EMAIL_KIND, [claim.id]);
+    expect(emails).toHaveLength(1);
+    const email = emails[0]!;
+    expect(email.toAddress).toBe(CLAIM.contactEmail);
+    expect(email.subject).toContain('CONFIRM Ltd');
+    expect(email.bodyText).toContain(`${PORTAL}/firm`);
+    expect(email.bodyText).toContain(CLAIM.contactEmail);
+    expect(email.bodyText).toMatch(/PIN you chose/);
+    expect(email.bodyText).toMatch(/assign the three seats/);
+    expect(email.bodyText).toMatch(/outreach links/);
+    expect(email.bodyText).not.toContain(CLAIM.pin);
+    expect(email.bodyHtml).not.toContain(CLAIM.pin);
+  });
+
+  it('a second claim is still refused', async () => {
+    const org = await firm('twice');
+    const { leadCoordinator } = await claimWithInvitation(pool, {
+      organizationId: org.id,
+      ...CLAIM,
+    });
     expect(leadCoordinator.isLead).toBe(true);
     await expect(
-      claimSpace(pool, { organizationId: org.id, ...CLAIM, contactEmail: 'b@noinvite.com' }),
+      claimWithInvitation(pool, { organizationId: org.id, ...CLAIM, contactEmail: 'b@twice.com' }),
     ).rejects.toBeInstanceOf(AlreadyClaimedError);
+  });
+});
+
+describe('FIRM_CLAIM_WITHOUT_INVITE (automated test runs only)', () => {
+  afterEach(() => {
+    delete process.env['FIRM_CLAIM_WITHOUT_INVITE'];
+  });
+
+  it('lets a "[Test]" firm claim without a link, and no other firm', async () => {
+    process.env['FIRM_CLAIM_WITHOUT_INVITE'] = 'true';
+    const testFirm = await createOrganization(pool, {
+      slug: 'test-hatch',
+      displayName: '[Test] Hatch Securities',
+      orgType: 'firm',
+    });
+    const realFirm = await firm('realfirm');
+    const { claim } = await claimSpace(pool, { organizationId: testFirm.id, ...CLAIM });
+    expect(claim.organizationId).toBe(testFirm.id);
+    await expect(
+      claimSpace(pool, { organizationId: realFirm.id, ...CLAIM, contactEmail: 'x@real.com' }),
+    ).rejects.toBeInstanceOf(InvitationRequiredError);
+    // One firm, one space still holds.
+    await expect(
+      claimSpace(pool, { organizationId: testFirm.id, ...CLAIM, contactEmail: 'y@t.com' }),
+    ).rejects.toBeInstanceOf(AlreadyClaimedError);
+  });
+
+  it('is off unless set to true', async () => {
+    process.env['FIRM_CLAIM_WITHOUT_INVITE'] = '1';
+    const testFirm = await createOrganization(pool, {
+      slug: 'test-off',
+      displayName: '[Test] Off Ltd',
+      orgType: 'firm',
+    });
+    await expect(
+      claimSpace(pool, { organizationId: testFirm.id, ...CLAIM }),
+    ).rejects.toBeInstanceOf(InvitationRequiredError);
+  });
+});
+
+describe('operator links, CSV and bulk invitations', () => {
+  it('shows the link of a usable invitation only, and lists it in the CSV', async () => {
+    const open = await firm('openlink');
+    const gone = await firm('gonelink');
+    const a = await invite(open.id, 'md@open.com');
+    const b = await invite(gone.id, 'md@gone.com');
+    await revokeInvitation(pool, operator, b.invitation.id, CTX);
+
+    const list = await listInvitationsWithLinks(pool, operator, { editionId }, PORTAL);
+    const byId = new Map(list.map((i) => [i.id, i]));
+    expect(byId.get(a.invitation.id)!.link).toBe(
+      `${PORTAL}/firm?invite=${await tokenOf(a.invitation.id)}`,
+    );
+    expect(byId.get(b.invitation.id)!.link).toBeNull();
+
+    const csv = await pendingInvitationsCsv(pool, operator, editionId, PORTAL);
+    const lines = csv.trim().split(/\r\n/);
+    expect(lines[0]).toBe('firm,email,link,expires');
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toContain('OPENLINK Ltd,md@open.com,');
+    expect(lines[1]).toContain(`${PORTAL}/firm?invite=${await tokenOf(a.invitation.id)}`);
+    expect(csv).not.toContain('md@gone.com');
+
+    await expect(
+      pendingInvitationsCsv(pool, { userId: operator.userId, permissions: [] }, editionId, PORTAL),
+    ).rejects.toMatchObject({ name: 'PermissionDeniedError' });
+  });
+
+  it('bulk-invites unclaimed participating firms by name prefix and counts the rest', async () => {
+    const mk = async (slug: string, name: string) => {
+      const o = await createOrganization(pool, { slug, displayName: name, orgType: 'firm' });
+      await upsertEditionParticipation(pool, { editionId, organizationId: o.id, status: 'active' });
+      return o;
+    };
+    const fresh1 = await mk('t-one', '[Test] One');
+    await mk('t-two', '[Test] Two');
+    const claimed = await mk('t-claimed', '[Test] Claimed');
+    const pending = await mk('t-pending', '[Test] Pending');
+    await mk('real-one', 'Real One Ltd');
+    await claimWithInvitation(pool, { organizationId: claimed.id, ...CLAIM });
+    await invite(pending.id, 'md@pending.com');
+
+    const result = await bulkInviteFirms(
+      pool,
+      operator,
+      { editionId, namePrefix: '[Test]', emailTemplate: 'coordinator+{slug}@test.example' },
+      CTX,
+    );
+    expect(result).toMatchObject({
+      considered: 4,
+      invited: 2,
+      skippedClaimed: 1,
+      skippedPending: 1,
+      failed: [],
+    });
+    const [inv] = await listInvitations(pool, operator, { organizationId: fresh1.id });
+    expect(inv!.email).toBe('coordinator+t-one@test.example');
+    expect(inv!.editionId).toBe(editionId);
+
+    // Run again: nothing left to invite.
+    const again = await bulkInviteFirms(
+      pool,
+      operator,
+      { editionId, namePrefix: '[Test]', emailTemplate: 'coordinator+{slug}@test.example' },
+      CTX,
+    );
+    expect(again).toMatchObject({ invited: 0, skippedPending: 3, skippedClaimed: 1 });
+
+    // A listed firm is invited even without a prefix match.
+    const listed = await bulkInviteFirms(
+      pool,
+      operator,
+      {
+        editionId,
+        organizationIds: [(await firm('listed')).id],
+        emailTemplate: 'md+{slug}@test.example',
+      },
+      CTX,
+    );
+    expect(listed).toMatchObject({ considered: 1, invited: 1 });
+  });
+
+  it('bulk invite needs an address pattern and the access:send right', async () => {
+    await expect(
+      bulkInviteFirms(pool, operator, { editionId, namePrefix: '[Test]' }, CTX),
+    ).rejects.toMatchObject({ code: 'EMAIL_INVALID' });
+    await expect(
+      bulkInviteFirms(
+        pool,
+        { userId: operator.userId, permissions: [] },
+        { editionId, emailTemplate: 'a+{slug}@b.com' },
+        CTX,
+      ),
+    ).rejects.toMatchObject({ name: 'PermissionDeniedError' });
   });
 });

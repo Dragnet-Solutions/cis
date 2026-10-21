@@ -131,7 +131,8 @@ describe('Dragnet-only right', () => {
       email: 'analyst@dragnet.example',
       organization: 'Dragnet',
       rights: rights({ dragnet: true }),
-      actorId: makerId,
+      // The checker holds the Dragnet right; nobody grants a right they lack.
+      actorId: checkerId,
     });
     expect(p.rights.dragnet).toBe(true);
   });
@@ -293,5 +294,122 @@ describe('Regression — the six critical actions still gate through the same pr
     const rbacChecker = await loadRbacContext(pool, checkerId);
     const approved = await approveCriticalActionWithRbac(pool, rbacChecker, action.id);
     expect(approved.status).toBe('approved');
+  });
+});
+
+describe('Who may change access (self-grant hole)', () => {
+  /** A plain operator: can see the study, holds no other right. */
+  async function plainUser(): Promise<string> {
+    const p = await addPerson(pool, {
+      name: 'Plain Operator',
+      email: 'plain@cis.example',
+      organization: 'CIS',
+      rights: rights({}),
+      actorId: makerId,
+    });
+    return p.userId;
+  }
+
+  it('a plain user cannot grant themselves the approve right', async () => {
+    const plainId = await plainUser();
+    await expect(
+      updatePersonRights(pool, {
+        userId: plainId,
+        name: 'Plain Operator',
+        email: 'plain@cis.example',
+        organization: 'CIS',
+        rights: rights({ approve: true }),
+        actorId: plainId,
+      }),
+    ).rejects.toMatchObject({ name: 'PermissionDeniedError' });
+  });
+
+  it('a plain user cannot change anyone else, add or remove people', async () => {
+    const plainId = await plainUser();
+    await expect(
+      updatePersonRights(pool, {
+        userId: checkerId,
+        name: 'Segun Oyegbesan',
+        email: 'segun.oyegbesan@dragnet.example',
+        organization: 'Dragnet',
+        rights: rights({ approve: true, request: true, setup: true, send: true }),
+        actorId: plainId,
+      }),
+    ).rejects.toMatchObject({ name: 'PermissionDeniedError' });
+    await expect(
+      addPerson(pool, {
+        name: 'Accomplice',
+        email: 'accomplice@cis.example',
+        organization: 'CIS',
+        rights: rights({ approve: true }),
+        actorId: plainId,
+      }),
+    ).rejects.toMatchObject({ name: 'PermissionDeniedError' });
+    await expect(removePerson(pool, { userId: checkerId, actorId: plainId })).rejects.toMatchObject(
+      { name: 'PermissionDeniedError' },
+    );
+  });
+
+  it('an access manager cannot change their own rights', async () => {
+    await expect(
+      updatePersonRights(pool, {
+        userId: makerId,
+        name: 'Adaeze Okoro',
+        email: 'adaeze.okoro@cis.example',
+        organization: 'CIS',
+        rights: rights({ send: true, regs: true, setup: true, request: true, approve: true }),
+        actorId: makerId,
+      }),
+    ).rejects.toMatchObject({ code: 'SELF_CHANGE', name: 'PeopleAccessForbiddenError' });
+  });
+
+  it('an access manager can grant others rights they hold, but not one they lack', async () => {
+    const plainId = await plainUser();
+    const updated = await updatePersonRights(pool, {
+      userId: plainId,
+      name: 'Plain Operator',
+      email: 'plain@cis.example',
+      organization: 'CIS',
+      rights: rights({ approve: true, send: true }),
+      actorId: makerId,
+    });
+    expect(updated.rights.approve).toBe(true);
+
+    // The maker does not hold the Dragnet right, so cannot hand it out.
+    await expect(
+      addPerson(pool, {
+        name: 'Dragnet Hire',
+        email: 'hire@dragnet.example',
+        organization: 'Dragnet',
+        rights: rights({ dragnet: true }),
+        actorId: makerId,
+      }),
+    ).rejects.toMatchObject({ code: 'GRANT_NOT_HELD' });
+  });
+
+  it('the last access manager keeps the right: they cannot drop it, and nobody else can take it', async () => {
+    // Leave the maker as the only access manager (setup = edition:manage),
+    // which the seed also grants through a shared role.
+    await pool.query('DELETE FROM user_roles WHERE user_id = $1', [checkerId]);
+    const setup = await getPermissionByCode(pool, 'edition:manage');
+    await revokePermissionFromUser(pool, checkerId, setup!.id);
+
+    // Their own rights are untouchable…
+    await expect(
+      updatePersonRights(pool, {
+        userId: makerId,
+        name: 'Adaeze Okoro',
+        email: 'adaeze.okoro@cis.example',
+        organization: 'CIS',
+        rights: rights({ request: true, approve: true }),
+        actorId: makerId,
+      }),
+    ).rejects.toMatchObject({ code: 'SELF_CHANGE' });
+    // …and nobody without the right can remove them or strip it.
+    await expect(removePerson(pool, { userId: makerId, actorId: checkerId })).rejects.toMatchObject(
+      {
+        name: 'PermissionDeniedError',
+      },
+    );
   });
 });

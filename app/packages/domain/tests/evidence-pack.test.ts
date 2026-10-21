@@ -14,9 +14,12 @@ import {
   getDrgOpsQuestionCodes,
   getInstitutionalQuestionCodes,
   listCalculatedResults,
+  createCalculationRun,
+  insertCalculatedResult,
 } from '@cis/db';
-import { seedReferenceData, runScoring, buildEvidencePack, EvidencePackError } from '../src';
+import { seedReferenceData, buildEvidencePack, EvidencePackError } from '../src';
 import { getTestPool, runMigrations, truncateAllTables, closeTestPool } from '../../db/tests/setup';
+import { approveMethodologyForTests } from '../../db/tests/methodology-approval';
 
 let pool: Pool;
 let editionId: string;
@@ -30,6 +33,7 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   await truncateAllTables(pool);
+  await approveMethodologyForTests(pool);
   const seed = await seedReferenceData(pool);
   editionId = seed.editionId;
   const a = await createOrganization(pool, {
@@ -48,7 +52,26 @@ beforeEach(async () => {
     await ensureSeats(pool, editionId, org);
     await setSeatState(pool, { editionId, organizationId: org, seatCode: 'S1', state: 'complete' });
   }
-  const { run } = await runScoring(pool, { editionId });
+  // An official run (made under the approved methodology) with one result per
+  // firm. The provisional placeholder (runScoring) is always TEST_UNAPPROVED
+  // and can never feed an evidence pack.
+  const run = await createCalculationRun(pool, {
+    editionId,
+    runType: 'scoring',
+    datasetHash: 'ds-evidence-pack',
+  });
+  for (const org of [a.id, b.id]) {
+    await insertCalculatedResult(pool, {
+      calculationRunId: run.id,
+      subjectType: 'firm',
+      subjectId: org,
+      metricCode: 'OMI',
+      value: 50,
+      n: 1,
+      denominator: 1,
+      sufficiencyState: 'REPORTABLE',
+    });
+  }
   runId = run.id;
 });
 afterAll(async () => {

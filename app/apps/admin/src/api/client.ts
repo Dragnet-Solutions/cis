@@ -10,6 +10,7 @@ import {
   type FirmSummary,
   type FirmImportResult,
   type FirmInvitation,
+  type BulkFirmInviteResult,
   type PendingFirmReportRelease,
   type FirmReportReleaseDecision,
   type IndexScoreView,
@@ -26,6 +27,9 @@ import {
   type PeopleResponse,
   type PersonAccess,
   type PersonInput,
+  type MailStatus,
+  type MailTestResult,
+  type PasswordSetInfo,
   type ReleaseFirmReportsResult,
   type NationalReview,
   type MethodologyApprovalView,
@@ -97,6 +101,19 @@ export async function requestBlob(path: string, token: string | null): Promise<B
     throw new ApiError(res.status, message);
   }
   return res.blob();
+}
+
+/** Who a set-password link is for (public — the token is the credential). */
+export function getPasswordSetInfo(token: string): Promise<PasswordSetInfo> {
+  return baseRequest<PasswordSetInfo>(`/auth/password-set/${encodeURIComponent(token)}`);
+}
+
+/** Choose a password with a set-password link (public, single use). */
+export function setPasswordWithLink(
+  token: string,
+  password: string,
+): Promise<{ passwordSet: boolean; email: string }> {
+  return baseRequest('/auth/password-set', { method: 'POST', body: { token, password } });
 }
 
 export function login(email: string, password: string): Promise<LoginResponse> {
@@ -331,11 +348,22 @@ export interface AdminClient {
   ): Promise<{ invitation: FirmInvitation; resent: boolean }>;
   resendFirmInvitation(id: string): Promise<{ invitation: FirmInvitation }>;
   revokeFirmInvitation(id: string): Promise<{ invitation: FirmInvitation }>;
+  /** The edition's usable invitations as CSV: firm,email,link,expires. */
+  downloadFirmInvitationsCsv(editionId: string): Promise<Blob>;
+  bulkInviteFirms(
+    editionId: string,
+    body: { organizationIds?: string[]; namePrefix?: string; emailTemplate: string },
+  ): Promise<BulkFirmInviteResult>;
   // People & Access (UX-OPS-006)
   getPeople(): Promise<PeopleResponse>;
   addPerson(input: PersonInput): Promise<{ person: PersonAccess }>;
   updatePersonRights(userId: string, input: PersonInput): Promise<{ person: PersonAccess }>;
   removePerson(userId: string): Promise<{ removed: boolean }>;
+  /** Email a fresh invitation (or, once they have a password, reset) link. */
+  sendPasswordLink(userId: string): Promise<{ purpose: 'invite' | 'reset'; expiresAt: string }>;
+  // Mail health
+  getMailStatus(): Promise<MailStatus>;
+  sendTestEmail(to: string): Promise<MailTestResult>;
   // Responses monitoring (UX-OPS-003)
   getResponsesMonitor(editionId: string): Promise<ResponsesMonitor>;
   // Reminder timing (UX-OPS-004)
@@ -663,11 +691,19 @@ export function createClient(token: string | null, hooks: SessionHooks = {}): Ad
       request(`/firm-invitations/${id}/resend`, { method: 'POST', body: {}, token }),
     revokeFirmInvitation: (id) =>
       request(`/firm-invitations/${id}/revoke`, { method: 'POST', body: {}, token }),
+    downloadFirmInvitationsCsv: (editionId) =>
+      requestBlob(`/editions/${editionId}/firm-invitations.csv`, token),
+    bulkInviteFirms: (editionId, body) =>
+      request(`/editions/${editionId}/firm-invitations/bulk`, { method: 'POST', body, token }),
     getPeople: () => request('/people', { token }),
     addPerson: (input) => request('/people', { method: 'POST', body: input, token }),
     updatePersonRights: (userId, input) =>
       request(`/people/${userId}`, { method: 'PATCH', body: input, token }),
     removePerson: (userId) => request(`/people/${userId}`, { method: 'DELETE', token }),
+    sendPasswordLink: (userId) =>
+      request(`/people/${userId}/password-link`, { method: 'POST', body: {}, token }),
+    getMailStatus: () => request('/mail/status', { token }),
+    sendTestEmail: (to) => request('/mail/test', { method: 'POST', body: { to }, token }),
     getResponsesMonitor: (editionId) =>
       request(`/editions/${editionId}/responses-monitor`, { token }),
     getUnfinished: (editionId) => request(`/editions/${editionId}/unfinished`, { token }),

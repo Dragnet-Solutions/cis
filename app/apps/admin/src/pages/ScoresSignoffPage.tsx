@@ -248,6 +248,7 @@ export function ScoresSignoffPage({
                     <tr>
                       <th>Run</th>
                       <th>When</th>
+                      <th>Methodology</th>
                       <th>State</th>
                     </tr>
                   </thead>
@@ -267,6 +268,17 @@ export function ScoresSignoffPage({
                         <tr key={r.id}>
                           <td>{r.id.slice(0, 8)}</td>
                           <td>{new Date(r.createdAt).toLocaleString()}</td>
+                          <td>
+                            {/* Stamped when the run was made: a run made before the
+                                methodology was approved is a test run, never official. */}
+                            {r.methodologyStatus === 'APPROVED' ? (
+                              <span className="tag ok">Approved</span>
+                            ) : (
+                              <span className="tag risk" title="TEST_UNAPPROVED">
+                                Test run — not approved
+                              </span>
+                            )}
+                          </td>
                           <td>
                             <span
                               className={`tag ${
@@ -291,8 +303,39 @@ export function ScoresSignoffPage({
             </div>
           </section>
 
+          {/* ── A test run (made before the methodology was approved) can never be
+              signed off: the server refuses it, so no request is offered. ── */}
+          {!liveSignoff && currentRun.methodologyStatus !== 'APPROVED' && (
+            <section className="stage now">
+              <div className="stagehead">
+                <h2>Sign off this scoring run</h2>
+                <span className="pill">Test run</span>
+              </div>
+              <div className="stagebody">
+                <div className="warnbox">
+                  <b>This run was made before the methodology was approved.</b>
+                  <p style={{ margin: '6px 0 0' }}>
+                    It is stamped TEST_UNAPPROVED, so it can never be signed off or used in a
+                    report. Once two people have approved the methodology above, run scoring again
+                    and sign off the new run.
+                  </p>
+                </div>
+                <div className="actions">
+                  <button
+                    type="button"
+                    className="btn-2"
+                    disabled={busy}
+                    onClick={() => doRun(() => client.triggerScoringRun(editionId))}
+                  >
+                    Run scoring again
+                  </button>
+                </div>
+              </div>
+            </section>
+          )}
+
           {/* ── No live sign-off: offer to request one ── */}
-          {!liveSignoff && view !== 'request' && (
+          {!liveSignoff && currentRun.methodologyStatus === 'APPROVED' && view !== 'request' && (
             <section className="stage now">
               <div className="stagehead">
                 <h2>Sign off this scoring run</h2>
@@ -324,7 +367,7 @@ export function ScoresSignoffPage({
             </section>
           )}
 
-          {view === 'request' && !liveSignoff && (
+          {view === 'request' && !liveSignoff && currentRun.methodologyStatus === 'APPROVED' && (
             <section className="stage now">
               <div className="stagehead">
                 <h2>What you checked</h2>

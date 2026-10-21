@@ -231,7 +231,9 @@ function MessagesList({
               <th>Message</th>
               <th>Sent</th>
               <th>Firms</th>
-              <th>Delivered</th>
+              <th title="The mail service accepted the message and it has not bounced. ZeptoMail does not confirm inbox delivery.">
+                Accepted
+              </th>
               <th>Opened</th>
               <th>Clicked</th>
               <th>Bounced</th>
@@ -256,7 +258,7 @@ function MessagesList({
                   </td>
                   <td>{new Date(b.sentAt).toLocaleDateString()}</td>
                   <td>{r?.firms ?? '—'}</td>
-                  <td>{r?.delivered ?? '—'}</td>
+                  <td>{r?.accepted ?? '—'}</td>
                   <td>
                     {!r || !r.opensReported ? (
                       <span className="tag soft">not reported</span>
@@ -324,8 +326,8 @@ function BatchReportView({
           <span>Sent to</span>
         </div>
         <div className="stat">
-          <b>{report.delivered}</b>
-          <span>Delivered</span>
+          <b>{report.accepted}</b>
+          <span>Accepted by the mail service</span>
         </div>
         <div className="stat">
           <b>{report.opensReported ? report.opened : '—'}</b>
@@ -348,8 +350,8 @@ function BatchReportView({
             proxies mean some people who read a message are never counted as opening it, so the open
             figure is a floor rather than a count. Useful for comparing one message against another,
             and <b>never quoted as a number of readers</b>.
-            {report.deliveredNeverOpened > 0 && (
-              <> {report.deliveredNeverOpened} delivered but never opened.</>
+            {report.acceptedNeverOpened > 0 && (
+              <> {report.acceptedNeverOpened} accepted but never opened.</>
             )}
             {report.openedNotClicked > 0 && (
               <> {report.openedNotClicked} opened but never clicked.</>
@@ -360,7 +362,7 @@ function BatchReportView({
         <div className="note">
           <p>
             The sending service did not report opens or clicks for this batch, so those columns are
-            shown as <b>not reported</b> — never as zero. Delivery and bounce reporting stand
+            shown as <b>not reported</b> — never as zero. Acceptance and bounce reporting stand
             regardless of the provider.
           </p>
         </div>
@@ -368,13 +370,14 @@ function BatchReportView({
 
       <div className="note">
         <p>
-          Mail service: {report.outbox.sent} sent
+          Mail service: {report.outbox.sent} accepted
           {report.outbox.queued > 0 && <>, {report.outbox.queued} waiting to go</>}
           {report.outbox.failed > 0 && <>, {report.outbox.failed} could not be sent</>}
           {report.outbox.logged > 0 && (
             <>, {report.outbox.logged} recorded only (no mail service was configured)</>
           )}
-          .
+          . Accepted means the mail service took the message; ZeptoMail does not confirm that it
+          reached the inbox — only a bounce is reported back.
           {report.notSent > 0 && (
             <>
               {' '}

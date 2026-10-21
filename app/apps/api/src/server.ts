@@ -3,6 +3,7 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { registerSecurity } from './plugins/security';
 import { registerAuth } from './plugins/auth-plugin';
 import { parseTrustProxy } from './plugins/trust-proxy';
+import { serializeRequest } from './plugins/redact-url';
 import { healthRoutes } from './routes/health';
 import { authRoutes } from './routes/auth';
 import { editionRoutes } from './routes/editions';
@@ -30,6 +31,8 @@ import { dragnetRoutes } from './routes/dragnet';
 import { firmDigestRoutes } from './routes/firm-digest';
 import { publicContentRoutes } from './routes/public-content';
 import { reportDeliveryRoutes } from './routes/report-delivery';
+import { passwordSetRoutes } from './routes/password-set';
+import { mailRoutes } from './routes/mail';
 
 export async function buildServer() {
   const app = Fastify({
@@ -44,6 +47,8 @@ export async function buildServer() {
         ],
         censor: '[REDACTED]',
       },
+      // Set-password tokens travel in a URL path; keep them out of the logs.
+      serializers: { req: serializeRequest },
     },
     disableRequestLogging: process.env['NODE_ENV'] === 'test',
     // Behind a reverse proxy, request.ip — and so every per-IP rate limit —
@@ -104,6 +109,8 @@ export async function buildServer() {
   await app.register(firmDigestRoutes);
   await app.register(publicContentRoutes);
   await app.register(reportDeliveryRoutes);
+  await app.register(passwordSetRoutes);
+  await app.register(mailRoutes);
 
   return app;
 }
@@ -133,6 +140,7 @@ function resolveStatusCode(error: Error & { statusCode?: number }): number {
     case 'OutreachLinkNotFoundError':
       return 404;
     case 'PermissionDeniedError':
+    case 'PeopleAccessForbiddenError':
     case 'MakerCheckerViolationError':
       return 403;
     case 'InvalidReasonError':
@@ -150,6 +158,7 @@ function resolveStatusCode(error: Error & { statusCode?: number }): number {
     case 'ParticipationClosedError':
     case 'CollectionClosedError':
     case 'RegulatorLinkRequiredError':
+    case 'InvitationRequiredError':
       return 403;
     case 'EditionStateError':
     case 'InstrumentsNotFrozenError':

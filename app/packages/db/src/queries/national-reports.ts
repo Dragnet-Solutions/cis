@@ -86,6 +86,34 @@ export async function markDraftOpened(pool: Pool, id: string): Promise<void> {
   await query(pool, 'UPDATE national_reports SET draft_opened = TRUE WHERE id = $1', [id]);
 }
 
+/** Record that an operator opened the draft (first time only). The approver of
+ *  the national report must have opened it themselves. */
+export async function recordNationalReportOpening(
+  pool: Pool,
+  reportId: string,
+  userId: string,
+): Promise<void> {
+  await query(
+    pool,
+    `INSERT INTO national_report_openings (national_report_id, user_id)
+     VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+    [reportId, userId],
+  );
+}
+
+export async function hasOpenedNationalReport(
+  pool: Pool,
+  reportId: string,
+  userId: string,
+): Promise<boolean> {
+  const res = await query(
+    pool,
+    `SELECT 1 FROM national_report_openings WHERE national_report_id = $1 AND user_id = $2`,
+    [reportId, userId],
+  );
+  return (res.rowCount ?? 0) > 0;
+}
+
 export async function setNationalRequest(
   pool: Pool,
   id: string,

@@ -26,8 +26,8 @@ describe('§2c — no access_model view', () => {
   });
   it('lists exactly the real claim/sign-in views, no invented invitation-code state', () => {
     expect(PORTAL_VIEWS).toHaveLength(6);
-    // No manually-typed invitation code exists server-side (claimSpace takes
-    // no code); a second claimant is redirected to sign in instead.
+    // No manually-typed invitation code exists: the invitation is an emailed
+    // link (?invite=); a second claimant is redirected to sign in instead.
     expect((PORTAL_VIEWS as readonly string[]).includes('code')).toBe(false);
     expect((PORTAL_VIEWS as readonly string[]).includes('halfway')).toBe(false);
   });
@@ -70,7 +70,7 @@ describe('seat replacement cost mirrors the domain rule', () => {
 });
 
 describe('portal entry links', () => {
-  it('reads an invitation token, and keeps ?claim= working', () => {
+  it('reads an invitation token, and still reads ?claim= (to point at the invitation email)', () => {
     expect(readPortalEntry('?invite=abc-123')).toEqual({
       claimOrgId: null,
       inviteToken: 'abc-123',
@@ -84,6 +84,8 @@ describe('portal entry links', () => {
     expect(invitationProblemTitle('REVOKED')).toMatch(/withdrawn/);
     expect(invitationProblemTitle('USED')).toMatch(/already been used/);
     expect(invitationProblemTitle('NOT_FOUND')).toMatch(/recognise/);
+    // An old ?claim=<firm> link: setting up a space needs the emailed invitation.
+    expect(invitationProblemTitle('NEEDED')).toBe('Use the invitation link from your email.');
     expect(invitationProblemTitle(null)).toMatch(/could not open/);
   });
 });

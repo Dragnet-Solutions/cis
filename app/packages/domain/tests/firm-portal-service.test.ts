@@ -29,7 +29,6 @@ import {
 import {
   seedReferenceData,
   getInvitationRequests,
-  claimSpace,
   requestInvitation,
   recordFollowUpConsent,
   assignSeat,
@@ -49,6 +48,7 @@ import {
   AlreadyClaimedError,
 } from '../src';
 import { getTestPool, runMigrations, truncateAllTables, closeTestPool } from '../../db/tests/setup';
+import { claimWithInvitation } from './helpers/firm-claims';
 
 let pool: Pool;
 let editionId: string;
@@ -82,11 +82,11 @@ const CLAIM = {
 describe('One firm, one space', () => {
   it('refuses a second claim without disclosing who claimed first', async () => {
     const org = await firm('cordros');
-    await claimSpace(pool, { organizationId: org.id, ...CLAIM });
+    await claimWithInvitation(pool, { organizationId: org.id, ...CLAIM });
 
     let caught: unknown;
     try {
-      await claimSpace(pool, {
+      await claimWithInvitation(pool, {
         organizationId: org.id,
         ...CLAIM,
         contactName: 'Second Claimant',
@@ -107,7 +107,7 @@ describe('Consent gating', () => {
   it('privacy consent gates the claim', async () => {
     const org = await firm('gate-claim');
     await expect(
-      claimSpace(pool, { organizationId: org.id, ...CLAIM, privacyConsent: false }),
+      claimWithInvitation(pool, { organizationId: org.id, ...CLAIM, privacyConsent: false }),
     ).rejects.toBeInstanceOf(PrivacyConsentRequiredError);
     expect(await getFirmClaim(pool, org.id)).toBeNull();
   });
@@ -163,7 +163,7 @@ describe('Consent gating', () => {
 
   it('follow-up consent gates nothing — the firm claims either way', async () => {
     const withFollow = await firm('follow-yes');
-    const claimA = await claimSpace(pool, {
+    const claimA = await claimWithInvitation(pool, {
       organizationId: withFollow.id,
       ...CLAIM,
       followUpConsent: true,
@@ -171,7 +171,7 @@ describe('Consent gating', () => {
     expect(claimA.claim.followUpConsent).toBe(true);
 
     const withoutFollow = await firm('follow-no');
-    const claimB = await claimSpace(pool, {
+    const claimB = await claimWithInvitation(pool, {
       organizationId: withoutFollow.id,
       ...CLAIM,
       followUpConsent: false,

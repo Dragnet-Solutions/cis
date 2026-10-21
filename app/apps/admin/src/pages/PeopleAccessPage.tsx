@@ -5,6 +5,7 @@ import {
   type AccessOrg,
   type AccessRightKey,
   type AuthUser,
+  type PeopleResponse,
   type PersonAccess,
 } from '../api/types';
 
@@ -22,6 +23,13 @@ import {
  *   - The Dragnet analysis right is refused server-side for a CIS person.
  *   - A person cannot remove their own access (checked against the real,
  *     signed-in actor from the JWT — never a client-supplied id).
+ *   - Only an access manager (the "Change the setup" right) can add, change or
+ *     remove people or send password links; nobody can change their own
+ *     access; nobody can grant a right they do not hold. The controls are
+ *     hidden or disabled to match (`viewer` from the API), but the server
+ *     refuses regardless.
+ *   - Nobody is sent a password: a new person is emailed a link to choose
+ *     their own, and an access manager can send a fresh link at any time.
  *   - Zero people is a distinct, non-recoverable-from-here state.
  */
 
@@ -90,6 +98,11 @@ export function PeopleAccessPage({
     Array<{ action: string; where: string; why: string }>
   >([]);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [access, setAccess] = useState<PeopleResponse['viewer']>({
+    canManage: false,
+    grantable: [],
+  });
   const [busy, setBusy] = useState(false);
   const [view, setView] = useState<ViewName>('main');
   const [editUserId, setEditUserId] = useState<string | null>(null); // null = adding
@@ -116,6 +129,7 @@ export function PeopleAccessPage({
       setPeople(res.people);
       setApprovers(res.approvers);
       setCriticalActions(res.criticalActions);
+      setAccess(res.viewer ?? { canManage: false, grantable: [] });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not load people & access');
     }
@@ -129,6 +143,7 @@ export function PeopleAccessPage({
     async (fn: () => Promise<unknown>) => {
       setBusy(true);
       setError(null);
+      setNotice(null);
       try {
         await fn();
         await load();
@@ -221,7 +236,28 @@ export function PeopleAccessPage({
 
   function openPerson(userId: string) {
     setDetailUserId(userId);
+    setNotice(null);
+    setError(null);
     setView('person');
+  }
+
+  async function sendLink(p: PersonAccess): Promise<void> {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await client.sendPasswordLink(p.userId);
+      const until = new Date(res.expiresAt).toLocaleString();
+      setNotice(
+        res.purpose === 'invite'
+          ? `A new invitation link was emailed to ${p.email}. It works once, until ${until}; any earlier link no longer works.`
+          : `A password reset link was emailed to ${p.email}. It works once, until ${until}. Their current password keeps working until they use it.`,
+      );
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not send the link');
+    } finally {
+      setBusy(false);
+    }
   }
 
   function removePerson(userId: string) {
@@ -236,6 +272,7 @@ export function PeopleAccessPage({
           approvers={approvers}
           criticalActions={criticalActions}
           error={error}
+          canManage={access.canManage}
           onOpenPerson={openPerson}
           onAdd={() => openAdd(null)}
         />
@@ -251,6 +288,8 @@ export function PeopleAccessPage({
           validation={validation}
           canSave={canSave}
           lockApprove={lockApprove}
+          grantable={access.grantable}
+          held={editingPerson ? editingPerson.rights : null}
           busy={busy}
           error={error}
           setName={setName}
@@ -266,11 +305,14 @@ export function PeopleAccessPage({
         <PersonView
           person={people.find((p) => p.userId === detailUserId)!}
           approvers={approvers}
-          isSelf={people.find((p) => p.userId === detailUserId)!.email === viewer.email}
+          isSelf={detailUserId === viewer.id}
+          canManage={access.canManage}
           busy={busy}
           error={error}
+          notice={notice}
           onEdit={() => openAdd(detailUserId)}
           onRemove={() => removePerson(detailUserId)}
+          onSendLink={() => void sendLink(people.find((p) => p.userId === detailUserId)!)}
           onBack={goMain}
         />
       )}
@@ -315,6 +357,7 @@ function MainView({
   approvers,
   criticalActions,
   error,
+  canManage,
   onOpenPerson,
   onAdd,
 }: {
@@ -322,6 +365,7 @@ function MainView({
   approvers: number;
   criticalActions: Array<{ action: string; where: string; why: string }>;
   error: string | null;
+  canManage: boolean;
   onOpenPerson: (userId: string) => void;
   onAdd: () => void;
 }): JSX.Element {
@@ -372,7 +416,14 @@ function MainView({
                       </button>
                     </td>
                     <td>{p.organization}</td>
-                    <td>{summarise(p)}</td>
+                    <td>
+                      {summarise(p)}
+                      {p.awaitingPassword && (
+                        <span className="tag wait" style={{ marginLeft: 6 }}>
+                          Not signed in yet
+                        </span>
+                      )}
+                    </td>
                     <td>
                       <span className={`tag ${can ? 'ok' : 'soft'}`}>{can || 'Neither'}</span>
                     </td>
@@ -384,11 +435,17 @@ function MainView({
         </table>
       </div>
 
-      <div className="actions">
-        <button type="button" className="btn" onClick={onAdd}>
-          Add someone
-        </button>
-      </div>
+      {canManage ? (
+        <div className="actions">
+          <button type="button" className="btn" onClick={onAdd}>
+            Add someone
+          </button>
+        </div>
+      ) : (
+        <p className="note">
+          Only someone with the “Change the setup” right can add people or change what they can do.
+        </p>
+      )}
 
       <section className="stage" style={{ marginTop: 22 }}>
         <div className="stagehead">
@@ -447,6 +504,8 @@ function AddView({
   validation,
   canSave,
   lockApprove,
+  grantable,
+  held,
   busy,
   error,
   setName,
@@ -464,6 +523,10 @@ function AddView({
   validation: string;
   canSave: boolean;
   lockApprove: boolean;
+  /** Rights the signed-in operator holds and so may give. */
+  grantable: RightKey[];
+  /** The person's current rights when editing (keeping one is never a grant). */
+  held: Record<RightKey, boolean> | null;
   busy: boolean;
   error: string | null;
   setName: (v: string) => void;
@@ -480,7 +543,11 @@ function AddView({
       </button>
       <p className="eyebrow">Study operations</p>
       <h1 tabIndex={-1}>{editing ? `What ${name || 'they'} can do.` : 'Add someone.'}</h1>
-      <p className="lede">They sign in with their own credentials. Nothing here is shared.</p>
+      <p className="lede">
+        {editing
+          ? 'They sign in with their own credentials. Nothing here is shared.'
+          : 'They will be emailed a link to choose their own password. Nobody is ever sent a password.'}
+      </p>
 
       <div className="field">
         <label htmlFor="pName">Name</label>
@@ -503,7 +570,11 @@ function AddView({
         {RIGHTS.map((x) => {
           // The Dragnet right does not render at all for a CIS person.
           if (x.dragnetOnly && org !== 'Dragnet') return null;
-          const disabled = x.k === 'view' || (x.k === 'approve' && lockApprove);
+          // You can only give a right you hold yourself (the server refuses
+          // otherwise); one the person already has can stay or be removed.
+          const cannotGive = x.k !== 'view' && !grantable.includes(x.k) && !held?.[x.k];
+          const disabled =
+            x.k === 'view' || (x.k === 'approve' && lockApprove) || (cannotGive && !draft[x.k]);
           return (
             <label
               key={x.k}
@@ -537,7 +608,9 @@ function AddView({
                 >
                   {x.k === 'approve' && lockApprove
                     ? 'Cannot be taken away — two approvers is the floor and removing this one would leave fewer.'
-                    : x.sub}
+                    : cannotGive && !draft[x.k]
+                      ? 'You do not hold this right, so you cannot give it.'
+                      : x.sub}
                 </span>
               </span>
             </label>
@@ -563,19 +636,25 @@ function PersonView({
   person,
   approvers,
   isSelf,
+  canManage,
   busy,
   error,
+  notice,
   onEdit,
   onRemove,
+  onSendLink,
   onBack,
 }: {
   person: PersonAccess;
   approvers: number;
   isSelf: boolean;
+  canManage: boolean;
   busy: boolean;
   error: string | null;
+  notice: string | null;
   onEdit: () => void;
   onRemove: () => void;
+  onSendLink: () => void;
   onBack: () => void;
 }): JSX.Element {
   const wouldBreach = person.rights.approve && approvers <= FLOOR;
@@ -594,9 +673,26 @@ function PersonView({
         <dd>{person.organization}</dd>
         <dt>Rights</dt>
         <dd>{on.map((x) => x.label).join('; ')}</dd>
+        <dt>Password</dt>
+        <dd>
+          {person.awaitingPassword
+            ? 'Not chosen yet — they have not used their invitation link'
+            : 'Set'}
+        </dd>
       </dl>
 
       {error && <div className="err">{error}</div>}
+      {notice && (
+        <p className="note" role="status">
+          {notice}
+        </p>
+      )}
+      {isSelf && (
+        <p className="note">
+          This is you. Nobody can change their own access — ask another person with the “Change the
+          setup” right.
+        </p>
+      )}
 
       {wouldBreach && (
         <div className="warnbox">
@@ -612,18 +708,31 @@ function PersonView({
         </div>
       )}
 
-      <div className="actions">
-        <button type="button" className="btn-2" onClick={onEdit}>
-          Change what they can do
-        </button>
-        {/* Self-removal is never offered for the signed-in user's own row —
-            the real check is server-side, against the real signed-in actor. */}
-        {!isSelf && (
-          <button type="button" className="btn-2" disabled={wouldBreach || busy} onClick={onRemove}>
-            Remove their access
+      {/* Changing, removing and sending links need the access-manager right,
+          and nobody changes their own access — hidden here to match; the real
+          checks are server-side, against the real signed-in actor. */}
+      {canManage && (
+        <div className="actions">
+          {!isSelf && (
+            <button type="button" className="btn-2" onClick={onEdit}>
+              Change what they can do
+            </button>
+          )}
+          <button type="button" className="btn-2" disabled={busy} onClick={onSendLink}>
+            {person.awaitingPassword ? 'Send a new invitation link' : 'Send password reset link'}
           </button>
-        )}
-      </div>
+          {!isSelf && (
+            <button
+              type="button"
+              className="btn-2"
+              disabled={wouldBreach || busy}
+              onClick={onRemove}
+            >
+              Remove their access
+            </button>
+          )}
+        </div>
+      )}
     </>
   );
 }

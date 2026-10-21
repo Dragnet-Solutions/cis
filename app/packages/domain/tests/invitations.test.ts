@@ -5,7 +5,7 @@
  *  - Deduplication is per template: same firm+template blocked, different template ok.
  *  - File validation is exactly four checks; no fifth register-match check exists.
  *  - A firm code-bearing template missing {{code}} is blocked; participant/regulator ok.
- *  - Delivery report: sent/delivered/bounced always; opened/clicked only when reported.
+ *  - Delivery report: sent/accepted/bounced always; opened/clicked only when reported.
  *  - No resend-to-bounced code path exists.
  *  - A request-an-invitation submission appears in the queue and can be resolved.
  */
@@ -260,7 +260,7 @@ describe('Template {{code}} gate', () => {
 });
 
 describe('Delivery report degrades gracefully', () => {
-  it('always reports sent/delivered/bounced; opens/clicks only when the provider reports them', async () => {
+  it('always reports sent/accepted/bounced; opens/clicks only when the provider reports them', async () => {
     const first = await templateId('First invitation');
     const batch = await createBatch(pool, {
       editionId,
@@ -289,11 +289,11 @@ describe('Delivery report degrades gracefully', () => {
 
     let report = await getBatchReport(pool, batch.id);
     expect(report.firms).toBe(3);
-    expect(report.delivered).toBe(2);
+    expect(report.accepted).toBe(2);
     expect(report.bounced).toBe(1);
     expect(report.opensReported).toBe(false); // provider didn't report opens
     expect(report.clicksReported).toBe(false);
-    expect(report.deliveredNeverOpened).toBe(2); // both delivered, none opened
+    expect(report.acceptedNeverOpened).toBe(2); // both accepted, none opened
 
     // Provider later reports an open + a click on r1.
     await recordDelivery(pool, r1.id, { openedAt: new Date(), clickedAt: new Date() });
@@ -302,6 +302,40 @@ describe('Delivery report degrades gracefully', () => {
     expect(report.opened).toBe(1);
     expect(report.clicked).toBe(1);
     expect(report.openedNotClicked).toBe(0); // the one open also clicked
+  });
+
+  it('counts a recipient as accepted only once the mail service took its email, and never after a bounce', async () => {
+    const first = await templateId('First invitation');
+    const batch = await createBatch(pool, {
+      editionId,
+      templateId: first,
+      audienceId: 'upload',
+      audienceLabel: 'Uploaded list',
+    });
+    const mk = async (email: string, outboxStatus: 'sent' | 'logged' | 'queued' | 'failed') => {
+      const r = await insertRecipient(pool, {
+        batchId: batch.id,
+        editionId,
+        recipientEmail: email,
+      });
+      await pool.query(
+        `INSERT INTO email_outbox (kind, ref_id, to_address, subject, body_text, status)
+         VALUES ('invitation-batch', $1, $2, 's', 'b', $3)`,
+        [r.id, email, outboxStatus],
+      );
+      return r;
+    };
+    await mk('sent@x.example', 'sent');
+    await mk('logged@x.example', 'logged');
+    await mk('queued@x.example', 'queued');
+    await mk('failed@x.example', 'failed');
+    const bounced = await mk('bounced@x.example', 'sent');
+    await recordDelivery(pool, bounced.id, { deliveryState: 'bounced' });
+
+    const report = await getBatchReport(pool, batch.id);
+    expect(report.firms).toBe(5);
+    expect(report.accepted).toBe(1); // only the one the mail service took, unbounced
+    expect(report.bounced).toBe(1);
   });
 });
 

@@ -21,7 +21,6 @@ import {
   type Coordinator,
   type PortalMe,
   type OutreachLink,
-  type FirmDirectoryEntry,
   type FirmResults,
   type InvitationDetails,
   InvitationLinkError,
@@ -41,9 +40,12 @@ import { ErrorState, type ErrorStateKind } from '../shared/ErrorState';
  * exhaustively — only this README-style label exists, never a document), so
  * this is the best-available faithful port, not an independently verified one.
  *
- * The claim flow has no manually-typed invitation code, because the real
- * backend has no such gate: `claimSpace` takes no code, and a second
- * claimant is simply redirected to sign in
+ * The claim flow has no manually-typed invitation code: a firm's space is
+ * set up only from its emailed invitation link (`?invite=<token>`), which
+ * names the firm. There is no picking a firm from a list to claim it — the
+ * server refuses a claim without a usable invitation — and an old
+ * `?claim=<firm>` link says to use the invitation link from the email
+ * instead. A second claimant is redirected to sign in
  * (`AlreadyClaimedError`: "This firm already has a space. Sign in instead.").
  * The email-first branch (sign in vs. not recognised) is real too, backed by
  * `/portal/auth/lookup` — the firm itself is still never disclosed before a
@@ -86,29 +88,36 @@ function ClaimOrSignIn({
   inviteToken: string | null;
   onSignedIn: (session: PortalSession) => void;
 }): JSX.Element {
-  const [view, setView] = useState<PortalView>(claimOrgId || inviteToken ? 'claim' : 'email');
+  const [view, setView] = useState<PortalView>(inviteToken ? 'claim' : 'email');
   const [invite, setInvite] = useState<InvitationDetails | null>(null);
   const [inviteLoading, setInviteLoading] = useState(!!inviteToken);
+  // An old `?claim=<firm>` link (no invitation token) cannot set up a space:
+  // say where the real link is, and offer to request one.
   const [inviteProblem, setInviteProblem] = useState<{
     code: string | null;
     message: string;
-  } | null>(null);
+  } | null>(() =>
+    claimOrgId && !inviteToken
+      ? {
+          code: 'NEEDED',
+          message:
+            "You need an invitation link to set up your firm's space. Open the link in the invitation email the CIS team sent your firm. If you cannot find it, request an invitation and they will send one.",
+        }
+      : null,
+  );
   const [email, setEmail] = useState('');
-  const [firmName, setFirmName] = useState('');
-  const [firms, setFirms] = useState<FirmDirectoryEntry[]>([]);
+  const [firms, setFirms] = useState<string[]>([]);
   const [alreadyClaimedNote, setAlreadyClaimedNote] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<ErrorStateKind | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      let linkedOrgId = claimOrgId;
       if (inviteToken) {
         try {
           const found = await firmPublic.lookupInvitation(inviteToken);
           if (cancelled) return;
           setInvite(found);
-          linkedOrgId = found.organizationId;
         } catch (e) {
           if (cancelled) return;
           if (e instanceof InvitationLinkError && e.statusCode < 500) {
@@ -123,14 +132,11 @@ function ClaimOrSignIn({
           if (!cancelled) setInviteLoading(false);
         }
       }
+      // Firm names only, for the request-an-invitation picker.
       try {
         const list = await firmPublic.directory();
         if (cancelled) return;
-        setFirms(list);
-        if (linkedOrgId) {
-          const match = list.find((f) => f.id === linkedOrgId);
-          setFirmName(match?.displayName ?? '');
-        }
+        setFirms(list.map((f) => f.displayName));
       } catch {
         if (!cancelled) setLoadError('service_unavailable');
       }
@@ -138,7 +144,7 @@ function ClaimOrSignIn({
     return () => {
       cancelled = true;
     };
-  }, [claimOrgId, inviteToken]);
+  }, [inviteToken]);
 
   const go = (v: PortalView) => {
     setView(v);
@@ -195,12 +201,9 @@ function ClaimOrSignIn({
             {view === 'unclaimed' && (
               <UnknownView onRequest={() => go('nocode')} onBack={() => go('email')} />
             )}
-            {view === 'claim' && (
+            {view === 'claim' && invite && inviteToken && (
               <SetupView
-                firm={firmName}
-                organizationId={invite?.organizationId ?? claimOrgId}
-                invite={invite && inviteToken ? { token: inviteToken, ...invite } : null}
-                firms={firms}
+                invite={{ token: inviteToken, ...invite }}
                 onClaimed={onSignedIn}
                 onAlreadyClaimed={(message) => {
                   setAlreadyClaimedNote(message);
@@ -210,7 +213,7 @@ function ClaimOrSignIn({
             )}
             {view === 'nocode' && (
               <RequestView
-                firms={firms.map((f) => f.displayName)}
+                firms={firms}
                 onSent={() => go('requested')}
                 onBack={() => go('email')}
               />
@@ -243,15 +246,25 @@ function InviteProblemView({
         <p>
           {code === 'USED'
             ? 'If your firm’s space is already set up, sign in with your email address and PIN. Otherwise, ask the CIS team for a new invitation.'
-            : 'Ask the CIS team for a new invitation — you can request one here, and they will send a fresh link.'}
+            : code === 'NEEDED'
+              ? 'If your firm’s space is already set up, sign in with your email address and PIN instead.'
+              : 'Ask the CIS team for a new invitation — you can request one here, and they will send a fresh link.'}
         </p>
       </div>
       <div className="actions">
         <button type="button" className="btn" onClick={code === 'USED' ? onSignIn : onRequest}>
-          {code === 'USED' ? 'Sign in' : 'Request a new invitation'}
+          {code === 'USED'
+            ? 'Sign in'
+            : code === 'NEEDED'
+              ? 'Request an invitation'
+              : 'Request a new invitation'}
         </button>
         <button type="button" className="btn-2" onClick={code === 'USED' ? onRequest : onSignIn}>
-          {code === 'USED' ? 'Request a new invitation' : 'Sign in instead'}
+          {code === 'USED'
+            ? 'Request a new invitation'
+            : code === 'NEEDED'
+              ? 'Sign in'
+              : 'Sign in instead'}
         </button>
       </div>
     </>
@@ -414,41 +427,15 @@ function UnknownView({
 }
 
 function SetupView({
-  firm,
-  organizationId,
   invite,
-  firms,
   onClaimed,
   onAlreadyClaimed,
 }: {
-  firm: string;
-  organizationId: string | null;
-  /** The invitation the claimant arrived by: locks the firm, prefills their details. */
-  invite: (InvitationDetails & { token: string }) | null;
-  firms: FirmDirectoryEntry[];
+  /** The invitation the claimant arrived by: it names the firm and prefills their details. */
+  invite: InvitationDetails & { token: string };
   onClaimed: (session: PortalSession) => void;
   onAlreadyClaimed: (message: string) => void;
 }): JSX.Element {
-  const [chosenOrgId, setChosenOrgId] = useState<string | null>(organizationId);
-  const [firmQuery, setFirmQuery] = useState(firm);
-  // The claim link names the firm. The directory arrives after this form first
-  // renders, so the box is filled (and held) once the named firm is found in it
-  // — not just from the first render, when the list is still empty.
-  const linkedFirm = organizationId ? (firms.find((f) => f.id === organizationId) ?? null) : null;
-  const linkNotFound = !!organizationId && firms.length > 0 && !linkedFirm;
-  const [linkReleased, setLinkReleased] = useState(false);
-  const firmLocked = !!linkedFirm && !linkReleased;
-  useEffect(() => {
-    if (linkedFirm && !linkReleased) {
-      setChosenOrgId(linkedFirm.id);
-      setFirmQuery(linkedFirm.displayName);
-    }
-  }, [linkedFirm, linkReleased]);
-  useEffect(() => {
-    // A link to a firm that is not in the directory chooses nothing.
-    if (linkNotFound) setChosenOrgId((id) => (id === organizationId ? null : id));
-  }, [linkNotFound, organizationId]);
-  const chosenName = firms.find((f) => f.id === chosenOrgId)?.displayName ?? firm;
   const [privacy, setPrivacy] = useState(false);
   const [followUp, setFollowUp] = useState(false);
   const [name, setName] = useState(invite?.contactName ?? '');
@@ -461,42 +448,31 @@ function SetupView({
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const firmMatches = useMemo(
-    () =>
-      firmQuery.trim()
-        ? firms.filter((f) => f.displayName.toLowerCase().includes(firmQuery.trim().toLowerCase()))
-        : firms,
-    [firmQuery, firms],
-  );
-
   const mobileDigits = mobile.replace(/[^0-9]/g, '');
-  const gate = !chosenOrgId
-    ? 'Choose your firm from the list that appears as you type.'
-    : !privacy
-      ? 'Confirm you have read how your information is handled.'
-      : !name.trim()
-        ? 'Enter your name.'
-        : !emailOk(contactEmail)
-          ? 'Enter your email address.'
-          : !mobileDigits
-            ? 'Enter a mobile number.'
-            : mobileDigits.length < 10
-              ? 'That number is too short to send a text to.'
-              : !role
-                ? 'Choose your role.'
-                : pin.length !== 6
-                  ? 'Your PIN needs six digits.'
-                  : pin2.length !== 6
-                    ? 'Enter your PIN again.'
-                    : null;
+  const gate = !privacy
+    ? 'Confirm you have read how your information is handled.'
+    : !name.trim()
+      ? 'Enter your name.'
+      : !emailOk(contactEmail)
+        ? 'Enter your email address.'
+        : !mobileDigits
+          ? 'Enter a mobile number.'
+          : mobileDigits.length < 10
+            ? 'That number is too short to send a text to.'
+            : !role
+              ? 'Choose your role.'
+              : pin.length !== 6
+                ? 'Your PIN needs six digits.'
+                : pin2.length !== 6
+                  ? 'Enter your PIN again.'
+                  : null;
 
   async function claim(): Promise<void> {
-    if (!chosenOrgId) return;
     setBusy(true);
     setErr(null);
     try {
       await firmPublic.claim({
-        organizationId: chosenOrgId,
+        organizationId: invite.organizationId,
         contactName: name.trim(),
         contactEmail: contactEmail.trim(),
         mobile: mobileDigits,
@@ -504,7 +480,7 @@ function SetupView({
         role,
         privacyConsent: privacy,
         followUpConsent: followUp,
-        ...(invite && chosenOrgId === invite.organizationId ? { inviteToken: invite.token } : {}),
+        inviteToken: invite.token,
       });
       const { token, coordinator } = await portalAuth.login(contactEmail.trim(), pin);
       const seatCode = ROLE_TO_SEAT[role];
@@ -535,79 +511,22 @@ function SetupView({
       <p className="eyebrow">Step 2 of 2</p>
       <h1 tabIndex={-1}>Set up your access.</h1>
       <p className="lede">
-        {chosenOrgId ? (
-          <>
-            You are claiming this space for <b>{chosenName}</b>. From now on you sign in with your
-            email address and this PIN.
-          </>
-        ) : (
-          'Choose your firm to begin.'
-        )}
+        You are setting up the space for <b>{invite.firmName}</b>. From now on you sign in with your
+        email address and this PIN.
       </p>
 
       <div className="field">
         <label htmlFor="setupFirm">Your firm</label>
-        {firmLocked && (
-          <p className="hint" id="setupFirmHint">
-            From your invitation link.{' '}
-            {invite ? (
-              'Not your firm? Ask the CIS team for the right invitation.'
-            ) : (
-              <button
-                type="button"
-                className="textlink"
-                onClick={() => {
-                  setLinkReleased(true);
-                  setChosenOrgId(null);
-                  setFirmQuery('');
-                }}
-              >
-                Not your firm?
-              </button>
-            )}
-          </p>
-        )}
-        {linkNotFound && (
-          <p className="hint">
-            Your invitation link does not match a firm on our list. Choose your firm below.
-          </p>
-        )}
+        <p className="hint" id="setupFirmHint">
+          From your invitation link. Not your firm? Ask the CIS team for the right invitation.
+        </p>
         <input
           id="setupFirm"
           type="text"
-          value={firmQuery}
-          readOnly={firmLocked}
-          aria-describedby={firmLocked ? 'setupFirmHint' : undefined}
-          placeholder="Type or choose a firm"
-          onChange={(e) => {
-            setFirmQuery(e.target.value);
-            const match = firms.find(
-              (f) => f.displayName.toLowerCase() === e.target.value.trim().toLowerCase(),
-            );
-            setChosenOrgId(match?.id ?? null);
-          }}
+          value={invite.firmName}
+          readOnly
+          aria-describedby="setupFirmHint"
         />
-        {firmQuery.trim() && !chosenOrgId && (
-          <div className="results">
-            {firmMatches.length ? (
-              firmMatches.map((f) => (
-                <button
-                  key={f.id}
-                  type="button"
-                  className="result"
-                  onClick={() => {
-                    setChosenOrgId(f.id);
-                    setFirmQuery(f.displayName);
-                  }}
-                >
-                  {f.displayName}
-                </button>
-              ))
-            ) : (
-              <div className="noresult">Nothing matches that spelling.</div>
-            )}
-          </div>
-        )}
       </div>
 
       <p className="privline">

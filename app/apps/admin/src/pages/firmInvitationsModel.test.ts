@@ -73,8 +73,11 @@ describe('firm invitations model', () => {
 
   it('describes delivery in plain words', () => {
     expect(deliveryLabel(null).text).toBe('—');
-    expect(deliveryLabel(sent)).toEqual({ text: 'Sent', cls: 'tag ok' });
+    expect(deliveryLabel(sent)).toEqual({ text: 'Accepted', cls: 'tag ok' });
     expect(deliveryLabel(failed)).toEqual({ text: 'Failed: bounced', cls: 'tag risk' });
     expect(deliveryLabel({ status: 'queued', error: null, at: '' }).text).toBe('Queued');
+    expect(deliveryLabel({ status: 'logged', error: null, at: '' }).text).toBe(
+      'Not sent — no mail service',
+    );
   });
 });

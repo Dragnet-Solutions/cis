@@ -58,6 +58,7 @@ import {
   DragnetPermissionError,
 } from '../src';
 import { getTestPool, runMigrations, truncateAllTables, closeTestPool } from '../../db/tests/setup';
+import { approveMethodologyForTests } from '../../db/tests/methodology-approval';
 
 let pool: Pool;
 let editionId: string;
@@ -77,6 +78,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await truncateAllTables(pool);
+  await approveMethodologyForTests(pool);
   const seed = await seedReferenceData(pool);
   editionId = seed.editionId;
 

@@ -674,6 +674,9 @@ export interface PersonAccess {
   /** Convenience flags derived from rights. */
   canRequest: boolean;
   canApprove: boolean;
+  /** Never signed in and never used a set-password link — still to choose a
+   *  password, so they are sent an invitation link rather than a reset link. */
+  awaitingPassword: boolean;
 }
 
 // ─── Invitations (Phase 9 — UX-OPS-002) ─────────────────────────────────────────
@@ -743,14 +746,16 @@ export interface BatchReport {
   batch: MessageBatch;
   templateName: string;
   firms: number;
-  delivered: number;
+  /** The mail service accepted it and it has not bounced. Not "delivered":
+   *  ZeptoMail sends no delivered event. */
+  accepted: number;
   bounced: number;
   opened: number;
   clicked: number;
   opensReported: boolean;
   clicksReported: boolean;
   /** Diagnostic split kept distinct: channel/spam vs. message content. */
-  deliveredNeverOpened: number;
+  acceptedNeverOpened: number;
   openedNotClicked: number;
   /** Recipients with no email address on file — recorded, nothing sent. */
   notSent: number;

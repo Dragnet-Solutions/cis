@@ -11,8 +11,10 @@ are `+234 000 555 ….`, and institution names start with `[Test]`.
 ## What it does
 
 1. **Plays each firm's coordinator** (firm portal API). For each `[Test]` firm it:
-   - claims the firm's space with `POST /firm/claim`, giving privacy consent and a random
-     six-digit PIN that it keeps in the state file;
+   - claims the firm's space with `POST /firm/claim`, giving the firm's **invitation token**
+     (from `--firm-invites`), privacy consent and a random six-digit PIN that it keeps in the
+     state file. A firm with no invitation link is skipped with the reason on its line, and its
+     seats wait for a later run;
    - signs in with `POST /portal/auth/login`;
    - assigns the three seats (S1 MD, S2 Compliance, S3 Operations) to three different fake
      people with `POST /portal/seats/:code/assign`;
@@ -101,12 +103,20 @@ yes/no detail and the optional S4-Q10, and the robot handles both.
 2. **The edition is collecting.** Its status must be `open`, meaning instruments are frozen and the
    opening date has passed, and it must be the **current** edition. The firm portal always works on
    the open edition, so the robot refuses any other.
-3. **Regulator links are issued.** On the Regulators screen, a person adds each role's named contact
+3. **The `[Test]` firms are invited, and you have their links.** Claiming a firm's space needs
+   its invitation link. On the Firm team page, under "Firm invitations this edition", open
+   "Invite all unclaimed firms", put `[Test]` as the name prefix and an address pattern such as
+   `coordinator+{slug}@test.example`, and invite. Then use "Download open links (CSV)" and pass
+   the file with `--firm-invites`. The CSV is `firm,email,link,expires`; a file with one link
+   (`…/firm?invite=<token>`) per line also works — the robot looks up which firm each is for.
+   (For automated test runs only, an API started with `FIRM_CLAIM_WITHOUT_INVITE=true` lets
+   `[Test]` firms be claimed without a link. It is off by default and never set on the cluster.)
+4. **Regulator links are issued.** On the Regulators screen, a person adds each role's named contact
    and issues the link. Copy the four links into a text file, one per line. A full survey URL with
    `?resume=…`, the path `/journeys/resume/…` or a bare token all work, and labels such as
    `SEC A:` are ignored.
-4. **The robot machine's IP is allow-listed on the API.** Set `RATE_LIMIT_ALLOWLIST` (see below).
-5. **The workspace is built.** Run `pnpm install && pnpm build` in `app/`, because `@cis/survey` is
+5. **The robot machine's IP is allow-listed on the API.** Set `RATE_LIMIT_ALLOWLIST` (see below).
+6. **The workspace is built.** Run `pnpm install && pnpm build` in `app/`, because `@cis/survey` is
    used from its `dist/`.
 
 ### Rate limits and the allow-list
@@ -135,9 +145,10 @@ pnpm robot --dry-run
 
 # Round 1: about 30% of every target, spread over an hour
 pnpm robot --base-url https://dev-cis.idhub.ng/api --confirm-host dev-cis.idhub.ng \
+  --firm-invites ./firm-invitations.csv \
   --regulator-links ./regulator-links.txt --fraction 0.3 --duration 1h
 
-# Round 2: the rest, spread over two hours
+# Round 2: the rest, spread over two hours (firms are claimed by now; the links are not needed)
 pnpm robot --base-url https://dev-cis.idhub.ng/api --confirm-host dev-cis.idhub.ng \
   --regulator-links ./regulator-links.txt --duration 2h
 ```

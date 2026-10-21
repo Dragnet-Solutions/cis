@@ -57,6 +57,22 @@ ArgoCD's `Application` (see `../argocd`) applies this whole tree with `directory
   directly in this tree only matters as the un-pinned default on `dev`; the running cluster always
   tracks whatever SHA the pipeline last pinned on `k8s-release`.
 
+## ZeptoMail webhooks
+ZeptoMail reports bounces, opens and clicks back to the API; it never reports a delivery, so the
+app shows a sent email as "Accepted by ZeptoMail", not "Delivered". In the ZeptoMail Mail Agent,
+add a webhook:
+- **URL**: `https://dev-cis.idhub.ng/api/invitations/zeptomail-webhook`
+- **Events**: hard bounce, soft bounce, open, click
+- **Header**: `x-cis-webhook-secret` = the value of Key Vault secret
+  `cis-dev-ZEPTOMAIL-WEBHOOK-SECRET`
+
+The API reads it as `ZEPTOMAIL_WEBHOOK_SECRET` and refuses webhook calls without it. That
+variable is **not wired yet**: once the `cis-dev-ZEPTOMAIL-WEBHOOK-SECRET` Key Vault secret
+exists, add a `ZEPTOMAIL_WEBHOOK_SECRET` entry for it to `eso/external-secret.yaml` (same shape as
+`ZEPTOMAIL_API_TOKEN`). Until then Setup › Mail in the admin shows "Bounce and open reports: Not
+set up". The same page shows whether the API token is set at all (a red banner when notices are
+only being recorded) and can send a test email.
+
 ## Seeding (dev only)
 Migrations only create the schema. `api/seed-job.yaml` runs `seedReferenceData`
 (`apps/api/src/seed.ts`) on every sync — the 2026 edition, the Survey Register (9 instruments /

@@ -85,11 +85,14 @@ export async function runScoring(
 
   return withTransaction(pool, async (client) => {
     const c = client as unknown as Pool;
+    // The provisional placeholder is never the approved methodology, so its
+    // runs are always TEST_UNAPPROVED: never signed off, never in a report.
     const run = await createCalculationRun(c, {
       editionId: input.editionId,
       runType: 'scoring',
       methodologyVersion,
       datasetHash,
+      methodologyStatus: 'TEST_UNAPPROVED',
     });
     const results: CalculatedResult[] = [];
     for (const r of rows) {

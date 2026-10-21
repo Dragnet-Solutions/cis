@@ -14,7 +14,10 @@ import {
   listSections,
   listFindingsForReport,
   getLatestNationalReportForEdition,
+  getNationalReport,
+  getCriticalActionById,
 } from '@cis/db';
+import { loadRbacContext, MakerCheckerViolationError, type RbacContext } from '@cis/auth';
 import {
   seedReferenceData,
   NATIONAL_SECTIONS,
@@ -31,6 +34,8 @@ import {
   openDraft,
   requestNationalApproval,
   approveNational,
+  getPendingNationalApproval,
+  NATIONAL_REPORT_APPROVAL_ACTION,
   requestSignoff,
   approveSignoff,
   NationalReportError,
@@ -46,10 +51,13 @@ import {
   type SeededClaim,
 } from '../src';
 import { getTestPool, runMigrations, truncateAllTables, closeTestPool } from '../../db/tests/setup';
+import { approveMethodologyForTests } from '../../db/tests/methodology-approval';
 
 let pool: Pool;
 let editionId: string;
 let scoringRunId: string;
+let maker: RbacContext;
+let checker: RbacContext;
 
 beforeAll(async () => {
   pool = getTestPool();
@@ -57,7 +65,11 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   await truncateAllTables(pool);
-  editionId = (await seedReferenceData(pool)).editionId;
+  await approveMethodologyForTests(pool);
+  const seed = await seedReferenceData(pool);
+  editionId = seed.editionId;
+  maker = await loadRbacContext(pool, seed.makerUserId);
+  checker = await loadRbacContext(pool, seed.checkerUserId);
   const run = await createCalculationRun(pool, {
     editionId,
     runType: 'scoring',
@@ -240,7 +252,10 @@ describe('Adversary health gates approval', () => {
     const pre = await nationalApprovalPreconditions(pool, report.id);
     expect(pre.checkerHealthy).toBe(false);
     expect(pre.ok).toBe(false);
-    await expect(approveNational(pool, report.id, 'someone')).rejects.toBeInstanceOf(
+    await expect(
+      requestNationalApproval(pool, maker, report.id, { reason: 'Checked every section.' }),
+    ).rejects.toBeInstanceOf(NationalReportError);
+    await expect(approveNational(pool, checker, report.id)).rejects.toBeInstanceOf(
       NationalReportError,
     );
   });
@@ -285,7 +300,11 @@ describe('Approval preconditions — four, independently', () => {
     pre = await nationalApprovalPreconditions(pool, report.id);
     expect(pre.ok).toBe(true);
 
-    const approved = await approveNational(pool, report.id, 'someone-else');
+    await requestNationalApproval(pool, maker, report.id, {
+      reason: 'Checked all ten sections and the suppressed ones.',
+    });
+    await openDraft(pool, report.id, checker.userId);
+    const approved = await approveNational(pool, checker, report.id);
     expect(approved.status).toBe('approved');
   });
 
@@ -337,12 +356,123 @@ describe('Approval preconditions — four, independently', () => {
       disposition: 'ACCEPT_AND_EDIT',
       disposedBy: 'adaeze',
     });
-    await requestNationalApproval(pool, report.id, {
-      requestedBy: 'adaeze',
+    await requestNationalApproval(pool, maker, report.id, {
       reason: 'Checked all ten sections and the suppressed ones.',
     });
-    await expect(approveNational(pool, report.id, 'adaeze')).rejects.toMatchObject({
-      code: 'SELF_APPROVAL',
+    await openDraft(pool, report.id, maker.userId);
+    await expect(approveNational(pool, maker, report.id)).rejects.toBeInstanceOf(
+      MakerCheckerViolationError,
+    );
+    expect((await getNationalReport(pool, report.id))?.status).not.toBe('approved');
+  });
+});
+
+describe('Approval needs a pending request from a different person (go-live blocker)', () => {
+  async function readyReport() {
+    const { report } = await generateNationalReport(pool, {
+      editionId,
+      scoringRunId,
+      context: fullContext(),
+    });
+    await saveNationalDraft(pool, report.id, [
+      { ordinal: 1, text: 'The weakest performers are the smaller firms.', factIds: [] },
+    ]);
+    await runChecker(pool, report.id, []);
+    await runAdversaryHealth(pool, report.id, [
+      { sentence: { ordinal: 1, text: 'No basis.', factIds: [] }, facts: [] },
+    ]);
+    const findings = await listFindingsForReport(pool, report.id);
+    await disposeFinding(pool, {
+      findingId: findings[0]!.id,
+      disposition: 'SUPPRESS_CLAIM',
+      disposedBy: 'reviewer',
+    });
+    await openDraft(pool, report.id, checker.userId);
+    expect((await nationalApprovalPreconditions(pool, report.id)).ok).toBe(true);
+    return report;
+  }
+
+  it('refuses approval when nobody has requested it, even with every precondition met', async () => {
+    const report = await readyReport();
+    await expect(approveNational(pool, checker, report.id)).rejects.toMatchObject({
+      code: 'NO_PENDING_REQUEST',
+    });
+    expect((await getNationalReport(pool, report.id))?.status).not.toBe('approved');
+  });
+
+  it('records the request as a pending critical action and approves only through it', async () => {
+    const report = await readyReport();
+    const action = await requestNationalApproval(pool, maker, report.id, {
+      reason: 'Read every section and the suppressed claim.',
+    });
+    expect(action.actionType).toBe(NATIONAL_REPORT_APPROVAL_ACTION);
+    expect(action.status).toBe('pending');
+    expect(action.requestedBy).toBe(maker.userId);
+    expect(action.payload['reportId']).toBe(report.id);
+    expect((await getPendingNationalApproval(pool, report.id))?.id).toBe(action.id);
+
+    // A second request for the same draft is refused while one waits.
+    await expect(
+      requestNationalApproval(pool, checker, report.id, { reason: 'Asking again for this.' }),
+    ).rejects.toMatchObject({ code: 'CRITICAL_ACTION_STATE' });
+
+    const approved = await approveNational(pool, checker, report.id);
+    expect(approved.status).toBe('approved');
+    const decided = await getCriticalActionById(pool, action.id);
+    expect(decided?.status).toBe('approved');
+    expect(decided?.approvedBy).toBe(checker.userId);
+    // Nothing left pending; approving again is refused.
+    expect(await getPendingNationalApproval(pool, report.id)).toBeNull();
+    await expect(approveNational(pool, checker, report.id)).rejects.toBeInstanceOf(
+      NationalReportError,
+    );
+  });
+
+  it('the approver must have opened the draft themselves', async () => {
+    const report = await readyReport();
+    // The maker opened it and asks; the second person has not opened it.
+    const { report: other } = await generateNationalReport(pool, {
+      editionId,
+      scoringRunId,
+      context: fullContext(),
+    });
+    expect(other.id).not.toBe(report.id);
+    await saveNationalDraft(pool, other.id, [
+      { ordinal: 1, text: 'The weakest performers are the smaller firms.', factIds: [] },
+    ]);
+    await runChecker(pool, other.id, []);
+    await runAdversaryHealth(pool, other.id, [
+      { sentence: { ordinal: 1, text: 'No basis.', factIds: [] }, facts: [] },
+    ]);
+    const findings = await listFindingsForReport(pool, other.id);
+    await disposeFinding(pool, {
+      findingId: findings[0]!.id,
+      disposition: 'SUPPRESS_CLAIM',
+      disposedBy: 'reviewer',
+    });
+    await openDraft(pool, other.id, maker.userId);
+    await requestNationalApproval(pool, maker, other.id, {
+      reason: 'Read every section of this draft.',
+    });
+    await expect(approveNational(pool, checker, other.id)).rejects.toMatchObject({
+      code: 'NOT_OPENED',
+    });
+    await openDraft(pool, other.id, checker.userId);
+    expect((await approveNational(pool, checker, other.id)).status).toBe('approved');
+  });
+
+  it('a request for one report does not let another report be approved', async () => {
+    const report = await readyReport();
+    await requestNationalApproval(pool, maker, report.id, {
+      reason: 'Read every section and the suppressed claim.',
+    });
+    const { report: other } = await generateNationalReport(pool, {
+      editionId,
+      scoringRunId,
+      context: fullContext(),
+    });
+    await expect(approveNational(pool, checker, other.id)).rejects.toMatchObject({
+      code: 'NO_PENDING_REQUEST',
     });
   });
 });
@@ -467,13 +597,11 @@ describe('Reviewing the AI narrative as the national draft (D23)', () => {
 
     pre = await nationalApprovalPreconditions(pool, report.id);
     expect(pre.ok).toBe(true);
-    await requestNationalApproval(pool, report.id, {
-      requestedBy: 'maker@cis.example',
+    await requestNationalApproval(pool, maker, report.id, {
       reason: 'Read every section and decided the one finding.',
     });
-    expect((await approveNational(pool, report.id, 'checker@dragnet.example')).status).toBe(
-      'approved',
-    );
+    await openDraft(pool, report.id, checker.userId);
+    expect((await approveNational(pool, checker, report.id)).status).toBe('approved');
   });
 
   it('puts a sentence back when a reviewer rejects its finding with a reason', async () => {

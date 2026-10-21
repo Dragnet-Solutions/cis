@@ -43,8 +43,12 @@ import type {
 } from '@cis/shared-types';
 import { DomainError } from './errors';
 import { queueNotice, type EmailAction } from './email-content';
-import { invitationLink } from './firm-invitation-service';
-import { firmClaimLink, firmPortalLink, siteOrigin, textParagraphs } from './notice-links';
+import {
+  invitationLink,
+  ensureFirmInvitationRecord,
+  isFirmClaimed,
+} from './firm-invitation-service';
+import { firmPortalLink, siteOrigin, textParagraphs } from './notice-links';
 
 /**
  * UX-OPS-002 — Invitations. Writing to firms, regulators and consented
@@ -520,23 +524,62 @@ interface BatchTarget {
   link: string | null;
   /** Whether the firm already has a space (its link signs in, not claims). */
   claimed: boolean;
+  /** An unclaimed firm with no usable invitation: one is opened for the
+   *  recipient's address when the email is sent, and `link` becomes its link. */
+  needsInvitation?: boolean;
 }
 
-/** The firm's link: sign in if it has coordinators, else its open invitation's
- *  link, else the portal's claim view for the firm. */
-function firmLink(
+type FirmLinkPlan = Pick<BatchTarget, 'link' | 'claimed' | 'needsInvitation'>;
+
+/**
+ * The firm's link: sign in if it has a space; else its open invitation's link;
+ * else (needsInvitation) an invitation is opened for the recipient's address
+ * when the email goes out — setting up a space always needs an invitation.
+ * Not a firm in the register: the portal's sign-in.
+ */
+async function planFirmLink(
+  pool: Pool,
   portalUrl: string,
   organizationId: string | null,
   contact: FirmContactAddress | undefined,
-): { link: string; claimed: boolean } {
-  if (contact?.source === 'coordinator') return { link: firmPortalLink(portalUrl), claimed: true };
+): Promise<FirmLinkPlan> {
+  if (!organizationId) return { link: firmPortalLink(portalUrl), claimed: false };
+  if (contact?.source === 'coordinator' || (await isFirmClaimed(pool, organizationId))) {
+    return { link: firmPortalLink(portalUrl), claimed: true };
+  }
   if (contact?.invitationToken) {
     return { link: invitationLink(portalUrl, contact.invitationToken), claimed: false };
   }
-  return {
-    link: organizationId ? firmClaimLink(portalUrl, organizationId) : firmPortalLink(portalUrl),
-    claimed: false,
-  };
+  return { link: null, claimed: false, needsInvitation: true };
+}
+
+/**
+ * Opens (or reuses / refreshes) the firm's invitation for the target's address
+ * inside the sending transaction, WITHOUT its own email — its link goes in the
+ * email being sent. Returns the target with its link filled in.
+ */
+async function withInvitationLink(
+  db: Pool,
+  t: BatchTarget,
+  ctx: { portalUrl: string; editionId: string; actorId: string | null | undefined; via: string },
+): Promise<BatchTarget> {
+  const email = t.recipientEmail?.trim();
+  if (!t.needsInvitation || !t.organizationId || !email || !EMAIL_RE.test(email)) return t;
+  if (!ctx.actorId) {
+    throw new InvitationsError(
+      'Sending a firm its invitation needs the operator who sends it',
+      'ACTOR_REQUIRED',
+    );
+  }
+  const inv = await ensureFirmInvitationRecord(db, {
+    organizationId: t.organizationId,
+    editionId: ctx.editionId,
+    email,
+    contactName: t.recipientName,
+    actorId: ctx.actorId,
+    via: ctx.via,
+  });
+  return { ...t, link: invitationLink(ctx.portalUrl, inv.token), needsInvitation: false };
 }
 
 const PLACEHOLDER = (name: string) => new RegExp(`\\{\\{\\s*${name}\\s*\\}\\}`, 'g');
@@ -624,14 +667,18 @@ export async function sendBatch(
     ]);
     for (const r of rows) {
       const orgId = r.organizationId ?? null;
-      const { link, claimed } = firmLink(portalUrl, orgId, orgId ? contacts.get(orgId) : undefined);
+      const plan = await planFirmLink(
+        pool,
+        portalUrl,
+        orgId,
+        orgId ? contacts.get(orgId) : undefined,
+      );
       targets.push({
         recipientEmail: r.email,
         recipientName: null,
         firmName: r.firmName,
         organizationId: orgId,
-        link,
-        claimed,
+        ...plan,
       });
     }
     audienceLabel = 'Uploaded list';
@@ -676,14 +723,13 @@ export async function sendBatch(
     );
     for (const f of firms) {
       const contact = contacts.get(f.organizationId);
-      const { link, claimed } = firmLink(portalUrl, f.organizationId, contact);
+      const plan = await planFirmLink(pool, portalUrl, f.organizationId, contact);
       targets.push({
         recipientEmail: contact?.email ?? null,
         recipientName: contact?.name ?? null,
         firmName: f.firmName,
         organizationId: f.organizationId,
-        link,
-        claimed,
+        ...plan,
       });
     }
     audienceLabel =
@@ -712,8 +758,14 @@ export async function sendBatch(
     });
     let sent = 0;
     let notSent = 0;
-    for (const t of deliverable) {
-      const email = t.recipientEmail?.trim() || null;
+    for (const target of deliverable) {
+      const email = target.recipientEmail?.trim() || null;
+      const t = await withInvitationLink(c, target, {
+        portalUrl,
+        editionId: input.editionId,
+        actorId: input.sentBy,
+        via: INVITATION_BATCH_EMAIL_KIND,
+      });
       const recipient = await insertRecipient(c, {
         batchId: batch.id,
         editionId: input.editionId,
@@ -758,10 +810,12 @@ export async function getBatches(pool: Pool, editionId: string): Promise<Message
 }
 
 /**
- * A batch's delivery report. sent/delivered/bounced always populate. opened and
+ * A batch's delivery report. sent/accepted/bounced always populate — "accepted"
+ * means the mail service took the message and it has not bounced (ZeptoMail
+ * sends no delivered event, so nothing here claims inbox delivery). opened and
  * clicked populate only when the configured provider reported them — otherwise
  * `opensReported`/`clicksReported` are false and the surface renders those
- * columns as absent, never as zero. delivered-never-opened and opened-not-clicked
+ * columns as absent, never as zero. accepted-never-opened and opened-not-clicked
  * are kept distinct (different failure modes: channel/spam vs. content).
  */
 export async function getBatchReport(pool: Pool, batchId: string): Promise<BatchReport> {
@@ -773,13 +827,13 @@ export async function getBatchReport(pool: Pool, batchId: string): Promise<Batch
     batch,
     templateName: template?.name ?? '—',
     firms: agg.firms,
-    delivered: agg.delivered,
+    accepted: agg.accepted,
     bounced: agg.bounced,
     opened: agg.opened,
     clicked: agg.clicked,
     opensReported: agg.opensReported,
     clicksReported: agg.clicksReported,
-    deliveredNeverOpened: agg.deliveredNeverOpened,
+    acceptedNeverOpened: agg.acceptedNeverOpened,
     openedNotClicked: agg.openedNotClicked,
     notSent: agg.notSent,
     outbox: await batchOutboxCounts(pool, batchId, INVITATION_BATCH_EMAIL_KIND),
@@ -836,8 +890,9 @@ export function getInvitationRequests(
  * Resolve a queued request — either by issuing the firm's invitation to the
  * requester, or by marking it done without one. Both close the queue item.
  *
- * Issuing emails the requester their firm's link (claim view, open
- * invitation, or sign-in if the firm already has a space): rendered from the
+ * Issuing emails the requester their firm's link — sign-in if the firm
+ * already has a space, else its open invitation, else a new invitation opened
+ * for the requester's address (no separate invitation email): rendered from the
  * reissue template when one is given — recorded as a one-recipient batch,
  * kind 'invitation-batch' — else a plain notice of kind
  * 'invitation-request-issued' referencing the request.
@@ -865,11 +920,36 @@ export async function resolveInvitationRequest(
   const contact = req.organizationId
     ? (await resolveFirmContactAddresses(pool, [req.organizationId])).get(req.organizationId)
     : undefined;
-  const { link, claimed } = firmLink(portalUrl, req.organizationId, contact);
+  if (input.resolution === 'code_issued' && !req.organizationId) {
+    throw new InvitationsError(
+      'This request’s firm is not in the register, so there is no firm to invite. Add the firm to the register first, or mark the request done.',
+      'FIRM_NOT_MATCHED',
+    );
+  }
+  const plan = await planFirmLink(pool, portalUrl, req.organizationId, contact);
 
   return withTransaction(pool, async (client) => {
     const c = client as unknown as Pool;
     if (input.resolution === 'code_issued') {
+      // An unclaimed firm with no open invitation: open one for the requester.
+      const resolved = await withInvitationLink(
+        c,
+        {
+          recipientEmail: req.email,
+          recipientName: req.requesterName,
+          firmName: req.firmName,
+          organizationId: req.organizationId,
+          ...plan,
+        },
+        {
+          portalUrl,
+          editionId: req.editionId,
+          actorId: input.resolvedBy,
+          via: INVITATION_REQUEST_EMAIL_KIND,
+        },
+      );
+      const claimed = resolved.claimed;
+      const link = resolved.link ?? firmPortalLink(portalUrl);
       if (template) {
         const service = new ZeptomailSendingService();
         const batch = await createBatch(c, {

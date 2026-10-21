@@ -79,6 +79,10 @@ export {
   getSeats,
   assignSeat,
   SEAT_ASSIGNED_EMAIL_KIND,
+  FIRM_SPACE_CLAIMED_EMAIL_KIND,
+  TEST_FIRM_PREFIX,
+  firmClaimWithoutInviteAllowed,
+  InvitationRequiredError,
   replacementCost,
   describeSeatReplacement,
   confirmSeatReplacement,
@@ -113,8 +117,13 @@ export {
   sendInvitationAgain,
   revokeInvitation,
   listInvitations,
+  listInvitationsWithLinks,
+  pendingInvitationsCsv,
+  bulkInviteFirms,
   lookupInvitation,
   isFirmClaimed,
+  createFirmInvitationRecord,
+  ensureFirmInvitationRecord,
   invitationLink,
   invitationState,
   firmInviteTtlDays,
@@ -125,9 +134,13 @@ export type {
   InviteContext,
   InvitationLookup,
   FirmInvitationView,
+  FirmInvitationLinkView,
+  BulkInviteInput,
+  BulkInviteResult,
   FirmInvitationState,
   FirmInvitationDelivery,
   FirmInvitationErrorCode,
+  FirmInvitationRecordInput,
 } from './firm-invitation-service';
 
 export {
@@ -183,6 +196,8 @@ export {
   openDraft,
   requestNationalApproval,
   approveNational,
+  getPendingNationalApproval,
+  NATIONAL_REPORT_APPROVAL_ACTION,
   getSections,
   NationalReportError,
 } from './national-report-service';
@@ -250,8 +265,29 @@ export {
   ACCESS_RIGHT_META,
   APPROVER_FLOOR,
   PeopleAccessError,
-  OPERATOR_ACCESS_EMAIL_KIND,
+  PeopleAccessForbiddenError,
+  ACCESS_MANAGER_RIGHT,
+  ACCESS_MANAGER_PERMISSION,
+  assertCanManagePeople,
+  peopleViewerAccess,
+  sendPasswordLink,
 } from './people-access-service';
+export {
+  issuePasswordSetLink,
+  getPasswordSetLinkInfo,
+  consumePasswordSetLink,
+  hashPasswordSetToken,
+  PasswordSetError,
+  OPERATOR_SET_PASSWORD_EMAIL_KIND,
+  INVITE_LINK_TTL_MS,
+  RESET_LINK_TTL_MS,
+} from './password-set-service';
+export {
+  checkPasswordPolicy,
+  PASSWORD_MIN_LENGTH,
+  PASSWORD_MAX_LENGTH,
+  type PasswordProblem,
+} from './password-policy';
 
 // ── Phase 9: Invitations (UX-OPS-002) ────────────────────────────────────────
 export {
@@ -576,6 +612,12 @@ export {
   publicNarrative,
   type PublicNarrative,
 } from './report-publication-service';
+export {
+  freezeFirmReport,
+  freezeIndustryReport,
+  releasedFirmReportContent,
+  publishedIndustryReportContent,
+} from './report-snapshot-service';
 
 // ── Email content (every notice is queued through queueNotice) ──────────────
 export {

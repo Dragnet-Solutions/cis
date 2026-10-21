@@ -41,15 +41,19 @@ function mapRun(row: RawRunRow): CalculationRun {
   };
 }
 
-/** A run may back official output only when it was NOT produced under a
- *  TEST_UNAPPROVED methodology (build note §2). NULL status = legacy/normal run. */
+/** A run may back official output only when it was made under the approved
+ *  methodology (build note §2). The DB stamps every run when it is made —
+ *  TEST_UNAPPROVED until two people have approved the methodology — so a
+ *  status other than APPROVED is never official. */
 export function isRunOfficialUsable(run: CalculationRun): boolean {
-  return run.methodologyStatus !== 'TEST_UNAPPROVED';
+  return run.methodologyStatus === 'APPROVED';
 }
 
 /** Insert a run record. Runs are immutable — insert it already in its final
  *  state (the service computes everything, then records the run + results in one
- *  transaction). */
+ *  transaction). Left out, `methodologyStatus` is stamped by the DB: APPROVED
+ *  once the methodology is approved, otherwise TEST_UNAPPROVED; APPROVED
+ *  without an approval is refused. */
 export async function createCalculationRun(
   pool: Pool,
   data: {

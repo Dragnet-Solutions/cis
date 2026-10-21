@@ -66,6 +66,10 @@ export function NationalReportPage({
   const [counted, setCounted] = useState<Record<string, { counted: number; floor: number }>>({});
   const [regulatorsEngaged, setRegulatorsEngaged] = useState(0);
   const [approveReason, setApproveReason] = useState('');
+  // The approval request waiting for a second person, and whether the viewer
+  // opened the draft themselves — the approver must have.
+  const [pendingApproval, setPendingApproval] = useState<{ id: string } | null>(null);
+  const [openedByYou, setOpenedByYou] = useState(false);
   const [viewing, setViewing] = useState<false | 'industry' | 'institutional'>(false);
   const [review, setReview] = useState<NationalReview | null>(null);
   const [reviewState, setReviewState] = useState<'idle' | 'preparing' | 'failed'>('idle');
@@ -91,6 +95,8 @@ export function NationalReportPage({
       setSections(detail.sections);
       setPre(detail.preconditions);
       setNames(detail.operatorNames ?? {});
+      setPendingApproval(detail.pendingApproval ?? null);
+      setOpenedByYou(detail.openedByYou ?? false);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not load the national report');
     }
@@ -428,19 +434,24 @@ export function NationalReportPage({
       <section className="stage now">
         <div className="stagehead">
           <h2>The report itself</h2>
-          <span className={`pill ${report.draftOpened ? 'ok' : 'started'}`}>
-            {report.draftOpened ? 'Opened' : 'Not opened'}
+          <span className={`pill ${openedByYou ? 'ok' : 'started'}`}>
+            {openedByYou
+              ? 'Opened by you'
+              : report.draftOpened
+                ? 'Not yet opened by you'
+                : 'Not opened'}
           </span>
         </div>
         <div className="stagebody">
           <p>
             A consequential approval puts the thing being approved in front of the reviewer. Open
-            the draft before the approve control activates.
+            the draft before the approve control activates — the person approving must open it
+            themselves.
           </p>
           <div className="actions">
             <button
               type="button"
-              className={report.draftOpened ? 'btn-2' : 'btn'}
+              className={openedByYou ? 'btn-2' : 'btn'}
               disabled={busy}
               onClick={() =>
                 doRun(async () => {
@@ -449,7 +460,7 @@ export function NationalReportPage({
                 })
               }
             >
-              {report.draftOpened ? 'Open it again' : 'Open the draft report'}
+              {openedByYou ? 'Open it again' : 'Open the draft report'}
             </button>
           </div>
         </div>
@@ -479,7 +490,7 @@ export function NationalReportPage({
                 {r}
               </p>
             ))}
-          {report.requestedBy ? (
+          {pendingApproval && report.requestedBy ? (
             isViewer(report.requestedBy, viewer) ? (
               <p className="muted">
                 You requested approval on{' '}
@@ -487,16 +498,21 @@ export function NationalReportPage({
                 can never approve their own request.
               </p>
             ) : (
-              <div className="actions">
-                <button
-                  type="button"
-                  className="btn"
-                  disabled={busy || !pre?.ok}
-                  onClick={() => doRun(() => client.approveNationalReport(report.id))}
-                >
-                  Approve for release
-                </button>
-              </div>
+              <>
+                {!openedByYou && (
+                  <p className="muted">Open the draft report yourself before approving it.</p>
+                )}
+                <div className="actions">
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={busy || !pre?.ok || !openedByYou}
+                    onClick={() => doRun(() => client.approveNationalReport(report.id))}
+                  >
+                    Approve for release
+                  </button>
+                </div>
+              </>
             )
           ) : (
             <>

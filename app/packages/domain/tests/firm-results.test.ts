@@ -34,6 +34,7 @@ import {
   FirmResultsError,
 } from '../src';
 import { getTestPool, runMigrations, truncateAllTables, closeTestPool } from '../../db/tests/setup';
+import { approveMethodologyForTests } from '../../db/tests/methodology-approval';
 
 let pool: Pool;
 let editionId: string;
@@ -44,6 +45,7 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   await truncateAllTables(pool);
+  await approveMethodologyForTests(pool);
   editionId = (await seedReferenceData(pool)).editionId;
 });
 afterAll(async () => {

@@ -19,6 +19,7 @@ import {
   getCriticalActionById,
   getPendingCriticalActionForEdition,
   getOrganizationById,
+  insertReportSnapshot,
   withTransaction,
 } from '@cis/db';
 import {
@@ -39,6 +40,7 @@ import {
 import type { ActorContext } from './edition-service';
 import { eligibleFirmIds } from './eligibility-service';
 import { assertRunOfficialUsable } from './candidate-scoring-service';
+import { firmReportSnapshotData } from './report-snapshot-service';
 
 /**
  * Firm reports — generation, reconciliation, and ATOMIC-PER-REPORT release of
@@ -529,7 +531,20 @@ export async function releaseFirmReports(
     const unprepared = prep && 'failed' in prep ? prep.failed : null;
     const ready = isReady(r) && unprepared === null;
     if (ready) {
-      const updated = await setReleaseState(pool, r.id, 'released');
+      // Released and frozen together: the report's full content, from its own
+      // scoring run, is stored as it leaves, and every later read of it is
+      // served from that snapshot — a later sign-off never changes it.
+      const frozen = await firmReportSnapshotData(
+        pool,
+        { ...r, releaseState: 'released', heldReason: null },
+        options?.releasedBy ?? 'system:release',
+      );
+      const updated = await withTransaction(pool, async (client) => {
+        const c = client as unknown as Pool;
+        const released = await setReleaseState(c, r.id, 'released');
+        await insertReportSnapshot(c, frozen);
+        return released;
+      });
       if (prep && 'narrativeId' in prep && options) {
         await insertReportPublication(pool, {
           editionId,

@@ -13,7 +13,7 @@ onlyBuiltDependencies:
 # advisory each one closes is in the trailing comment.
 overrides:
   glob: ^11.1.0
-  vite: ^6.4.3
+  vite: ^6.4.5 # GHSA-587h-7wmj-h5pm (launch-editor) and two moderate vite advisories
   esbuild: ^0.25.0
   vitest: ^4.1.11 # GHSA-82fw-gwwq-j7x9, and the tinypool RCEs it no longer pulls in
   fastify: ^5.12.5 # GHSA-667r-xxjv-c9mm, -p68q-wchp-6fh7, -hwr6-493r-vm6h, -9q9j-q6p8-xq58, -4mh8-r7rc-xpvc …

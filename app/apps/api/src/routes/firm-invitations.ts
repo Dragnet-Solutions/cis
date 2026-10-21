@@ -5,7 +5,9 @@ import {
   inviteFirm,
   sendInvitationAgain,
   revokeInvitation,
-  listInvitations,
+  listInvitationsWithLinks,
+  pendingInvitationsCsv,
+  bulkInviteFirms,
   lookupInvitation,
   isFirmClaimed,
   FirmInvitationError,
@@ -73,9 +75,14 @@ export const firmInvitationRoutes: FastifyPluginAsyncZod = async (app) => {
     async (request, reply) => {
       const pool = getPool();
       const rbac = await loadRbacContext(pool, request.session.sub);
-      const invitations = await listInvitations(pool, rbac, {
-        organizationId: request.params.orgId,
-      });
+      // Operator view: each usable invitation carries its link, so an operator
+      // with "access:send" can copy it (as with regulator links).
+      const invitations = await listInvitationsWithLinks(
+        pool,
+        rbac,
+        { organizationId: request.params.orgId },
+        publicOrigin(),
+      );
       const claimed = await isFirmClaimed(pool, request.params.orgId);
       return reply.send({ invitations, claimed });
     },
@@ -90,8 +97,72 @@ export const firmInvitationRoutes: FastifyPluginAsyncZod = async (app) => {
     async (request, reply) => {
       const pool = getPool();
       const rbac = await loadRbacContext(pool, request.session.sub);
-      const invitations = await listInvitations(pool, rbac, { editionId: request.params.id });
+      const invitations = await listInvitationsWithLinks(
+        pool,
+        rbac,
+        { editionId: request.params.id },
+        publicOrigin(),
+      );
       return reply.send({ invitations });
+    },
+  );
+
+  // The edition's usable invitations as CSV (firm,email,link,expires) — for a
+  // test run (the respondent robot's --firm-invites) or for passing links on
+  // by hand.
+  app.get(
+    '/editions/:id/firm-invitations.csv',
+    {
+      preHandler: [app.authenticate],
+      schema: { params: z.object({ id: z.string().uuid() }) },
+    },
+    async (request, reply) => {
+      const pool = getPool();
+      const rbac = await loadRbacContext(pool, request.session.sub);
+      const csv = await pendingInvitationsCsv(pool, rbac, request.params.id, publicOrigin());
+      void reply.header('Content-Type', 'text/csv; charset=utf-8');
+      void reply.header('Content-Disposition', 'attachment; filename="firm-invitations.csv"');
+      void reply.header('Cache-Control', 'no-store');
+      return reply.send(csv);
+    },
+  );
+
+  // Invite many firms at once: the listed firms, or every unclaimed
+  // participating firm whose name starts with namePrefix, at an address
+  // pattern with {slug} (e.g. coordinator+{slug}@test.example).
+  app.post(
+    '/editions/:id/firm-invitations/bulk',
+    {
+      preHandler: [app.authenticate],
+      schema: {
+        params: z.object({ id: z.string().uuid() }),
+        body: z.object({
+          organizationIds: z.array(z.string().uuid()).max(1000).optional(),
+          namePrefix: z.string().max(200).optional(),
+          emailTemplate: z.string().max(320).optional(),
+        }),
+      },
+    },
+    async (request, reply) => {
+      const pool = getPool();
+      const rbac = await loadRbacContext(pool, request.session.sub);
+      const result = await bulkInviteFirms(
+        pool,
+        rbac,
+        {
+          editionId: request.params.id,
+          ...(request.body.organizationIds
+            ? { organizationIds: request.body.organizationIds }
+            : {}),
+          ...(request.body.namePrefix !== undefined ? { namePrefix: request.body.namePrefix } : {}),
+          ...(request.body.emailTemplate !== undefined
+            ? { emailTemplate: request.body.emailTemplate }
+            : {}),
+        },
+        { ...actor(request), portalUrl: publicOrigin() },
+      );
+      if (result.invited > 0) kickMailDispatcher();
+      return reply.send(result);
     },
   );
 

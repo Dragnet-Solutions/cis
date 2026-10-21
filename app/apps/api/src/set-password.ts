@@ -11,8 +11,7 @@ import { createInterface } from 'node:readline';
 import { Writable } from 'node:stream';
 import { getPool, initializePool, closePool } from '@cis/db';
 import { hashPassword } from '@cis/auth';
-
-const MIN_LENGTH = 12;
+import { checkPasswordPolicy } from '@cis/domain';
 
 async function readPassword(prompt: string): Promise<string> {
   if (!process.stdin.isTTY) {
@@ -47,9 +46,9 @@ async function main(): Promise<void> {
   if (found.rowCount === 0) throw new Error(`No user with email ${email} in this database.`);
 
   const password = await readPassword(`New password for ${email}: `);
-  if (password.length < MIN_LENGTH) {
-    throw new Error(`The password must be at least ${MIN_LENGTH} characters.`);
-  }
+  // The same policy as the emailed set-password link.
+  const problem = checkPasswordPolicy(password, email);
+  if (problem) throw new Error(problem.message);
   if (process.stdin.isTTY && (await readPassword('Again: ')) !== password) {
     throw new Error('The two entries did not match — nothing was changed.');
   }

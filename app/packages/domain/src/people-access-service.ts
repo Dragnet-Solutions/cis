@@ -12,17 +12,15 @@ import {
   revokePermissionFromUser,
   emailInUse,
   countActiveUsersWithPermission,
+  usersWhoSetPasswordByLink,
   withTransaction,
 } from '@cis/db';
-import { hashPassword } from '@cis/auth';
+import { randomBytes } from 'node:crypto';
+import { hashPassword, loadRbacContext, requirePermission, hasPermission } from '@cis/auth';
 import { writeAudit } from '@cis/audit';
 import type { PersonAccess, AccessRightKey, AccessOrg } from '@cis/shared-types';
 import { DomainError } from './errors';
-import { queueNotice } from './email-content';
-import { siteOrigin } from './notice-links';
-
-/** Outbox kind of the "you have been given access" email; ref_id is the user. */
-export const OPERATOR_ACCESS_EMAIL_KIND = 'operator-access-granted';
+import { issuePasswordSetLink } from './password-set-service';
 
 /**
  * UX-OPS-006 — People & Access. Manages WHO holds the seven access rights,
@@ -46,6 +44,23 @@ export class PeopleAccessError extends DomainError {
   }
 }
 
+/** A change to someone's access the actor is not allowed to make (HTTP 403). */
+export class PeopleAccessForbiddenError extends DomainError {
+  constructor(message: string, code: 'SELF_CHANGE' | 'GRANT_NOT_HELD') {
+    super(message, code);
+  }
+}
+
+/**
+ * The right that gates managing people (adding, changing rights, removing,
+ * sending password links). There is no dedicated "manage access" right among
+ * the seven, so it is `setup` ("Change the setup" — `edition:manage`), the
+ * administrative right. On top of it: nobody may change their own rights, and
+ * nobody may grant a right they do not hold themselves.
+ */
+export const ACCESS_MANAGER_RIGHT: AccessRightKey = 'setup';
+export const ACCESS_MANAGER_PERMISSION = 'edition:manage';
+
 /** The right whose floor guards the whole platform. */
 const APPROVE_RIGHT: AccessRightKey = 'approve';
 export const APPROVER_FLOOR = 2;
@@ -56,6 +71,16 @@ const CODE_BY_KEY = new Map<AccessRightKey, string>(
 const KEY_BY_CODE = new Map<string, AccessRightKey>(
   ACCESS_RIGHTS.map((r) => [r.code, r.key as AccessRightKey]),
 );
+
+const RIGHT_LABEL: Record<AccessRightKey, string> = {
+  view: 'See the study',
+  send: 'Write to firms, regulators and participants',
+  regs: 'Manage regulator engagement',
+  setup: 'Change the setup',
+  request: 'Request a critical action',
+  approve: 'Approve a critical action',
+  dragnet: 'See the Dragnet analysis',
+};
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const EDITABLE_ORGS: AccessOrg[] = ['CIS', 'Dragnet'];
@@ -84,8 +109,15 @@ function rightsFromCodes(codes: string[]): Record<AccessRightKey, boolean> {
 }
 
 function toPerson(
-  user: { id: string; displayName: string; email: string; organization: string | null },
+  user: {
+    id: string;
+    displayName: string;
+    email: string;
+    organization: string | null;
+    lastLoginAt: Date | null;
+  },
   codes: string[],
+  setByLink = false,
 ): PersonAccess {
   const rights = rightsFromCodes(codes);
   return {
@@ -96,6 +128,9 @@ function toPerson(
     rights,
     canRequest: rights.request,
     canApprove: rights.approve,
+    // Never signed in and never used a set-password link: still waiting to
+    // choose a password (they get an invitation link, not a reset link).
+    awaitingPassword: user.lastLoginAt === null && !setByLink,
   };
 }
 
@@ -103,6 +138,10 @@ function toPerson(
  *  distinct "nobody has access" state — a valid, if severe, outcome. */
 export async function listPeople(pool: Pool): Promise<PersonAccess[]> {
   const users = await listActiveUsers(pool);
+  const setByLink = await usersWhoSetPasswordByLink(
+    pool,
+    users.map((u) => u.id),
+  );
   const people: PersonAccess[] = [];
   for (const u of users) {
     const perms = await getUserPermissions(pool, u.id);
@@ -110,10 +149,71 @@ export async function listPeople(pool: Pool): Promise<PersonAccess[]> {
       toPerson(
         u,
         perms.map((p) => p.code),
+        setByLink.has(u.id),
       ),
     );
   }
   return people;
+}
+
+/**
+ * Refuse unless the actor may manage people: an active person holding the
+ * access-manager right. Identity is always the signed-in session's.
+ */
+export async function assertCanManagePeople(pool: Pool, actorId: string): Promise<void> {
+  const actor = await getUserById(pool, actorId);
+  const ctx = await loadRbacContext(pool, actorId);
+  if (!actor || !actor.isActive) ctx.permissions = [];
+  requirePermission(ctx, ACCESS_MANAGER_PERMISSION);
+}
+
+/** What the signed-in operator may do on People & access (for the surface). */
+export async function peopleViewerAccess(
+  pool: Pool,
+  actorId: string,
+): Promise<{ canManage: boolean; grantable: AccessRightKey[] }> {
+  const actor = await getUserById(pool, actorId);
+  const ctx = await loadRbacContext(pool, actorId);
+  const canManage = !!actor?.isActive && hasPermission(ctx, ACCESS_MANAGER_PERMISSION);
+  const held = rightsFromCodes(ctx.permissions.map((p) => p.code));
+  return {
+    canManage,
+    grantable: canManage
+      ? (Object.keys(held) as AccessRightKey[]).filter((k) => k !== 'view' && held[k])
+      : [],
+  };
+}
+
+/** Nobody may grant a right they do not hold themselves. */
+async function assertGrantsHeld(
+  pool: Pool,
+  actorId: string,
+  before: Record<AccessRightKey, boolean>,
+  after: Record<AccessRightKey, boolean>,
+): Promise<void> {
+  const held = rightsFromCodes((await getUserPermissions(pool, actorId)).map((p) => p.code));
+  for (const r of ACCESS_RIGHTS) {
+    const key = r.key as AccessRightKey;
+    if (key === 'view') continue;
+    if (after[key] && !before[key] && !held[key]) {
+      throw new PeopleAccessForbiddenError(
+        `You cannot give the “${RIGHT_LABEL[key]}” right — you do not hold it yourself.`,
+        'GRANT_NOT_HELD',
+      );
+    }
+  }
+}
+
+/** Inside a change's transaction: at least one active person must still be
+ *  able to manage access, or the change is rolled back. */
+async function assertManagerRemains(c: Pool): Promise<void> {
+  if ((await countActiveUsersWithPermission(c, ACCESS_MANAGER_PERMISSION)) < 1) {
+    throw new PeopleAccessError(
+      'Nobody would be left who can manage access. Give somebody else the ' +
+        `“${RIGHT_LABEL[ACCESS_MANAGER_RIGHT]}” right first.`,
+      'LAST_MANAGER',
+    );
+  }
 }
 
 export async function countApprovers(pool: Pool): Promise<number> {
@@ -185,19 +285,24 @@ async function applyRights(
 }
 
 /**
- * Add a person. Auth (how they prove who they are) is out of scope for this
- * surface — the account is created with an unusable random password hash and
- * cannot sign in until credentials are established through a separate flow.
+ * Add a person. The account is created with an unusable random password hash
+ * and the person is emailed a single-use link to choose their own password
+ * (72 hours). Nobody is ever emailed a password.
+ *
+ * Only someone who may manage people can add one, and only with rights the
+ * adder holds themselves.
  */
 export async function addPerson(
   pool: Pool,
   input: RightsInput & { actorId: string },
   opts: { portalUrl?: string } = {},
 ): Promise<PersonAccess> {
+  await assertCanManagePeople(pool, input.actorId);
   const rights = await validate(pool, input, null);
-  const placeholder = await hashPassword(
-    `unusable-${input.email}-${input.rights ? 'r' : 'x'}-placeholder-pending-credentials`,
-  );
+  await assertGrantsHeld(pool, input.actorId, emptyRights(), rights);
+  // Random and discarded: nobody knows it, so the account cannot sign in until
+  // its owner sets a password with the emailed link.
+  const placeholder = await hashPassword(randomBytes(32).toString('base64url'));
   return withTransaction(pool, async (client) => {
     const c = client as unknown as Pool;
     const user = await createUser(c, {
@@ -214,25 +319,12 @@ export async function addPerson(
       entityId: user.id,
       newValue: { email: user.email, organization: input.organization, rights },
     });
-    // Tell them they have access — no credentials: the account cannot sign in
-    // until an administrator sets its password.
-    if (opts.portalUrl) {
-      await queueNotice(c, {
-        kind: OPERATOR_ACCESS_EMAIL_KIND,
-        refId: user.id,
-        to: user.email,
-        toName: user.displayName,
-        subject: 'You have been given access to the CIS × Dragnet study operations site',
-        heading: 'You have been given access',
-        paragraphs: [
-          `Dear ${user.displayName},`,
-          'You have been given access to the CIS × Dragnet benchmark study operations site.',
-          'You cannot sign in yet: an administrator will set your password and tell you separately. You will then sign in with this email address at the link below.',
-        ],
-        action: { label: 'Go to the sign-in page', url: `${siteOrigin(opts.portalUrl)}/` },
-        footer: 'If you were not expecting this, reply to this email.',
-      });
-    }
+    // Tell them they have access, with a link to choose their own password.
+    await issuePasswordSetLink(c, user.id, {
+      purpose: 'invite',
+      createdBy: input.actorId,
+      portalUrl: opts.portalUrl ?? null,
+    });
     const perms = await getUserPermissions(c, user.id);
     return toPerson(
       user,
@@ -251,13 +343,20 @@ export async function updatePersonRights(
   pool: Pool,
   input: RightsInput & { userId: string; actorId: string },
 ): Promise<PersonAccess> {
+  await assertCanManagePeople(pool, input.actorId);
+  if (input.userId === input.actorId) {
+    throw new PeopleAccessForbiddenError('You cannot change your own access', 'SELF_CHANGE');
+  }
   const existing = await getUserById(pool, input.userId);
-  if (!existing) throw new PeopleAccessError('Person not found', 'NOT_FOUND');
+  if (!existing || !existing.isActive) {
+    throw new PeopleAccessError('Person not found', 'NOT_FOUND');
+  }
 
   const currentCodes = (await getUserPermissions(pool, input.userId)).map((p) => p.code);
   const currentlyApproves = currentCodes.includes(CODE_BY_KEY.get(APPROVE_RIGHT) as string);
 
   const rights = await validate(pool, input, input.userId);
+  await assertGrantsHeld(pool, input.actorId, rightsFromCodes(currentCodes), rights);
 
   // Two-approver floor: removing the approve right from one of the last two
   // approvers is refused, not warned — it would make every critical action
@@ -281,6 +380,7 @@ export async function updatePersonRights(
       organization: input.organization,
     });
     await applyRights(c, input.userId, rights, input.actorId);
+    await assertManagerRemains(c);
     await writeAudit(c, {
       actorId: input.actorId,
       actionType: 'access.person.rights_changed',
@@ -291,9 +391,11 @@ export async function updatePersonRights(
     });
     const perms = await getUserPermissions(c, input.userId);
     const updated = await getUserById(c, input.userId);
+    const setByLink = await usersWhoSetPasswordByLink(c, [input.userId]);
     return toPerson(
       updated as NonNullable<typeof updated>,
       perms.map((p) => p.code),
+      setByLink.has(input.userId),
     );
   });
 }
@@ -310,6 +412,7 @@ export async function removePerson(
   if (input.userId === input.actorId) {
     throw new PeopleAccessError('You cannot remove your own access', 'SELF_REMOVAL');
   }
+  await assertCanManagePeople(pool, input.actorId);
   const user = await getUserById(pool, input.userId);
   if (!user) throw new PeopleAccessError('Person not found', 'NOT_FOUND');
 
@@ -329,6 +432,7 @@ export async function removePerson(
   await withTransaction(pool, async (client) => {
     const c = client as unknown as Pool;
     await deactivateUser(c, input.userId);
+    await assertManagerRemains(c);
     await writeAudit(c, {
       actorId: input.actorId,
       actionType: 'access.person.removed',
@@ -382,3 +486,29 @@ export const ACCESS_RIGHT_META = ACCESS_RIGHTS.map((r) => ({
   key: r.key as AccessRightKey,
   dragnetOnly: r.key === 'dragnet',
 }));
+
+/**
+ * Email a person a fresh set-password link: an invitation link if they have
+ * not chosen a password yet, otherwise a reset link. Requires the same right as
+ * adding a person. Returns which kind was sent and when it expires — never the
+ * link itself.
+ */
+export async function sendPasswordLink(
+  pool: Pool,
+  input: { userId: string; actorId: string },
+  opts: { portalUrl?: string } = {},
+): Promise<{ purpose: 'invite' | 'reset'; expiresAt: Date }> {
+  await assertCanManagePeople(pool, input.actorId);
+  const user = await getUserById(pool, input.userId);
+  if (!user || !user.isActive) throw new PeopleAccessError('Person not found', 'NOT_FOUND');
+  const setByLink = await usersWhoSetPasswordByLink(pool, [user.id]);
+  const purpose = user.lastLoginAt === null && !setByLink.has(user.id) ? 'invite' : 'reset';
+  const { expiresAt } = await withTransaction(pool, async (client) =>
+    issuePasswordSetLink(client as unknown as Pool, user.id, {
+      purpose,
+      createdBy: input.actorId,
+      portalUrl: opts.portalUrl ?? null,
+    }),
+  );
+  return { purpose, expiresAt };
+}
