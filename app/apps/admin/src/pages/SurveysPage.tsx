@@ -24,10 +24,14 @@ export function SurveysPage({
   client,
   editionId,
   viewer,
+  restricted = false,
 }: {
   client: AdminClient;
   editionId: string;
   viewer: AuthUser;
+  /** Collection is running (D-01): show only the questionnaires not yet
+   *  frozen for this edition, and the freeze request for them. */
+  restricted?: boolean;
 }): JSX.Element {
   const [data, setData] = useState<InstrumentsResponse | null>(null);
   const [view, setView] = useState<View>('main');
@@ -70,7 +74,7 @@ export function SurveysPage({
 
   // After the first freeze, the only thing left to freeze is instruments
   // registered since (e.g. I-LCFE joining an open edition).
-  const copy = data.frozen ? ADD_COPY : FREEZE_COPY;
+  const copy = data.frozen || restricted ? ADD_COPY : FREEZE_COPY;
 
   if (view === 'request') {
     return (
@@ -112,6 +116,18 @@ export function SurveysPage({
 
   const { frozen, instruments, drgOps, pendingFreeze } = data;
   const pendingNew = frozen ? (data.pendingInstruments ?? []) : [];
+
+  if (restricted) {
+    return (
+      <RestrictedSurveys
+        pending={instruments.filter((i) => !i.frozen)}
+        pendingFreeze={pendingFreeze}
+        onRequest={() => setView('request')}
+        onReview={() => setView('review')}
+        error={error}
+      />
+    );
+  }
 
   return (
     <main>
@@ -272,6 +288,115 @@ export function SurveysPage({
           )}
         </div>
       </section>
+
+      {error && <div className="err">{error}</div>}
+    </main>
+  );
+}
+
+/**
+ * Surveys while the edition is collecting (D-01). Everything already frozen is
+ * out of reach; the only action is freezing questionnaires that joined the
+ * register after the edition was frozen — one maker-checker request covers all
+ * of them — so their survey links can be issued.
+ */
+function RestrictedSurveys({
+  pending,
+  pendingFreeze,
+  onRequest,
+  onReview,
+  error,
+}: {
+  pending: InstrumentsResponse['instruments'];
+  pendingFreeze: InstrumentsResponse['pendingFreeze'];
+  onRequest: () => void;
+  onReview: () => void;
+  error: string | null;
+}): JSX.Element {
+  return (
+    <main>
+      <p className="eyebrow">Collecting</p>
+      <h1 tabIndex={-1}>Surveys</h1>
+      <p className="lede">
+        While collection is running, the questionnaires already frozen cannot be changed. Only a
+        questionnaire added since the edition was frozen can be frozen here, so its survey link can
+        be issued.
+      </p>
+
+      {pending.length === 0 ? (
+        <section className="stage">
+          <div className="stagehead">
+            <h2>All questionnaires are frozen for this edition</h2>
+            <Pill kind="ok">Frozen</Pill>
+          </div>
+          <div className="stagebody">
+            <p>Every survey link can be issued. There is nothing to do here.</p>
+          </div>
+        </section>
+      ) : (
+        <section className="stage now">
+          <div className="stagehead">
+            <h2>
+              {pending.length} questionnaire{pending.length === 1 ? '' : 's'} not yet frozen for
+              this edition
+            </h2>
+            <Pill kind="neutral">Not frozen</Pill>
+          </div>
+          <div className="stagebody">
+            <div className="tablewrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Questionnaire</th>
+                    <th scope="col">Questions</th>
+                    <th scope="col">State</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pending.map((inst) => (
+                    <tr key={inst.code}>
+                      <td>
+                        <strong>
+                          {inst.code} · {inst.respondent ?? inst.name}
+                        </strong>
+                      </td>
+                      <td>{inst.questionCount ?? '—'}</td>
+                      <td>
+                        <span className="tag soft">Not frozen</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p>
+              No survey link can be issued for {pending.length === 1 ? 'it' : 'these'} until{' '}
+              {pending.length === 1 ? 'it is' : 'they are'} frozen. One request covers all of them,
+              and a second person approves it. Freezing is irreversible for this edition.
+            </p>
+            {pendingFreeze ? (
+              <div className="warnbox">
+                <b>Awaiting a second person</b>
+                <p style={{ margin: '6px 0 0' }}>
+                  Requested by {pendingFreeze.requestedBy.displayName} ·{' '}
+                  {new Date(pendingFreeze.requestedAt).toLocaleString()}
+                </p>
+                <div className="actions">
+                  <button type="button" className="btn" onClick={onReview}>
+                    Review the request
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="actions">
+                <button type="button" className="btn" onClick={onRequest}>
+                  Request freeze
+                </button>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       {error && <div className="err">{error}</div>}
     </main>

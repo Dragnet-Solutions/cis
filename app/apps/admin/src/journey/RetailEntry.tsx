@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { journeyApi, type ConsentContent, type ParticipatingFirm } from './journeyClient';
 import { ApiError } from '../api/types';
+import { useEmailField } from '../lib/useEmailField';
 
 type Channel = 'email' | 'text' | 'both' | 'none';
 
@@ -35,6 +36,8 @@ export function RetailEntry({
   const [channel, setChannel] = useState<Channel>('none');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
+  const wantsEmail = channel === 'email' || channel === 'both';
+  const emailField = useEmailField('retail-entry-email', email);
   // Institutional investors (S5a/S5b) are counted by distinct institution, so
   // the institution's name is needed — for grouping only, never published.
   const isInstitutional = instrumentCode === 'S5a' || instrumentCode === 'S5b';
@@ -84,6 +87,10 @@ export function RetailEntry({
       setError('Choose at least one firm to tell us about.');
       return;
     }
+    if (wantsEmail && !emailField.valid) {
+      emailField.reveal();
+      return;
+    }
     setBusy(true);
     try {
       const { respondentId } = await journeyApi.start({
@@ -95,7 +102,7 @@ export function RetailEntry({
       await journeyApi.contact(respondentId, {
         consentAccepted: accepted,
         channel,
-        email: channel === 'email' || channel === 'both' ? email : null,
+        email: wantsEmail ? email.trim() : null,
         phone: channel === 'text' || channel === 'both' ? phone : null,
       });
       await journeyApi.ratedFirms(respondentId, picked);
@@ -150,15 +157,17 @@ export function RetailEntry({
                 </button>
               ))}
             </div>
-            {(channel === 'email' || channel === 'both') && (
+            {wantsEmail && (
               <div className="field">
                 <label htmlFor="retail-entry-email">Email</label>
                 <input
-                  id="retail-entry-email"
+                  {...emailField.inputProps}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   type="email"
+                  autoComplete="email"
                 />
+                {emailField.error}
               </div>
             )}
             {(channel === 'text' || channel === 'both') && (
@@ -227,7 +236,7 @@ export function RetailEntry({
           type="button"
           className="btn"
           onClick={() => void begin()}
-          disabled={!accepted || busy}
+          disabled={!accepted || busy || (wantsEmail && !emailField.valid)}
         >
           {busy ? 'Starting…' : 'Start the survey'}
         </button>

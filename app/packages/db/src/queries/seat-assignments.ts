@@ -170,6 +170,58 @@ export async function getSeatByLinkToken(
   return row ? mapSeat(row) : null;
 }
 
+/** The seat whose survey this respondent is answering, if any (a firm seat's
+ *  respondent is recorded on the seat when it is started). */
+export async function getSeatByRespondentId(
+  pool: Pool,
+  respondentId: string,
+): Promise<SeatAssignment | null> {
+  const result = await query<RawSeatRow>(
+    pool,
+    `SELECT * FROM seat_assignments WHERE respondent_id = $1`,
+    [respondentId],
+  );
+  const row = result.rows[0];
+  return row ? mapSeat(row) : null;
+}
+
+/**
+ * How far a firm's seat surveys have got for an edition: a seat counts as
+ * complete once its state says so or its respondent has submitted (the
+ * submission and the seat's own 'complete' mark are separate writes). Counts
+ * and role labels only, never anything about an answer.
+ */
+export async function getSeatProgress(
+  pool: Pool,
+  editionId: string,
+  organizationId: string,
+): Promise<{
+  complete: number;
+  total: number;
+  outstanding: string[];
+  /** The same, with each seat's code, e.g. { seatCode: 'S2', roleLabel: 'Compliance' }. */
+  outstandingSeats: Array<{ seatCode: string; roleLabel: string }>;
+}> {
+  const result = await query<{ seat_code: string; role_label: string; done: boolean }>(
+    pool,
+    `SELECT s.seat_code, s.role_label,
+            (s.state = 'complete' OR r.submitted_at IS NOT NULL) AS done
+       FROM seat_assignments s
+       LEFT JOIN respondents r ON r.id = s.respondent_id
+      WHERE s.edition_id = $1 AND s.organization_id = $2
+      ORDER BY s.seat_code`,
+    [editionId, organizationId],
+  );
+  return {
+    complete: result.rows.filter((r) => r.done).length,
+    total: result.rows.length,
+    outstanding: result.rows.filter((r) => !r.done).map((r) => r.role_label),
+    outstandingSeats: result.rows
+      .filter((r) => !r.done)
+      .map((r) => ({ seatCode: r.seat_code, roleLabel: r.role_label })),
+  };
+}
+
 /** Move a seat's state (invited→started→complete, or flag stalled). */
 export async function setSeatState(
   pool: Pool,

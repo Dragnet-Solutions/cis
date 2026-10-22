@@ -1,5 +1,6 @@
 import { FastifyPluginAsync } from 'fastify';
 import { getPool } from '@cis/db';
+import { resolveBuildInfo } from '../build-info';
 
 /**
  * Container probes. Both are public, unauthenticated and exempt from the
@@ -10,6 +11,9 @@ import { getPool } from '@cis/db';
  *                 database, so a database outage doesn't restart every pod.
  *   GET /ready  — readiness: the database answers. A failing pod is taken out
  *                 of the Service until it recovers.
+ *   GET /version — which build is running: commit, image tag and build time
+ *                 (D-06). Public and secret-free; resolved once when the server
+ *                 is built. Behind the admin nginx it is /api/version.
  */
 export const healthRoutes: FastifyPluginAsync = async (app) => {
   const probe = { logLevel: 'warn' as const, config: { rateLimit: false as const } };
@@ -26,5 +30,10 @@ export const healthRoutes: FastifyPluginAsync = async (app) => {
       request.log.warn({ err }, 'readiness check failed: database unreachable');
       return reply.status(503).send({ status: 'unavailable' });
     }
+  });
+
+  const buildInfo = resolveBuildInfo();
+  app.get('/version', { logLevel: 'warn' }, async (_request, reply) => {
+    return reply.header('Cache-Control', 'no-store').send(buildInfo);
   });
 };

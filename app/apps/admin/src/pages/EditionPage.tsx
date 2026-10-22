@@ -87,6 +87,7 @@ export function EditionPage({
   editionId,
   viewer,
   onLoaded,
+  onEditionCreated,
 }: {
   client: AdminClient;
   editionId: string;
@@ -94,6 +95,9 @@ export function EditionPage({
   /** Called with every fresh load, so the shell can re-gate its nav when a
    *  lock/open/close changes the edition's phase. */
   onLoaded?: (detail: EditionDetail) => void;
+  /** D-15: a next edition was created; the shell refreshes its list and
+   *  switches to it. */
+  onEditionCreated?: (id: string) => void;
 }): JSX.Element {
   const [edition, setEdition] = useState<EditionDetail | null>(null);
   const [view, setView] = useState<View>('main');
@@ -102,6 +106,30 @@ export function EditionPage({
   const [draftFloors, setDraftFloors] = useState<Record<string, number>>({});
   const [draftClose, setDraftClose] = useState<string>('');
   const [draftOpen, setDraftOpen] = useState<string>('');
+  const [nextHint, setNextHint] = useState<{
+    suggestedLabel: string;
+    draftExists: string | null;
+  } | null>(null);
+  const [nextLabel, setNextLabel] = useState('');
+  const [nextConfirm, setNextConfirm] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setNextConfirm(false);
+    client
+      .getNextEditionHint(editionId)
+      .then((h) => {
+        if (cancelled) return;
+        setNextHint(h);
+        setNextLabel(h.suggestedLabel);
+      })
+      .catch(() => {
+        // The section stays hidden; the rest of the page is unaffected.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, editionId]);
 
   const load = useCallback(async () => {
     setError(null);
@@ -415,6 +443,85 @@ export function EditionPage({
           )}
         </div>
       </section>
+
+      {/* Next edition (D-15) */}
+      {nextHint && (
+        <section className="stage">
+          <div className="stagehead">
+            <h2>Next edition</h2>
+            <Pill kind="neutral">Setup right</Pill>
+          </div>
+          <div className="stagebody">
+            {nextHint.draftExists === edition.label ? (
+              <p>
+                This is the draft edition. Another can be started from here once this one has
+                opened.
+              </p>
+            ) : nextHint.draftExists ? (
+              <p>
+                The {nextHint.draftExists} edition is already in draft. Only one draft edition can
+                exist at a time; switch to it in the header to set it up.
+              </p>
+            ) : (
+              <>
+                <p>
+                  Starts a new draft edition with this one&apos;s set-up: the sample floors, message
+                  templates, the firms enrolled now and the market institutions, with every date
+                  moved on a year and still editable. Its questionnaires start unfrozen, to be
+                  reviewed and frozen again. No responses, respondents, links, invitations, scores
+                  or reports are carried over, and this edition is not changed.
+                </p>
+                <div className="field">
+                  <label htmlFor="nextLabel">Name of the new edition</label>
+                  <input
+                    id="nextLabel"
+                    value={nextLabel}
+                    maxLength={40}
+                    onChange={(e) => {
+                      setNextLabel(e.target.value);
+                      setNextConfirm(false);
+                    }}
+                  />
+                </div>
+                <div className="actions">
+                  {nextConfirm ? (
+                    <>
+                      <button
+                        type="button"
+                        className="btn"
+                        disabled={busy || !nextLabel.trim()}
+                        onClick={() =>
+                          run(async () => {
+                            const created = await client.createNextEdition(
+                              editionId,
+                              nextLabel.trim(),
+                            );
+                            onEditionCreated?.(created.id);
+                          })
+                        }
+                      >
+                        Create the {nextLabel.trim()} draft
+                      </button>
+                      <button type="button" className="btn-2" onClick={() => setNextConfirm(false)}>
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn-2"
+                      disabled={!nextLabel.trim()}
+                      onClick={() => setNextConfirm(true)}
+                    >
+                      Create next edition
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        </section>
+      )}
 
       {error && <div className="err">{error}</div>}
     </main>

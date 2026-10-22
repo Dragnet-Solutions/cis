@@ -1,6 +1,7 @@
 /**
  * Email content: the HTML a notice is sent with (escaped, links, action
- * button), the plain-text body, and queueNotice storing both in the outbox.
+ * button, in the shared CIS layout), the plain-text body derived from it, and
+ * queueNotice storing both in the outbox.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import type { Pool } from 'pg';
@@ -23,7 +24,7 @@ describe('renderEmailHtml', () => {
       'Dear O&#39;Neil &lt;script&gt;alert(1)&lt;/script&gt; &amp; &quot;co&quot;',
     );
     expect(html).toContain('href="https://x.example/a?b=1&amp;c=&quot;2&quot;"');
-    expect(html).toContain('>Open &lt;it&gt;</a>');
+    expect(html).toContain('>Open &lt;it&gt;&nbsp;&nbsp;&rarr;</a>');
     expect(html).toContain('Private &lt;i&gt;footer&lt;/i&gt;');
   });
 
@@ -39,19 +40,26 @@ describe('renderEmailHtml', () => {
     expect(html).toContain('>https://cis.example/help?x=1&amp;y=2</a>).');
   });
 
-  it('is a single 560px column with the action as a button-style link', () => {
-    const html = renderEmailHtml({
-      paragraphs: ['One', 'Two\nlines'],
-      action: { label: 'Go', url: 'https://cis.example/go' },
-    });
-    expect(html).toContain('max-width:560px');
-    expect(html).toContain(
-      '<p style="margin:0 0 16px;font-size:16px;line-height:1.5;color:#1f2933;">Two<br>lines</p>',
+  it('sets the notice in the shared CIS layout, with the action as the design’s button', () => {
+    const html = renderEmailHtml(
+      {
+        paragraphs: ['One', 'Two\nlines'],
+        action: { label: 'Go', url: 'https://cis.example/go' },
+      },
+      { brand: { logoUrl: 'https://cis.example/cis-logo.png', supportEmail: 'help@cis.example' } },
     );
+    expect(html.startsWith('<!DOCTYPE html>')).toBe(true);
+    expect(html).toContain('<img src="https://cis.example/cis-logo.png"');
+    expect(html).toContain('max-width:600px');
+    expect(html).toContain('mailto:help@cis.example');
+    expect(html).toContain('>Two<br>lines</p>');
     expect(html).toMatch(
-      /<a href="https:\/\/cis\.example\/go" style="display:inline-block;[^"]*">Go<\/a>/,
+      /<a href="https:\/\/cis\.example\/go" style="display:inline-block;[^"]*">Go&nbsp;&nbsp;&rarr;<\/a>/,
     );
-    expect(html.startsWith('<!DOCTYPE html><html lang="en">')).toBe(true);
+    // The Outlook button and the copy-this-link fallback.
+    expect(html).toContain('<v:roundrect');
+    expect(html).toContain('Button not working? Copy this link into your browser');
+    expect(html).not.toMatch(/\{\{/);
   });
 
   it('does not make a link of an unsafe action URL', () => {
@@ -66,19 +74,26 @@ describe('renderEmailHtml', () => {
 describe('textToHtml and renderEmailText', () => {
   it('turns blank-line paragraphs of a plain body into escaped HTML paragraphs', () => {
     const html = textToHtml('Hello <you>,\n\nRead it: https://a.example/r\n\nThanks');
-    expect(html.match(/<p /g)).toHaveLength(3);
-    expect(html).toContain('Hello &lt;you&gt;,');
+    expect(html).toContain('>Hello &lt;you&gt;,</p>');
     expect(html).toContain('<a href="https://a.example/r"');
+    expect(html).toContain('>Thanks</p>');
   });
 
-  it('puts the action URL on its own line, then the footer', () => {
-    expect(
-      renderEmailText({
+  it('derives the text from the HTML: paragraphs, the action as label and URL, the footer', () => {
+    const text = renderEmailText(
+      {
         paragraphs: ['Dear Ada,', 'Your report is ready.'],
         action: { label: 'Open', url: 'https://cis.example/firm' },
         footer: 'Private.',
-      }),
-    ).toBe('Dear Ada,\n\nYour report is ready.\n\nhttps://cis.example/firm\n\nPrivate.');
+      },
+      { brand: { logoUrl: 'https://cis.example/cis-logo.png', supportEmail: 'help@cis.example' } },
+    );
+    expect(text).toContain(
+      'Dear Ada,\n\nYour report is ready.\n\nOpen:\nhttps://cis.example/firm\n\nPrivate.',
+    );
+    expect(text).toContain('Kind regards,\nThe CIS × Dragnet Study Team');
+    expect(text).toContain('Questions? Contact help@cis.example.');
+    expect(text).not.toMatch(/<|Button not working/);
   });
 });
 
@@ -115,9 +130,9 @@ describe('queueNotice', () => {
         toName: 'Ada',
         status: 'queued',
         attempts: 0,
-        bodyText: 'Dear Ada,\n\nhttps://cis.example/firm',
       });
-      expect(e.bodyHtml).toContain('>Open</a>');
+      expect(e.bodyText).toContain('Dear Ada,\n\nOpen:\nhttps://cis.example/firm');
+      expect(e.bodyHtml).toContain('>Open&nbsp;&nbsp;&rarr;</a>');
     } finally {
       client.release();
     }

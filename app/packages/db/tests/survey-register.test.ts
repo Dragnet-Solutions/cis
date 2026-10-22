@@ -6,9 +6,19 @@
  * mismatch, scope mismatch, kind mismatch, or flag mismatch. Per SV-010 §5,
  * "a comparison must fail on a missing ID rather than pass on a plausible
  * paraphrase." This is the permanent regression gate for any content update.
- * It covers every instrument in the Register (13: S1–S5b, I-SEC, I-NGX,
- * I-CSCS, I-DEP and the bespoke I-LCFE, I-NASD, I-FMDQ), on IDs, text,
- * options, sequence, limits, required/optional state and branches.
+ * It covers every instrument in use (12: S1–S5b, I-SEC, I-NGX, I-CSCS and
+ * the bespoke I-LCFE, I-NASD, I-FMDQ), on IDs, text, options, sequence,
+ * limits, required/optional state and branches.
+ *
+ * EXCLUDED, deliberately: I-DEP (Family D, Depository / Securities-account
+ * Infrastructure). D-16 retired it — no approved document contains it
+ * (UX-OPS-007 v2.10: one institution, one bespoke instrument, no new role
+ * family; six market institutions; the CIS-approved LCFE/NASD/FMDQ document
+ * calls a separate depository questionnaire premature). Its rows stay in the
+ * Register for provenance, stamped retired, and are never frozen, rendered or
+ * reported, so there is no live content for SV-010 to hold to the Register.
+ * The last test below asserts exactly that, so the exclusion cannot widen
+ * silently.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { Pool } from 'pg';
@@ -17,6 +27,8 @@ import {
   getRegisterFixture,
   getInstrumentItems,
   INSTRUMENT_CODES,
+  ACTIVE_INSTRUMENT_CODES,
+  RETIRED_INSTRUMENT_CODES,
   REGISTER_ITEM_COUNT,
 } from '../src';
 import { getTestPool, runMigrations, truncateAllTables, closeTestPool } from './setup';
@@ -48,7 +60,7 @@ describe('SV-010 Register comparison gate', () => {
     let totalSeen = 0;
     let drgSeen = 0;
 
-    for (const code of INSTRUMENT_CODES) {
+    for (const code of ACTIVE_INSTRUMENT_CODES) {
       const rawItems = fixture.instruments[code] ?? [];
       const liveItems = await getInstrumentItems(pool, code);
       const liveById = new Map(liveItems.map((i) => [i.id, i]));
@@ -122,8 +134,30 @@ describe('SV-010 Register comparison gate', () => {
       }
     }
 
-    expect(totalSeen).toBe(REGISTER_ITEM_COUNT);
+    // Every Register item is compared, except the retired instruments' own.
+    const retiredItems = RETIRED_INSTRUMENT_CODES.reduce(
+      (n, code) => n + (fixture.instruments[code]?.length ?? 0),
+      0,
+    );
+    expect(totalSeen).toBe(REGISTER_ITEM_COUNT - retiredItems);
     expect(drgSeen).toBe(DRG_OPS_IDS.length);
+  });
+
+  it('excludes exactly the retired I-DEP (D-16): kept in the Register for provenance, stamped retired', async () => {
+    await seedSurveyRegister(pool);
+    const fixture = getRegisterFixture();
+    expect(RETIRED_INSTRUMENT_CODES).toEqual(['I-DEP']);
+    expect([...ACTIVE_INSTRUMENT_CODES, ...RETIRED_INSTRUMENT_CODES].sort()).toEqual(
+      [...INSTRUMENT_CODES].sort(),
+    );
+    // Still in the Register data, five items, seeded — but retired.
+    expect(fixture.instruments['I-DEP']).toHaveLength(5);
+    const rows = await pool.query<{ code: string; retired: boolean }>(
+      `SELECT code, retired_at IS NOT NULL AS retired FROM instrument_definitions ORDER BY code`,
+    );
+    for (const r of rows.rows) {
+      expect(r.retired, r.code).toBe(RETIRED_INSTRUMENT_CODES.includes(r.code));
+    }
   });
 
   it('has exactly the seven expected DRG-OPS items and the verified firm-specific counts', async () => {

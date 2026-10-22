@@ -10,7 +10,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src/",
     "seed:demo": "tsx src/seed-demo.ts",
-    "set-password": "tsx src/set-password.ts"
+    "set-password": "tsx src/set-password.ts",
+    "email:preview": "tsx src/email-preview.ts"
   },
   "dependencies": {
     "@cis/audit": "workspace:*",

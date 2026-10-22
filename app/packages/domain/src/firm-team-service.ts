@@ -40,6 +40,8 @@ async function queueCoordinatorWelcome(
   const firmName = (await getOrganizationById(pool, c.organizationId))?.displayName ?? 'your firm';
   await queueNotice(pool, {
     kind: COORDINATOR_WELCOME_EMAIL_KIND,
+    audience: 'firm',
+    label: 'Your firm space',
     refId: c.id,
     to: c.email.trim(),
     toName: c.name,
@@ -201,6 +203,8 @@ export async function setCoordinatorPin(
       (await getOrganizationById(pool, coordinator.organizationId))?.displayName ?? 'your firm';
     await queueNotice(pool, {
       kind: COORDINATOR_PIN_SET_EMAIL_KIND,
+      audience: 'firm',
+      label: 'Your PIN',
       refId: coordinator.id,
       to: coordinator.email.trim(),
       toName: coordinator.name,

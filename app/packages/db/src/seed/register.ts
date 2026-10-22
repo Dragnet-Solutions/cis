@@ -195,6 +195,24 @@ export const INSTRUMENT_META: ReadonlyArray<{ code: string } & InstrumentMeta> =
 export const INSTRUMENT_CODES: readonly string[] = INSTRUMENT_META.map((m) => m.code);
 
 /**
+ * D-16 — instruments kept in the Register for provenance but RETIRED: never
+ * offered for freeze, frozen into an edition, rendered, or reported.
+ * I-DEP (Family D, Depository / Securities-account Infrastructure) is in no
+ * approved document: UX-OPS-007 v2.10 maps one registered institution to one
+ * bespoke instrument with no new role family, the six market institutions are
+ * SEC, NGX, CSCS, LCFE, NASD and FMDQ, and the CIS-approved LCFE/NASD/FMDQ
+ * document records a separate depository questionnaire as premature.
+ * Seeded rows are stamped `instrument_definitions.retired_at`; existing
+ * databases by migration 20261023200000_retire-cscs-depository.js.
+ */
+export const RETIRED_INSTRUMENT_CODES: readonly string[] = ['I-DEP'];
+
+/** The instruments in use: the Register less the retired ones. */
+export const ACTIVE_INSTRUMENT_CODES: readonly string[] = INSTRUMENT_CODES.filter(
+  (c) => !RETIRED_INSTRUMENT_CODES.includes(c),
+);
+
+/**
  * Total controlled items across the Register (a fixed, verified count).
  * 90 → 95 in Phase 19: Family D (Depository / Securities-account
  * Infrastructure) adds five new institutional/contextual items (D-Q1–D-Q5),
@@ -233,7 +251,13 @@ export async function seedSurveyRegister(
     sourceLabel: 'Survey Register (survey_register_seed.json, 2026-08-20)',
     instruments: REGISTER.instruments as RegisterImportPayload['instruments'],
   };
-  return importSurveyRegister(pool, payload, INSTRUMENT_META, createdBy);
+  const ids = await importSurveyRegister(pool, payload, INSTRUMENT_META, createdBy);
+  await pool.query(
+    `UPDATE instrument_definitions SET retired_at = NOW()
+      WHERE code = ANY($1) AND retired_at IS NULL`,
+    [RETIRED_INSTRUMENT_CODES],
+  );
+  return ids;
 }
 
 /** The raw Register content, exposed for the SV-010 comparison gate test. */

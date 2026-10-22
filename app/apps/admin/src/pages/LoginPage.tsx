@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { login } from '../api/client';
+import { login, requestPasswordReset } from '../api/client';
 import { ApiError } from '../api/types';
 import type { Session } from '../auth/useSession';
 
@@ -15,6 +15,77 @@ export function LoginPage({
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [forgot, setForgot] = useState(false);
+  const [resetNote, setResetNote] = useState<string | null>(null);
+
+  async function submitReset(e: FormEvent): Promise<void> {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await requestPasswordReset(email.trim());
+      setResetNote(res.message);
+    } catch (err) {
+      setError(
+        err instanceof ApiError && err.statusCode === 429
+          ? 'Too many requests. Wait a few minutes and try again.'
+          : 'Could not send the request. Try again in a moment.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (forgot) {
+    return (
+      <div className="login-wrap">
+        <p className="eyebrow">CIS × Dragnet Benchmark</p>
+        <h1 tabIndex={-1}>Reset your password</h1>
+        <p className="lede">
+          Enter the email address you sign in with. If it has an account, we will email it a link to
+          choose a new password.
+        </p>
+        {resetNote ? (
+          <p className="note" role="status">
+            {resetNote}
+          </p>
+        ) : (
+          <form onSubmit={submitReset}>
+            <div className="field">
+              <label htmlFor="reset-email">Email</label>
+              <input
+                id="reset-email"
+                type="email"
+                autoComplete="username"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+              />
+            </div>
+            {error && <div className="err">{error}</div>}
+            <div className="actions">
+              <button type="submit" className="btn" disabled={busy}>
+                {busy ? 'Sending…' : 'Email me a reset link'}
+              </button>
+            </div>
+          </form>
+        )}
+        <p>
+          <button
+            type="button"
+            className="textlink"
+            onClick={() => {
+              setForgot(false);
+              setResetNote(null);
+              setError(null);
+            }}
+          >
+            Back to sign in
+          </button>
+        </p>
+      </div>
+    );
+  }
 
   async function submit(e: FormEvent): Promise<void> {
     e.preventDefault();
@@ -71,6 +142,18 @@ export function LoginPage({
           </button>
         </div>
       </form>
+      <p>
+        <button
+          type="button"
+          className="textlink"
+          onClick={() => {
+            setForgot(true);
+            setError(null);
+          }}
+        >
+          Forgot password?
+        </button>
+      </p>
     </div>
   );
 }

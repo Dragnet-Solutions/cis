@@ -2,6 +2,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import {
   getUserById,
+  getUserByEmail,
+  countRecentSelfServiceResets,
   getPasswordSetTokenByHash,
   insertPasswordSetToken,
   markPasswordSetTokenUsed,
@@ -14,7 +16,7 @@ import {
 import { hashPassword } from '@cis/auth';
 import { writeAudit } from '@cis/audit';
 import { DomainError } from './errors';
-import { queueNotice } from './email-content';
+import { queueTemplate } from './email-content';
 import { siteOrigin } from './notice-links';
 import { checkPasswordPolicy } from './password-policy';
 
@@ -61,7 +63,13 @@ const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
 export async function issuePasswordSetLink(
   db: Db,
   userId: string,
-  opts: { purpose: PasswordSetPurpose; createdBy: string | null; portalUrl?: string | null },
+  opts: {
+    purpose: PasswordSetPurpose;
+    createdBy: string | null;
+    portalUrl?: string | null;
+    /** The person's rights as People & access names them, for the invitation (O-01). */
+    rights?: string[];
+  },
 ): Promise<{ expiresAt: Date; emailId: string }> {
   const user = await getUserById(db as Pool, userId);
   if (!user || !user.isActive) {
@@ -82,33 +90,36 @@ export async function issuePasswordSetLink(
 
   const link = `${siteOrigin(opts.portalUrl)}/set-password?token=${raw}`;
   const invite = opts.purpose === 'invite';
-  const email = await queueNotice(db, {
-    kind: OPERATOR_SET_PASSWORD_EMAIL_KIND,
-    refId: user.id,
-    to: user.email,
-    toName: user.displayName,
-    subject: invite
-      ? 'You have been given access to the CIS × Dragnet study operations site'
-      : 'Set a new password for the CIS × Dragnet study operations site',
-    heading: invite ? 'You have been given access' : 'Set a new password',
-    paragraphs: invite
-      ? [
-          `Dear ${user.displayName},`,
-          'You have been given access to the CIS × Dragnet benchmark study operations site.',
-          'To start, choose your own password with the link below. The link works once and ' +
-            'expires in 72 hours. You will then sign in with this email address.',
-        ]
-      : [
-          `Dear ${user.displayName},`,
-          'A new password was requested for your study operations account.',
-          'Choose it with the link below. The link works once and expires in 24 hours. ' +
-            'Until you use it, your current password keeps working.',
-        ],
-    action: { label: invite ? 'Choose your password' : 'Set a new password', url: link },
-    footer: invite
-      ? 'If you were not expecting this, you can ignore this email.'
-      : 'If you did not expect this, you can ignore this email — nothing changes until the link is used.',
-  });
+  const linkExpiry = invite ? '72 hours' : '24 hours';
+  let email;
+  if (invite) {
+    const adder = opts.createdBy ? await getUserById(db as Pool, opts.createdBy) : null;
+    const rights = opts.rights?.length ? opts.rights : ['See the study'];
+    email = await queueTemplate(db, {
+      kind: OPERATOR_SET_PASSWORD_EMAIL_KIND,
+      refId: user.id,
+      to: user.email,
+      toName: user.displayName,
+      template: 'O-01',
+      fields: {
+        person_name: user.displayName,
+        person_email: user.email,
+        added_by: adder?.displayName ?? 'The study team',
+        rights: rights.join(', '),
+        set_password_url: link,
+        link_expiry: linkExpiry,
+      },
+    });
+  } else {
+    email = await queueTemplate(db, {
+      kind: OPERATOR_SET_PASSWORD_EMAIL_KIND,
+      refId: user.id,
+      to: user.email,
+      toName: user.displayName,
+      template: 'O-02',
+      fields: { person_email: user.email, reset_url: link, link_expiry: linkExpiry },
+    });
+  }
 
   await writeAudit(db as Pool, {
     actorId: opts.createdBy,
@@ -200,4 +211,63 @@ export async function consumePasswordSetLink(
     });
     return { email: user.email };
   });
+}
+
+/** At most this many "Forgot password?" emails per account per hour. */
+export const SELF_SERVICE_RESETS_PER_HOUR = 3;
+
+/**
+ * "Forgot password?" on the sign-in page. Always answers the same way, so it
+ * never reveals whether an account exists: when the address belongs to an
+ * active person, a reset link (24 hours, single use) is emailed (O-02) —
+ * unless they were already sent SELF_SERVICE_RESETS_PER_HOUR in the last
+ * hour; otherwise nothing happens. The request is audited either way, without
+ * the address of an unknown account.
+ */
+export async function requestPasswordReset(
+  pool: Pool,
+  input: {
+    email: string;
+    portalUrl?: string | null;
+    ipAddress?: string | null;
+    userAgent?: string | null;
+  },
+): Promise<{ queued: boolean }> {
+  const email = input.email.trim();
+  const user =
+    (await getUserByEmail(pool, email)) ?? (await getUserByEmail(pool, email.toLowerCase()));
+  if (!user) {
+    await writeAudit(pool, {
+      actorId: null,
+      actionType: 'access.password.reset_requested',
+      entityType: 'user',
+      entityId: null,
+      newValue: { matched: false },
+      ipAddress: input.ipAddress ?? null,
+      userAgent: input.userAgent ?? null,
+    });
+    return { queued: false };
+  }
+  const recent = await countRecentSelfServiceResets(pool, user.id, 3_600_000);
+  const queued = recent < SELF_SERVICE_RESETS_PER_HOUR;
+  await withTransaction(pool, async (client) => {
+    const c = client as unknown as Pool;
+    await writeAudit(c, {
+      actorId: null,
+      actionType: 'access.password.reset_requested',
+      entityType: 'user',
+      entityId: user.id,
+      newValue: { matched: true, queued },
+      ipAddress: input.ipAddress ?? null,
+      userAgent: input.userAgent ?? null,
+    });
+    if (queued) {
+      await issuePasswordSetLink(c, user.id, {
+        purpose: 'reset',
+        createdBy: null,
+        portalUrl: input.portalUrl ?? null,
+      });
+    }
+  });
+  return { queued };
 }

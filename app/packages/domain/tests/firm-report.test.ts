@@ -361,8 +361,9 @@ describe('Delivery: what leaves CIS, frozen as it left', () => {
     const released = release!.released;
 
     expect(await queueReleaseNotices(pool, released, 'https://cis.example/firm')).toBe(1);
+    // (The maker-checker release also emails its approvers and requester.)
     const { rows } = await pool.query<{ to_address: string; body_text: string; status: string }>(
-      'SELECT to_address, body_text, status FROM email_outbox',
+      "SELECT to_address, body_text, status FROM email_outbox WHERE kind = 'firm-report-released'",
     );
     expect(rows).toHaveLength(1);
     expect(rows[0]!.to_address).toBe('ngozi@firm-notice.example');

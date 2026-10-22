@@ -189,6 +189,13 @@ export function IndustryReport({
                   /reports/industry
                 </a>
                 .
+                {typeof c.reportEmailedCount === 'number' && (
+                  <>
+                    {' '}
+                    Report emailed to {c.reportEmailedCount}{' '}
+                    {c.reportEmailedCount === 1 ? 'investor' : 'investors'} who asked for it.
+                  </>
+                )}
               </>
             ) : (
               <>

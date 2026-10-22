@@ -23,7 +23,8 @@ import {
 import { requirePermission, type RbacContext } from '@cis/auth';
 import { writeAudit } from '@cis/audit';
 import { DomainError } from './errors';
-import { queueNotice } from './email-content';
+import { queueTemplate } from './email-content';
+import { editionForEmail, fmtDate, studyDates } from './email-fields';
 
 /**
  * Inviting a firm — an operator emails a firm's contact a personal link that
@@ -125,16 +126,6 @@ export function invitationState(
   return inv.status;
 }
 
-/** "30 October 2026" in Lagos time. */
-function formatDate(d: Date): string {
-  return new Intl.DateTimeFormat('en-GB', {
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
-    timeZone: 'Africa/Lagos',
-  }).format(d);
-}
-
 /** The claim link: `<portal origin>/firm?invite=<token>`. */
 export function invitationLink(portalUrl: string, token: string): string {
   const base = portalUrl
@@ -170,7 +161,7 @@ async function assertNotClaimed(pool: Pool, organizationId: string): Promise<voi
   }
 }
 
-/** Queues the invitation email for `inv` (inside the caller's transaction). */
+/** Queues the invitation email for `inv` (inside the caller's transaction): F-01. */
 async function queueInvitationEmail(
   db: Pool,
   inv: FirmInvitation,
@@ -178,23 +169,23 @@ async function queueInvitationEmail(
   portalUrl: string,
 ): Promise<void> {
   const link = invitationLink(portalUrl, inv.token);
-  const greeting = inv.contactName?.trim() ? `Dear ${inv.contactName.trim()},` : 'Hello,';
-  await queueNotice(db, {
+  const edition = await editionForEmail(db, inv.editionId);
+  await queueTemplate(db, {
     kind: FIRM_INVITATION_EMAIL_KIND,
     refId: inv.id,
     to: inv.email,
     toName: inv.contactName,
-    subject: `Your invitation to the CIS × Dragnet benchmark — ${firmName}`,
-    heading: `${firmName} is invited to the CIS × Dragnet benchmark`,
-    paragraphs: [
-      greeting,
-      `${firmName} is invited to take part in the Capital-market Investor Service benchmark, run by the Chartered Institute of Stockbrokers with Dragnet Solutions Limited. It measures how stockbroking firms serve their investors, and each taking part receives its own confidential results.`,
-      `Open the link below to set up your firm's space. You will be its coordinator: you give your name and mobile number and choose a 6-digit PIN, which you then use with your email address to sign in. You can add colleagues from inside.`,
-      `This link is personal to your firm — please do not forward it. It expires on ${formatDate(inv.expiresAt)}.`,
-    ],
-    action: { label: "Set up your firm's space", url: link },
-    footer:
-      'If you were not expecting this, or someone else at your firm should coordinate, reply to this email and the CIS team will help.',
+    template: 'F-01',
+    fields: {
+      contact_name: inv.contactName?.trim() || firmName,
+      firm: firmName,
+      // There is no typed code: the firm's personal link is its invitation.
+      code: link,
+      portal_link: link,
+      ...studyDates(edition),
+      expires_on: fmtDate(inv.expiresAt),
+      edition: edition?.label,
+    },
   });
 }
 

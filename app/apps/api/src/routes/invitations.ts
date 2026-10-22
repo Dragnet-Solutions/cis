@@ -227,8 +227,10 @@ export const invitationsRoutes: FastifyPluginAsyncZod = async (app) => {
       schema: {
         params: z.object({ requestId: z.string().uuid() }),
         body: z.object({
-          resolution: z.enum(['code_issued', 'marked_done']),
+          resolution: z.enum(['code_issued', 'marked_done', 'declined']),
           reissueTemplateId: z.string().uuid().optional(),
+          /** Required to decline: emailed to the requester (F-12). */
+          declineReason: z.string().trim().max(1000).optional(),
         }),
       },
     },
@@ -239,6 +241,7 @@ export const invitationsRoutes: FastifyPluginAsyncZod = async (app) => {
         ...(request.body.reissueTemplateId
           ? { reissueTemplateId: request.body.reissueTemplateId }
           : {}),
+        declineReason: request.body.declineReason ?? null,
         resolvedBy: request.user.sub,
         portalUrl: publicOrigin(),
       });

@@ -33,6 +33,7 @@ import { publicContentRoutes } from './routes/public-content';
 import { reportDeliveryRoutes } from './routes/report-delivery';
 import { passwordSetRoutes } from './routes/password-set';
 import { mailRoutes } from './routes/mail';
+import { auditRoutes } from './routes/audit';
 
 export async function buildServer() {
   const app = Fastify({
@@ -102,6 +103,7 @@ export async function buildServer() {
   await app.register(missionBoardRoutes);
   await app.register(regulatorRoutes);
   await app.register(institutionRoutes);
+  await app.register(auditRoutes);
   await app.register(monitoringRoutes);
   await app.register(firmResultsRoutes);
   await app.register(managedContentRoutes);
@@ -184,6 +186,8 @@ function resolveStatusCode(error: Error & { statusCode?: number }): number {
     case 'FirmDigestError':
     case 'ReportPublicationError':
     case 'FirmInvitationError':
+    case 'AlreadySubmittedError':
+    case 'AuditExportTooLargeError':
     case 'DomainError':
       return 409;
     default:

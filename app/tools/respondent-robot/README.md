@@ -38,10 +38,12 @@ are `+234 000 555 ….`, and institution names start with `[Test]`.
    Every investor gives consent, an optional fake contact and their firm choices, then answers
    one question at a time and submits.
 
-4. **Answers the regulator roles** (I-SEC, I-NGX, I-CSCS, I-DEP, I-LCFE, I-NASD, I-FMDQ: one per
-   active Market Institutions role), but only through the links that a person issued on the
-   Regulators screen. You pass those links in. Where an instrument opens with a scope question
-   (Q0), the robot answers an option that keeps the survey going, so full surveys run. With
+4. **Answers the regulator roles** (I-SEC, I-NGX, I-CSCS, I-LCFE, I-NASD, I-FMDQ: one per
+   active Market Institutions role, six by default; CSCS answers once, for clearing, settlement
+   and custody, since the depository questionnaire I-DEP is retired), but only through the links
+   that a person issued on the Regulators screen. The default is fixed at six because the robot
+   holds no operator session to read the roster; use `--regulators` if the roster changes. You
+   pass those links in. Where an instrument opens with a scope question (Q0), the robot answers an option that keeps the survey going, so full surveys run. With
    `--scope-gate-close <share>` that share of regulators answer a closing option ("Rare" /
    "Effectively none") instead, and their survey ends there, as it does for a real respondent.
 

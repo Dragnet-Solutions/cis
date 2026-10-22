@@ -56,9 +56,12 @@ export const DEFAULT_TARGETS: Targets = {
   retail: 1111,
   local: 25,
   foreign: 15,
-  // One per active Market Institutions role: SEC, NGX, CSCS (clearing and
-  // depository), LCFE, NASD, FMDQ.
-  regulators: 7,
+  // One per active Market Institutions role, one each for the six market
+  // institutions: SEC, NGX, CSCS (clearing, settlement and custody), LCFE,
+  // NASD, FMDQ. CSCS's depository role (I-DEP) is retired (D-16). The robot
+  // answers as respondents and holds no operator session, so it cannot read
+  // the roster from the API; pass --regulators to override.
+  regulators: 6,
 };
 
 export interface PlanOptions {

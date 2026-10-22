@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AdminClient } from '../api/client';
-import { ApiError, type ReminderStepConfig, type UnfinishedResponse } from '../api/types';
+import {
+  ApiError,
+  type ReminderRunResult,
+  type ReminderStepConfig,
+  type UnfinishedResponse,
+} from '../api/types';
 import { plural } from '../shared/plural';
 
 /**
@@ -13,6 +18,27 @@ import { plural } from '../shared/plural';
  */
 
 const CAP_LIMIT = 10;
+
+/** One plain sentence for what "Send reminders now" did. */
+export function describeReminderRun(r: ReminderRunResult): string {
+  if (!r.collecting) {
+    return 'No reminders sent: this edition is not collecting responses.';
+  }
+  const parts = [
+    r.emailed === 0 ? 'No reminders were due.' : `Sent ${plural(r.emailed, 'reminder')} by email.`,
+  ];
+  const skipped: string[] = [];
+  if (r.skipped.notEmail > 0)
+    skipped.push(`${r.skipped.notEmail} chose text messages, which cannot be sent`);
+  if (r.skipped.noWording > 0)
+    skipped.push(`${r.skipped.noWording} not sent because no reminder wording is published`);
+  if (r.skipped.alreadySent > 0) skipped.push(`${r.skipped.alreadySent} had already been sent`);
+  if (r.skipped.noLongerEligible > 0)
+    skipped.push(`${r.skipped.noLongerEligible} submitted or stopped reminders meanwhile`);
+  if (skipped.length > 0) parts.push(`Skipped: ${skipped.join('; ')}.`);
+  if (r.notDue > 0) parts.push(`${plural(r.notDue, 'person', 'people')} not due yet.`);
+  return parts.join(' ');
+}
 
 function stepLabel(step: number, total: number): string {
   if (step === 1) return 'First reminder';
@@ -34,6 +60,8 @@ export function UnfinishedPage({
   const [busy, setBusy] = useState(false);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [runMsg, setRunMsg] = useState<string | null>(null);
+  const [noSendRight, setNoSendRight] = useState(false);
 
   const load = useCallback(async () => {
     setError(null);
@@ -109,6 +137,28 @@ export function UnfinishedPage({
     }
   }
 
+  async function sendNow(): Promise<void> {
+    setBusy(true);
+    setError(null);
+    setRunMsg(null);
+    try {
+      const res = await client.runReminders(editionId);
+      setRunMsg(describeReminderRun(res));
+      await load();
+    } catch (err) {
+      if (err instanceof ApiError && err.statusCode === 403) {
+        // No "Write to firms, regulators and participants" right: say so once
+        // and take the button away, rather than letting it fail again.
+        setNoSendRight(true);
+        setError(null);
+      } else {
+        setError(err instanceof ApiError ? err.message : 'Could not send reminders');
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (!data) {
     return <main>{error ? <div className="err">{error}</div> : <p>Loading…</p>}</main>;
   }
@@ -128,6 +178,33 @@ export function UnfinishedPage({
       </p>
 
       {error && <div className="err">{error}</div>}
+
+      <div className="actions">
+        <button
+          type="button"
+          className="btn"
+          disabled={busy || noSendRight || data.stats.reachable === 0}
+          onClick={() => void sendNow()}
+        >
+          Send reminders now
+        </button>
+      </div>
+      {noSendRight && (
+        <p className="note" role="status">
+          Sending reminders needs the “Write to firms, regulators and participants” right, which you
+          do not hold. Ask someone who manages People &amp; access to give it to you. The hourly
+          reminders still go out on their own.
+        </p>
+      )}
+      <p className="muted">
+        Reminders also go out on their own every hour, by the reminder schedule. This sends any that
+        are due now; nobody gets the same reminder twice.
+      </p>
+      {runMsg && (
+        <p className="qstate ok" role="status">
+          {runMsg}
+        </p>
+      )}
 
       <div className="tabs" role="tablist">
         <button

@@ -1,1 +1,11 @@
 pnpm-lock.yaml
+
+# Email templates: the approved designs, kept verbatim, and the module embedding them.
+packages/domain/src/email-templates/html/
+packages/domain/src/email-templates/*.generated.ts
+
+# Local email previews (pnpm --filter @cis/api email:preview)
+tmp/
+
+# Local robot / demo run state (git-ignored)
+**/.state/

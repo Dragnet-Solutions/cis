@@ -5,19 +5,29 @@ import {
   getEditionById,
   getRespondentById,
   getInProgressResponses,
-  listReminderSteps,
-  recordReminderSend,
+  recordReminderSendOnce,
+  listReminderHistory,
+  listCollectingEditionIds,
+  lockRespondentForReminder,
+  withTransaction,
   getPublicVisibleQuestions,
   listDrgOpsQuestionSummary,
   INSTRUMENT_META,
   type InProgressResponse,
   type ReminderSend,
+  getRespondentProgress,
 } from '@cis/db';
 import { isInvestorInstrument } from './funnel-service';
 import { DomainError } from './errors';
-import { assembleReminderEmail, ReminderContentError } from './reminder-content-service';
-import { queueNotice } from './email-content';
-import { stopRemindersLink, surveyResumeLink } from './notice-links';
+import {
+  assembleReminderEmail,
+  computeProgressWording,
+  getReminderContent,
+  ReminderContentError,
+} from './reminder-content-service';
+import { queueTemplate, type TemplateNotice } from './email-content';
+import { fmtDate } from './email-fields';
+import { stopRemindersLink, surveyResumeLink, textParagraphs } from './notice-links';
 
 /** Outbox kind of a respondent reminder email; ref_id is the reminder_send row. */
 export const RESPONDENT_REMINDER_EMAIL_KIND = 'respondent-reminder';
@@ -78,6 +88,8 @@ const DEFAULT_SCHEDULE: ReminderSchedule = {
 };
 const DEFAULT_CAP = 3;
 const DAY_MS = 86_400_000;
+/** The least time between two reminders to the same person. */
+export const REMINDER_MIN_GAP_MS = DAY_MS;
 
 // ─── Governed config accessors ─────────────────────────────────────────────────
 
@@ -136,11 +148,22 @@ export function nextDueReminder(params: {
   schedule: ReminderSchedule;
   cap: number;
   sentSteps: number[];
+  /** When this respondent's latest reminder was sent, if any. */
+  lastSentAt?: Date | null;
   lastActivityAt: Date;
   closeAt: Date | null;
   asOf: Date;
 }): DueReminder | null {
   if (params.sentSteps.length >= params.cap) return null;
+  // Never two reminders to one person within REMINDER_MIN_GAP_MS — e.g. a
+  // response idle for weeks when reminders first switch on is overdue for
+  // every step; it gets them a day apart, not an hour apart.
+  if (
+    params.lastSentAt &&
+    params.asOf.getTime() - params.lastSentAt.getTime() < REMINDER_MIN_GAP_MS
+  ) {
+    return null;
+  }
   const sent = new Set(params.sentSteps);
   const steps = params.schedule.steps.filter((s) => s.enabled).sort((a, b) => a.step - b.step);
   for (const s of steps) {
@@ -170,11 +193,43 @@ function eligibleInvestorResponses(rows: InProgressResponse[]): InProgressRespon
 
 // ─── The scheduling run (persists sends; never touches response state) ──────────
 
+/** Why a due reminder was not emailed in a run. */
+export type ReminderSkipReason =
+  /** Chose text messages only, or left no email address — recorded in the
+   *  ledger as sent (the schedule moved on) but there is no text service. */
+  | 'notEmail'
+  /** No live reminder wording is published — nothing recorded, so the person
+   *  is reminded once wording goes live. */
+  | 'noWording'
+  /** Another run (another pod, or a second click) already recorded this step. */
+  | 'alreadySent'
+  /** Submitted, stopped reminders or was withdrawn between the read and the send. */
+  | 'noLongerEligible';
+
+export interface ReminderRunSummary {
+  editionId: string;
+  /** False when the edition is not collecting (not open, or past its close
+   *  date) — nothing is sent. */
+  collecting: boolean;
+  /** Ledger rows recorded by this run. */
+  sends: ReminderSend[];
+  /** Reminder emails queued by this run. */
+  emailed: number;
+  skipped: Record<ReminderSkipReason, number>;
+  /** Reachable unfinished people with nothing due yet (or capped). */
+  notDue: number;
+}
+
+const emptySkips = (): Record<ReminderSkipReason, number> => ({
+  notEmail: 0,
+  noWording: 0,
+  alreadySent: 0,
+  noLongerEligible: 0,
+});
+
 /**
- * Compute and record the reminders due at `asOf`. One reminder per response per
- * run, recorded in the append-only `reminder_send` ledger with its STOP flag.
- * Firm-side, unreachable and already-completed responses never appear (completed
- * responses are excluded at the query — an answered survey is never reminded).
+ * Compute and record the reminders due at `asOf` for one edition, returning
+ * the ledger rows written. See `runEditionReminders` for the full contract.
  */
 export async function scheduleDueReminders(
   pool: Pool,
@@ -182,67 +237,260 @@ export async function scheduleDueReminders(
   asOf: Date = new Date(),
   opts: { portalUrl?: string } = {},
 ): Promise<ReminderSend[]> {
-  const schedule = await getReminderSchedule(pool);
-  const cap = await getReminderCap(pool);
-  const edition = await getEditionById(pool, editionId);
-  const closeAt = edition?.surveyCloseAt ?? null; // LIVE reference each run
-  const rows = await getInProgressResponses(pool, editionId);
-
-  const sent: ReminderSend[] = [];
-  for (const r of eligibleInvestorResponses(rows)) {
-    const sentSteps = await listReminderSteps(pool, editionId, r.responseId);
-    const due = nextDueReminder({
-      schedule,
-      cap,
-      sentSteps,
-      lastActivityAt: r.lastActivityAt,
-      closeAt,
-      asOf,
-    });
-    if (!due) continue;
-    const send = await recordReminderSend(pool, {
-      editionId,
-      responseId: r.responseId,
-      step: due.step,
-      scheduledFor: due.scheduledFor,
-      carriesStop: due.carriesStop,
-    });
-    sent.push(send);
-    if (opts.portalUrl) await emailReminder(pool, send, opts.portalUrl);
-  }
-  return sent;
+  return (await runEditionReminders(pool, editionId, asOf, opts)).sends;
 }
 
 /**
- * Email one recorded reminder to a respondent who chose email (or email and
- * text): the managed reminder wording, a link back into their survey and —
- * after their first reminder (DEC-012) — a link to stop reminders. A
- * text-only respondent gets nothing here: there is no text-message service.
+ * Compute and record the reminders due at `asOf`. One reminder per response per
+ * run, recorded in the append-only `reminder_send` ledger with its STOP flag.
+ * Firm-side, regulator, unreachable, opted-out and already-completed responses
+ * never appear (completed responses are excluded at the query — an answered
+ * survey is never reminded). Nothing is sent once the close date has passed.
+ *
+ * Idempotent: each send is its own transaction that re-checks the respondent
+ * under a row lock, inserts the ledger row ON CONFLICT DO NOTHING against
+ * UNIQUE (edition_id, response_id, step) and queues the email in the same
+ * transaction — so running twice, or on two pods at once, never sends a step
+ * twice. With `portalUrl` the reminder is emailed to a respondent who chose
+ * email; without it (tests, legacy callers) only the ledger is written.
  */
-async function emailReminder(pool: Pool, send: ReminderSend, portalUrl: string): Promise<void> {
-  const respondent = await getRespondentById(pool, send.responseId);
-  if (!respondent?.contactEmail || !respondent.recoveryToken) return;
-  if (respondent.contactChannel !== 'email' && respondent.contactChannel !== 'both') return;
-  let content: Awaited<ReturnType<typeof assembleReminderEmail>>;
+export async function runEditionReminders(
+  pool: Pool,
+  editionId: string,
+  asOf: Date = new Date(),
+  opts: { portalUrl?: string } = {},
+): Promise<ReminderRunSummary> {
+  const summary: ReminderRunSummary = {
+    editionId,
+    collecting: true,
+    sends: [],
+    emailed: 0,
+    skipped: emptySkips(),
+    notDue: 0,
+  };
+  const edition = await getEditionById(pool, editionId);
+  const closeAt = edition?.surveyCloseAt ?? null; // LIVE reference each run
+  if (!edition || (closeAt && asOf.getTime() >= closeAt.getTime())) {
+    summary.collecting = false;
+    return summary;
+  }
+  const schedule = await getReminderSchedule(pool);
+  const cap = await getReminderCap(pool);
+  const rows = await getInProgressResponses(pool, editionId);
+
+  for (const r of eligibleInvestorResponses(rows)) {
+    const dueFor = (history: { step: number; createdAt: Date }[]) =>
+      nextDueReminder({
+        schedule,
+        cap,
+        sentSteps: history.map((h) => h.step),
+        lastSentAt: history.at(-1)?.createdAt ?? null,
+        lastActivityAt: r.lastActivityAt,
+        closeAt,
+        asOf,
+      });
+    const due = dueFor(await listReminderHistory(pool, editionId, r.responseId));
+    if (!due) {
+      summary.notDue++;
+      continue;
+    }
+
+    // The email (if this person can get one) is assembled before the
+    // transaction; with no live wording nothing is recorded, so the step is
+    // not used up by a reminder nobody received.
+    let email: Omit<TemplateNotice, 'refId'> | null = null;
+    if (opts.portalUrl) {
+      const prepared = await prepareReminderEmail(
+        pool,
+        r.responseId,
+        due.carriesStop,
+        opts.portalUrl,
+        { label: edition.label, closeAt },
+      );
+      if (prepared === 'noWording') {
+        summary.skipped.noWording++;
+        continue;
+      }
+      email = prepared;
+    }
+
+    const outcome = await withTransaction(pool, async (client) => {
+      const now = await lockRespondentForReminder(client, r.responseId);
+      if (!now || now.submitted || now.optedOut || now.withdrawn) return 'noLongerEligible';
+      // Re-read under the lock: a concurrent run may have sent a step since.
+      const again = dueFor(await listReminderHistory(client, editionId, r.responseId));
+      if (!again || again.step !== due.step || again.carriesStop !== due.carriesStop) {
+        return 'alreadySent';
+      }
+      const send = await recordReminderSendOnce(client, {
+        editionId,
+        responseId: r.responseId,
+        step: due.step,
+        scheduledFor: due.scheduledFor,
+        carriesStop: due.carriesStop,
+      });
+      if (!send) return 'alreadySent';
+      if (email) await queueTemplate(client, { ...email, refId: send.id });
+      return send;
+    });
+
+    if (typeof outcome === 'string') {
+      summary.skipped[outcome]++;
+      continue;
+    }
+    summary.sends.push(outcome);
+    if (email) summary.emailed++;
+    else if (opts.portalUrl) summary.skipped.notEmail++;
+  }
+  return summary;
+}
+
+/**
+ * The reminder email for one respondent who chose email (or email and text):
+ * the managed reminder wording, a link back into their survey and — after
+ * their first reminder (DEC-012) — a link to stop reminders. Null for a
+ * text-only respondent or one with no email (there is no text-message
+ * service); 'noWording' when no live reminder wording is published. The
+ * `refId` is filled in with the ledger row's id inside the send transaction.
+ */
+/** The managed first-message wording (Wording page), or null when none is live. */
+async function firstMessageBody(pool: Pool): Promise<string | null> {
   try {
-    content = await assembleReminderEmail(pool, respondent.id, send.carriesStop);
+    const parsed = JSON.parse(await getReminderContent(pool, 'first_message_email')) as {
+      body?: unknown;
+    };
+    return typeof parsed.body === 'string' && parsed.body.trim() ? parsed.body : null;
   } catch (err) {
-    if (err instanceof ReminderContentError) return; // no live wording: nothing to send
+    if (err instanceof ReminderContentError || err instanceof SyntaxError) return null;
     throw err;
   }
-  await queueNotice(pool, {
+}
+
+async function prepareReminderEmail(
+  pool: Pool,
+  respondentId: string,
+  carriesStop: boolean,
+  portalUrl: string,
+  edition: { label: string; closeAt: Date | null },
+): Promise<Omit<TemplateNotice, 'refId'> | null | 'noWording'> {
+  const respondent = await getRespondentById(pool, respondentId);
+  if (!respondent?.contactEmail?.trim() || !respondent.recoveryToken) return null;
+  if (respondent.contactChannel !== 'email' && respondent.contactChannel !== 'both') return null;
+  // The live reminder content must exist (UX-RET-007): without it nothing is sent.
+  let reminder: Awaited<ReturnType<typeof assembleReminderEmail>>;
+  try {
+    reminder = await assembleReminderEmail(pool, respondent.id, carriesStop);
+  } catch (err) {
+    if (err instanceof ReminderContentError) return 'noWording';
+    throw err;
+  }
+  const recoveryUrl = surveyResumeLink(portalUrl, respondent.recoveryToken);
+  // DEC-012: the first reminder (P-02) has no stop option; every later one
+  // (P-03) carries it, with the respondent's progress and the close date. The
+  // managed wording (Wording page) is the body when it is live; else the
+  // design's approved wording stands.
+  if (!carriesStop) {
+    const body = await firstMessageBody(pool);
+    return {
+      kind: RESPONDENT_REMINDER_EMAIL_KIND,
+      to: respondent.contactEmail.trim(),
+      template: 'P-02',
+      fields: {
+        recovery_url: recoveryUrl,
+        body: body ? textParagraphs(body) : null,
+        edition: edition.label,
+      },
+    };
+  }
+  const progress = await getRespondentProgress(pool, respondent.id);
+  return {
     kind: RESPONDENT_REMINDER_EMAIL_KIND,
-    refId: send.id,
     to: respondent.contactEmail.trim(),
-    subject: content.subject,
-    paragraphs: [content.body],
-    action: { label: content.cta, url: surveyResumeLink(portalUrl, respondent.recoveryToken) },
-    ...(content.stopLinkText
-      ? {
-          footer: `${content.stopLinkText}: ${stopRemindersLink(portalUrl, respondent.recoveryToken)}`,
-        }
-      : {}),
-  });
+    template: 'P-03',
+    fields: {
+      recovery_url: recoveryUrl,
+      stop_url: stopRemindersLink(portalUrl, respondent.recoveryToken),
+      progress_wording: computeProgressWording(progress.answered, progress.total),
+      close_date: fmtDate(edition.closeAt),
+      body: reminder.body.trim() ? textParagraphs(reminder.body) : null,
+      edition: edition.label,
+    },
+  };
+}
+
+// ─── The scheduled pass (every collecting edition, one pod at a time) ───────────
+
+/** Postgres advisory-lock key for the reminder pass: only one API pod (or one
+ *  manual run) computes reminders at a time. An arbitrary constant, unique in
+ *  this codebase (node-pg-migrate uses its own key for migrations). */
+export const REMINDER_PASS_LOCK_KEY = 704_115_003;
+
+export interface ReminderPassResult {
+  /** False when another pod or run held the lock — this pass did nothing. */
+  ran: boolean;
+  editions: ReminderRunSummary[];
+}
+
+/**
+ * One reminder pass — what the hourly scheduler and the "Send reminders now"
+ * button both call. Takes a session-level `pg_try_advisory_lock` on a
+ * dedicated connection so that, across several API pods, only one pass runs
+ * at a time (a pass that finds the lock held returns `ran: false` at once).
+ * Without `editionIds` it covers every collecting (status 'open') edition; a
+ * named edition that is not open is reported `collecting: false` and skipped.
+ * The ledger's unique constraint still guarantees no step is sent twice even
+ * if the lock were bypassed.
+ */
+export async function runReminderPass(
+  pool: Pool,
+  opts: { asOf?: Date; portalUrl?: string; editionIds?: string[] } = {},
+): Promise<ReminderPassResult> {
+  const asOf = opts.asOf ?? new Date();
+  const lockClient = await pool.connect();
+  let locked = false;
+  let releaseErr: Error | undefined;
+  try {
+    const res = await lockClient.query<{ locked: boolean }>(
+      'SELECT pg_try_advisory_lock($1) AS locked',
+      [REMINDER_PASS_LOCK_KEY],
+    );
+    locked = res.rows[0]?.locked === true;
+    if (!locked) return { ran: false, editions: [] };
+
+    const open = new Set(await listCollectingEditionIds(pool));
+    const ids = opts.editionIds ?? [...open];
+    const editions: ReminderRunSummary[] = [];
+    for (const id of ids) {
+      if (!open.has(id)) {
+        editions.push({
+          editionId: id,
+          collecting: false,
+          sends: [],
+          emailed: 0,
+          skipped: emptySkips(),
+          notDue: 0,
+        });
+        continue;
+      }
+      editions.push(
+        await runEditionReminders(pool, id, asOf, {
+          ...(opts.portalUrl ? { portalUrl: opts.portalUrl } : {}),
+        }),
+      );
+    }
+    return { ran: true, editions };
+  } finally {
+    if (locked) {
+      try {
+        await lockClient.query('SELECT pg_advisory_unlock($1)', [REMINDER_PASS_LOCK_KEY]);
+      } catch (err) {
+        // Destroy the connection rather than return it to the pool still
+        // holding the lock; closing the session releases it.
+        releaseErr = err instanceof Error ? err : new Error(String(err));
+      }
+    }
+    lockClient.release(releaseErr);
+  }
 }
 
 // ─── Reachable / unreachable cohort (a real ceiling, stated as a number) ────────

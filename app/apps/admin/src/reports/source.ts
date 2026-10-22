@@ -1,6 +1,7 @@
 import { requestBlob, type AdminClient } from '../api/client';
 import { ApiError, type FirmReportContent, type IndustryReportContent } from '../api/types';
 import { portalClient } from '../firm/portalClient';
+import { PUBLIC_REPORT_COPY } from './publicCopy';
 
 /**
  * Where a report document comes from, and what its reader may do with it. One
@@ -103,5 +104,16 @@ export const publicInstitutionalSource = (
 ): ReportSource<IndustryReportContent> => ({
   ...publicIndustrySource(editionId),
   key: `public:institutional:${editionId}`,
+  // Published with the Industry report: the API's "not published" answer
+  // names that report, so say it in this document's own name.
+  load: () =>
+    publicIndustrySource(editionId)
+      .load()
+      .catch((e: unknown) => {
+        if (e instanceof ApiError && e.statusCode === 409) {
+          throw new ApiError(409, PUBLIC_REPORT_COPY.institutional.notPublished);
+        }
+        throw e;
+      }),
   pdf: () => requestBlob(`/public/editions/${editionId}/institutional-report/pdf`, null),
 });

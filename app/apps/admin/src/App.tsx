@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createClient } from './api/client';
-import { ApiError } from './api/types';
+import { ApiError, type EditionSummary } from './api/types';
 import { ErrorState } from './shared/ErrorState';
+import { BuildVersion } from './shared/BuildVersion';
 import { editionPhase, type EditionPhase } from './editionPhase';
 import { useSession } from './auth/useSession';
 import { LoginPage } from './pages/LoginPage';
@@ -21,49 +22,21 @@ import { UnfinishedPage } from './pages/UnfinishedPage';
 import { WordingPage } from './pages/WordingPage';
 import { DragnetPage } from './pages/DragnetPage';
 import { MailPage } from './pages/MailPage';
+import { AuditPage } from './pages/AuditPage';
+import {
+  TAB_PHASES,
+  pickCurrentEdition,
+  surveysRestricted,
+  editionOptionLabel,
+  type Tab,
+} from './editionNav';
 
-type Tab =
-  | 'board'
-  | 'responses'
-  | 'unfinished'
-  | 'edition'
-  | 'surveys'
-  | 'renderer'
-  | 'firmteam'
-  | 'people'
-  | 'invitations'
-  | 'regulators'
-  | 'scoring'
-  | 'national'
-  | 'firmreports'
-  | 'wording'
-  | 'dragnet'
-  | 'mail';
-
-/**
- * Which nav tabs are relevant in which edition phase (UX-OPS-001: "sections
- * not yet relevant... are shown disabled, not hidden"). A tab not listed for
- * the current phase is rendered disabled, never hidden — the shape of the
- * whole programme stays visible from day one.
- */
-const TAB_PHASES: Record<Tab, EditionPhase[]> = {
-  board: ['before_launch', 'collection_open', 'closing_week', 'closed'],
-  edition: ['before_launch', 'collection_open', 'closing_week', 'closed'],
-  surveys: ['before_launch'],
-  renderer: ['before_launch', 'collection_open'],
-  firmteam: ['before_launch', 'collection_open', 'closing_week'],
-  people: ['before_launch', 'collection_open', 'closing_week', 'closed'],
-  invitations: ['before_launch', 'collection_open', 'closing_week'],
-  regulators: ['before_launch', 'collection_open', 'closing_week'],
-  responses: ['collection_open', 'closing_week'],
-  unfinished: ['collection_open', 'closing_week'],
-  scoring: ['closed'],
-  national: ['closed'],
-  firmreports: ['closed'],
-  wording: ['before_launch', 'collection_open', 'closing_week', 'closed'],
-  mail: ['before_launch', 'collection_open', 'closing_week', 'closed'],
-  dragnet: ['before_launch', 'collection_open', 'closing_week', 'closed'],
-};
+/** A link into operations may name its page (`/?tab=national`), e.g. from an
+ *  approval email; anything else opens the edition page. */
+function initialTab(): Tab {
+  const asked = new URLSearchParams(window.location.search).get('tab');
+  return asked && asked in TAB_PHASES ? (asked as Tab) : 'edition';
+}
 
 /** One nav-bar tab: disabled (not hidden) when not relevant in the current
  *  edition phase, per UX-OPS-001's phase-awareness rule. */
@@ -110,8 +83,10 @@ export function App(): JSX.Element {
   );
 
   const [editionId, setEditionId] = useState<string | null>(null);
+  const [editions, setEditions] = useState<EditionSummary[]>([]);
+  const chosenRef = useRef<string | null>(null);
   const [phase, setPhase] = useState<EditionPhase>('before_launch');
-  const [tab, setTab] = useState<Tab>('edition');
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [serviceDown, setServiceDown] = useState(false);
 
@@ -131,7 +106,13 @@ export function App(): JSX.Element {
       try {
         const editions = await client.listEditions();
         if (cancelled) return;
-        const current = editions.find((e) => e.label === '2026') ?? editions[0];
+        setEditions(editions);
+        // The edition in progress (open, else locked), never just the newest:
+        // a next-year draft must not take over the screen (D-15).
+        // A choice made in the edition switcher survives a token refresh.
+        const kept = editions.find((e) => e.id === chosenRef.current);
+        const current = kept ?? pickCurrentEdition(editions);
+        chosenRef.current = current ? current.id : null;
         setEditionId(current ? current.id : null);
         setLoadError(current ? null : 'No study edition has been set up yet.');
         setServiceDown(false);
@@ -159,6 +140,23 @@ export function App(): JSX.Element {
       cancelled = true;
     };
   }, [session, client, signOut, applyEdition]);
+
+  /** Switch the whole console to another edition (the header switcher). */
+  const chooseEdition = useCallback((id: string) => {
+    chosenRef.current = id;
+    setEditionId(id);
+  }, []);
+
+  /** Re-read the edition list, e.g. after creating the next edition, and
+   *  optionally switch to one of them. */
+  const refreshEditions = useCallback(
+    async (selectId?: string) => {
+      const list = await client.listEditions();
+      setEditions(list);
+      if (selectId) chooseEdition(selectId);
+    },
+    [client, chooseEdition],
+  );
 
   // The phase is not fixed for a session: a lock approved by someone else, or
   // the close date passing, moves it. Re-check on every tab change so the nav
@@ -200,6 +198,18 @@ export function App(): JSX.Element {
           CIS × Dragnet Benchmark
           <small>Study operations</small>
         </div>
+        {editions.length > 1 && editionId && (
+          <label className="edition-switch">
+            <span>Edition</span>
+            <select value={editionId} onChange={(e) => chooseEdition(e.target.value)}>
+              {editions.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {editionOptionLabel(e)}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <div className="whoami">
           {session.user.displayName}
           {session.user.org ? ` · ${session.user.org}` : ''}
@@ -276,6 +286,10 @@ export function App(): JSX.Element {
         <NavTab tabKey="mail" tab={tab} phase={phase} setTab={setTab}>
           Mail
         </NavTab>
+        <span aria-hidden="true">·</span>
+        <NavTab tabKey="audit" tab={tab} phase={phase} setTab={setTab}>
+          Audit
+        </NavTab>
         {session.user.hasDragnetRight && (
           <>
             <span aria-hidden="true">·</span>
@@ -313,9 +327,15 @@ export function App(): JSX.Element {
           editionId={editionId}
           viewer={session.user}
           onLoaded={applyEdition}
+          onEditionCreated={(id) => void refreshEditions(id)}
         />
       ) : tab === 'surveys' ? (
-        <SurveysPage client={client} editionId={editionId} viewer={session.user} />
+        <SurveysPage
+          client={client}
+          editionId={editionId}
+          viewer={session.user}
+          restricted={surveysRestricted(phase)}
+        />
       ) : tab === 'renderer' ? (
         <RendererPage client={client} editionId={editionId} />
       ) : tab === 'firmteam' ? (
@@ -334,11 +354,15 @@ export function App(): JSX.Element {
         <MailPage client={client} />
       ) : tab === 'wording' ? (
         <WordingPage client={client} />
+      ) : tab === 'audit' ? (
+        <AuditPage client={client} editions={editions} />
       ) : tab === 'dragnet' && editionId && session.user.hasDragnetRight ? (
         <DragnetPage client={client} editionId={editionId} />
       ) : (
         <FirmReportsPage client={client} editionId={editionId} viewer={session.user} />
       )}
+
+      <BuildVersion />
     </div>
   );
 }

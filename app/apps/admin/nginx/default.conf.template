@@ -16,6 +16,17 @@ server {
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
     add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
 
+    # Content-Security-Policy for the SPA shell (index.html). The Vite build
+    # emits no inline script or style, so neither needs 'unsafe-inline'; React
+    # style props are set through the CSSOM, which style-src does not govern.
+    # The only third-party origins are Google Fonts (the stylesheet and its font
+    # files, linked from index.html). Downloads are blob: URLs opened by an
+    # <a download> click, which CSP does not restrict. Sent only on the HTML
+    # locations below: /api/ carries the API's own stricter policy.
+    # (add_header in a location replaces this level's headers, so each HTML
+    # location repeats it.) Not substituted by envsubst: there is no such env var.
+    set $cis_csp "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
+
     gzip on;
     gzip_types text/css application/javascript application/json image/svg+xml;
 
@@ -56,6 +67,7 @@ server {
         add_header X-Frame-Options "DENY" always;
         add_header Referrer-Policy "no-referrer" always;
         add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+        add_header Content-Security-Policy $cis_csp always;
         try_files /index.html =404;
     }
 
@@ -63,6 +75,18 @@ server {
     location /assets/ {
         expires 1y;
         add_header Cache-Control "public, immutable" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        try_files $uri =404;
+    }
+
+    # The CIS crest used by every email ({{logo_url}} = <origin>/cis-logo.png).
+    # Mail clients and their image proxies fetch it cross-origin, so it is
+    # cached for a week but not immutable: a new crest under the same name
+    # reaches inboxes within days. 404 rather than the SPA shell if missing.
+    location = /cis-logo.png {
+        access_log off;
+        expires 7d;
+        add_header Cache-Control "public, max-age=604800" always;
         add_header X-Content-Type-Options "nosniff" always;
         try_files $uri =404;
     }
@@ -75,6 +99,7 @@ server {
         add_header X-Frame-Options "DENY" always;
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
         add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+        add_header Content-Security-Policy $cis_csp always;
         try_files $uri $uri/ /index.html;
     }
 }

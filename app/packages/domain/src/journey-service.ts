@@ -37,6 +37,7 @@ import { ParticipationClosedError } from './shared-error-service';
 import { isRegulatorInstrument } from './institution-family-service';
 import { queueNotice } from './email-content';
 import { surveyResumeLink } from './notice-links';
+import { queueSubmissionConfirmation } from './submission-confirmation-service';
 
 /** Outbox kind of the save-and-resume email; ref_id is the respondent. */
 export const SURVEY_RESUME_EMAIL_KIND = 'survey-resume-link';
@@ -46,6 +47,14 @@ const MAX_RESUME_EMAILS = 5;
 
 /** A required contact-collecting surface was progressed without accepted consent. */
 export { ConsentRequiredError };
+
+/** A survey that was already submitted cannot be submitted again (answers are
+ *  final and the confirmation has gone). The API answers 409 ALREADY_SUBMITTED. */
+export class AlreadySubmittedError extends DomainError {
+  constructor() {
+    super('This survey has already been submitted. Your answers are saved.', 'ALREADY_SUBMITTED');
+  }
+}
 
 export class ReviewGapError extends DomainError {
   constructor(
@@ -244,6 +253,8 @@ export async function registerContact(
     if (earlier.length < MAX_RESUME_EMAILS) {
       await queueNotice(pool, {
         kind: SURVEY_RESUME_EMAIL_KIND,
+        audience: 'investor',
+        label: 'Your survey',
         refId: respondentId,
         to: updated.contactEmail.trim(),
         subject: 'Your link back to the CIS × Dragnet survey',
@@ -380,12 +391,19 @@ export async function getResumeByToken(pool: Pool, token: string): Promise<Resum
  * Freeze all draft answers into the immutable `responses` record and mark the
  * respondent submitted. Enforces the consent gate and, as the server-side
  * review-before-submit check, requires every required item in the journey to be
- * answered — otherwise a ReviewGapError names what is outstanding.
+ * answered — otherwise a ReviewGapError names what is outstanding. The
+ * submission confirmation (and a firm seat's coordinator notice) is queued in
+ * the same transaction; `portalUrl` is the public site for its links.
  */
-export async function submitJourney(pool: Pool, respondentId: string): Promise<Response[]> {
+export async function submitJourney(
+  pool: Pool,
+  respondentId: string,
+  opts: { portalUrl?: string } = {},
+): Promise<Response[]> {
   const respondent = await getRespondentById(pool, respondentId);
   if (!respondent) throw new DomainError('Respondent not found', 'RESPONDENT_NOT_FOUND');
   if (respondent.withdrawnAt) throw new ParticipationClosedError();
+  if (respondent.submittedAt) throw new AlreadySubmittedError();
   await assertLinkValid(pool, respondentId);
   await assertCollectionOpen(pool, respondent.editionId);
 
@@ -418,6 +436,13 @@ export async function submitJourney(pool: Pool, respondentId: string): Promise<R
   if (outstanding.length > 0) throw new ReviewGapError(outstanding);
 
   return withTransaction(pool, async (client) => {
+    // Two submits at once: the second waits on this row lock, then sees the
+    // first one's submission and stops — no duplicate answers, no second email.
+    const locked = await client.query<{ submitted_at: Date | null }>(
+      'SELECT submitted_at FROM respondents WHERE id = $1 FOR UPDATE',
+      [respondentId],
+    );
+    if (locked.rows[0]?.submitted_at) throw new AlreadySubmittedError();
     // Re-checked under a share lock: a results lock approved while this
     // submission is in flight either waits for it or is seen here.
     await assertCollectionOpen(client as unknown as Pool, respondent.editionId, {
@@ -446,6 +471,13 @@ export async function submitJourney(pool: Pool, respondentId: string): Promise<R
     // confirms that role — nobody has to remember to record it by hand.
     await confirmEngagementForSubmittedRespondent(client as unknown as Pool, respondentId, {
       closedByScopeGate,
+    });
+    // D-02: confirm the submission by email (when an address is known) in the
+    // same transaction — a submission that rolls back sends nothing, and a
+    // repeated submit queues no second notice.
+    await queueSubmissionConfirmation(client, respondent, {
+      closedByScopeGate,
+      portalUrl: opts.portalUrl,
     });
     return written;
   });

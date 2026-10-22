@@ -11,6 +11,7 @@ import {
   createCriticalAction,
   withTransaction,
 } from '@cis/db';
+import { notifyApprovalDecided, notifyApprovalRequested } from './approval-notices';
 import {
   requirePermission,
   canRequestCriticalAction,
@@ -284,6 +285,12 @@ export async function requestLock(
     payload: { reason: trimmed, editionLabel: edition.label },
     editionId,
   });
+  await notifyApprovalRequested(pool, {
+    actionType: EDITION_LOCK_ACTION,
+    refId: action.id,
+    requestedBy: rbac.userId,
+    requestedAt: action.requestedAt,
+  });
 
   await writeAudit(pool, {
     actorId: rbac.userId,
@@ -356,6 +363,13 @@ export async function decideLock(
       if (e.rowCount === 0) {
         throw new EditionStateError(`Edition ${editionId} could not be locked`);
       }
+      await notifyApprovalDecided(client, {
+        actionType: EDITION_LOCK_ACTION,
+        refId: actionId,
+        requestedBy: action.requestedBy,
+        decidedBy: rbac.userId,
+        approved: true,
+      });
     });
 
     await writeAudit(pool, {
@@ -393,6 +407,14 @@ export async function decideLock(
       if (a.rowCount === 0) {
         throw new CriticalActionStateError('Lock request could not be rejected');
       }
+      await notifyApprovalDecided(client, {
+        actionType: EDITION_LOCK_ACTION,
+        refId: actionId,
+        requestedBy: action.requestedBy,
+        decidedBy: rbac.userId,
+        approved: false,
+        reason: rejectionReason,
+      });
     });
 
     await writeAudit(pool, {

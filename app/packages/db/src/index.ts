@@ -52,6 +52,8 @@ export {
   getRegisterFixture,
   INSTRUMENT_META,
   INSTRUMENT_CODES,
+  RETIRED_INSTRUMENT_CODES,
+  ACTIVE_INSTRUMENT_CODES,
   REGISTER_ITEM_COUNT,
   REGISTER_TODO_MARKER,
 } from './seed/register';
@@ -69,7 +71,9 @@ export type {
 } from './seed/register-ingestion';
 export * from './queries/report-content';
 export * from './queries/report-snapshots';
+export * from './queries/report-delivery-sends';
 export * from './queries/email-outbox';
 export * from './queries/mail-health';
 export * from './queries/password-set-tokens';
 export * from './queries/national-review';
+export * from './queries/audit-log';

@@ -112,6 +112,15 @@ ENV HOST=0.0.0.0 \
     PORT=3000
 # Code is owned by root and read-only to the runtime user.
 COPY --from=api-bundle /app /app
+# Which build this is, served by GET /version (D-06). CI passes the commit sha,
+# the pushed image tag and the build time; declared last so a new value only
+# rebuilds this metadata layer. Unset → the API reports "unknown".
+ARG GIT_COMMIT=""
+ARG IMAGE_TAG=""
+ARG BUILD_TIME=""
+ENV GIT_COMMIT=${GIT_COMMIT} \
+    IMAGE_TAG=${IMAGE_TAG} \
+    BUILD_TIME=${BUILD_TIME}
 USER 1000:1000
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

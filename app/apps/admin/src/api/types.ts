@@ -235,7 +235,8 @@ export interface InvitationRequestItem {
   phone: string | null;
   flag: string | null;
   resolved: boolean;
-  resolution: 'code_issued' | 'marked_done' | null;
+  resolution: 'code_issued' | 'marked_done' | 'declined' | null;
+  declineReason?: string | null;
   resolvedBy: string | null;
   resolvedAt: string | null;
   createdAt: string;
@@ -623,6 +624,28 @@ export interface UnfinishedResponse {
   cap: number;
 }
 
+/** D-03 — the result of "Send reminders now" (POST /editions/:id/reminders/run). */
+export interface ReminderRunResult {
+  /** False when the edition is not collecting responses — nothing was sent. */
+  collecting: boolean;
+  /** Reminder emails queued by this run. */
+  emailed: number;
+  /** Reminders recorded by this run (emailed, or due for someone without email). */
+  recorded: number;
+  /** Unfinished people who could be reminded but have nothing due yet. */
+  notDue: number;
+  skipped: {
+    /** Chose text messages only — there is no text service. */
+    notEmail: number;
+    /** No reminder wording is published. */
+    noWording: number;
+    /** Already sent by another run. */
+    alreadySent: number;
+    /** Submitted or stopped reminders while the run was going. */
+    noLongerEligible: number;
+  };
+}
+
 // ─── Regulators (UX-OPS-007) ────────────────────────────────────────────────
 
 export type RegulatorFamilyCode = 'A' | 'B' | 'C' | 'D';
@@ -790,6 +813,8 @@ export interface IndustryReportContent {
   narrative: ReportNarrativeView | null;
   /** When the document left CIS (released to its firm / published); then final. */
   publishedAt?: string | null;
+  /** Investors the published report has been emailed to (operator view only). */
+  reportEmailedCount?: number | null;
 }
 
 export interface FirmReportContent {
@@ -841,4 +866,41 @@ export interface MethodologyApprovalView {
   pending: { actionId: string; requestedBy: string; requestedAt: string; reason: string } | null;
   viewerId: string;
   operatorNames: Record<string, string>;
+}
+
+/** D-15 — the result of "Create next edition". */
+export interface NextEditionCreated {
+  id: string;
+  label: string;
+  status: EditionStatus;
+  copied: { floors: number; templates: number; participants: number; institutionRoles: number };
+}
+
+/** D-07 — one audit-trail entry as the Audit screen shows it. */
+export interface AuditEntry {
+  id: string;
+  occurredAt: string;
+  actor: { id: string; name: string | null; email: string | null } | null;
+  action: string;
+  entityType: string;
+  entityId: string | null;
+  entityLabel: string | null;
+  editionId: string | null;
+  editionLabel: string | null;
+  oldValue: Record<string, unknown> | null;
+  newValue: Record<string, unknown> | null;
+  reason: string | null;
+  ipAddress: string | null;
+  userAgent: string | null;
+}
+
+export interface AuditPageResponse {
+  entries: AuditEntry[];
+  nextCursor: string | null;
+}
+
+export interface AuditFacets {
+  actionTypes: string[];
+  entityTypes: string[];
+  actors: Array<{ id: string; name: string; email: string }>;
 }

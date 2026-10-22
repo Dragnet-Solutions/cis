@@ -719,6 +719,30 @@ delivered/bounced/opened/clicked data flows through the abstraction into the
 board's evaluations. `sendBatch` now defaults to Zeptomail. (Phase 9's README
 open item is updated accordingly.)
 
+### Email design — the approved CIS templates
+
+Every email is sent in the client's approved design (CIS crest, purple
+`#22006A`, gold `#B8985A`). The 23 designs live verbatim in
+`packages/domain/src/email-templates/html/` (the invitation-code box of
+F-01–F-03 is set smaller and wraps, because the "code" is the firm's
+invitation link), with four more built in the same design: I-02 (market
+institution reminder), I-03 / I-04 (market institution response received;
+I-04 when its Q0 answer closed the survey) and BASE (the shared header and
+footer for every notice without a template of its own).
+
+- The HTML files are embedded in `templates.generated.ts` so they ship in
+  `dist/` (the API image has no source files). After editing one, run
+  `pnpm --filter @cis/domain email:templates` (the domain build also does it,
+  and a test fails if it is stale).
+- `renderTemplate(id, fields)` escapes every merge value, refuses a missing
+  field outside production, and derives the plain-text part from the HTML;
+  `queueTemplate` queues both. `{{logo_url}}` is `<PORTAL_URL>/cis-logo.png`
+  (served by the admin app from `apps/admin/public/`), `{{support_email}}` is
+  `SUPPORT_EMAIL` (default `support@idhub.ng`).
+- `pnpm --filter @cis/api email:preview` renders every email with sample data
+  to `app/tmp/email-previews/` (git-ignored); add `--send-to you@example.com`
+  to send one of each through the configured mail service.
+
 ### ⚠️ Interpretations & decisions flagged
 
 - **Firm-tier scoring source (condition 13) is an INFERENCE.** The brief doesn't
@@ -1052,6 +1076,17 @@ completes ÷ days).
 - **Completion boundary (§C8).** The engine schedules sends into an append-only
   `reminder_send` ledger and never touches response state; a completed (submitted)
   response is never reminded.
+- **Sent automatically (D-03).** Each API pod runs an in-process timer
+  (`apps/api/src/reminders/scheduler.ts`): once a minute after start, then every
+  `REMINDER_SCHEDULE_INTERVAL_MS` (default one hour), `runReminderPass` covers
+  every open edition. A Postgres advisory lock (`pg_try_advisory_lock`) lets only
+  one pod run a pass at a time; each send is one transaction that re-checks the
+  respondent under a row lock, inserts the ledger row `ON CONFLICT (edition_id,
+response_id, step) DO NOTHING` and queues the email — so a step is never sent
+  twice. Nothing is sent after the close date, two reminders to one person are
+  at least a day apart, and `REMINDER_SCHEDULE=off` disables the timer. The
+  Unfinished page's "Send reminders now" (`POST /editions/:id/reminders/run`,
+  needs "access:send", audited as `reminders.run_manual`) runs the same pass.
 
 ### ⚠️ Open item — firm-side respondent reminders (unresolved)
 

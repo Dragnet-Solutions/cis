@@ -41,6 +41,8 @@ import {
   ensureFirmNarrative,
   publishIndustryReport,
   publishedIndustryReportContent,
+  sendPublishedReportToInvestors,
+  reportEmailedCount,
   releasedFirmReportContent,
   queueReleaseNotices,
   prepareNationalReview,
@@ -54,7 +56,8 @@ import {
 import type { ReportNarrative } from '@cis/db';
 import { foundryModelFromEnv } from '../ai/foundry-model';
 import { deliverQueuedEmails } from '../mail/mailer';
-import { firmPortalUrl } from '../public-url';
+import { kickMailDispatcher } from '../mail/dispatcher';
+import { firmPortalUrl, publicOrigin } from '../public-url';
 import { renderReportPdf, type PdfSession } from '../pdf/report-pdf';
 
 /**
@@ -115,6 +118,26 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
   // Where a released firm's coordinators sign in to read their report.
   const portalUrl = () => firmPortalUrl();
 
+  // D-04: once the Industry report is published, email it to the investors who
+  // asked for it — each at most once per publication (report_delivery_sends),
+  // so a retry or a second publish call sends nothing new.
+  const emailPublishedReport = async (
+    publication: Awaited<ReturnType<typeof publishIndustryReport>>,
+    request: { session: { sub: string }; ip: string; headers: { 'user-agent'?: string } },
+  ): Promise<number> => {
+    const queued = await sendPublishedReportToInvestors(getPool(), publication, {
+      portalUrl: publicOrigin(),
+      supportEmail: process.env['SUPPORT_EMAIL'] ?? null,
+      actor: {
+        userId: request.session.sub,
+        ipAddress: request.ip,
+        userAgent: request.headers['user-agent'] ?? null,
+      },
+    });
+    if (queued > 0) kickMailDispatcher();
+    return queued;
+  };
+
   const narrativeView = (n: ReportNarrative | null) =>
     n && {
       model: n.model,
@@ -139,6 +162,7 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
         ...content,
         narrative: narrativeView(narrative),
         publishedAt: published?.publishedAt ?? null,
+        reportEmailedCount: published ? await reportEmailedCount(pool, published.id) : null,
       });
     },
   );
@@ -242,7 +266,8 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
 
   // Publish the Industry report to the public — happens by itself when the
   // national report is approved; this is the retry if the analysis could not be
-  // drafted then. Idempotent.
+  // drafted then. Idempotent. Publishing emails the report to the investors who
+  // asked for it; calling it again emails only anyone not yet sent it.
   app.post(
     '/editions/:id/reports/industry/publish',
     { preHandler: [app.authenticate], schema: { params: z.object({ id: z.string().uuid() }) } },
@@ -253,7 +278,11 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
         foundryModelFromEnv,
         request.session.email,
       );
-      return reply.send({ publishedAt: publication.publishedAt });
+      await emailPublishedReport(publication, request);
+      return reply.send({
+        publishedAt: publication.publishedAt,
+        reportEmailed: await reportEmailedCount(getPool(), publication.id),
+      });
     },
   );
 
@@ -540,9 +569,11 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
           report.editionId,
           foundryModelFromEnv,
           request.session.email,
-        ).catch((err: unknown) =>
-          request.log.warn({ err }, 'Industry report not published on approval'),
-        );
+        )
+          .then((publication) => emailPublishedReport(publication, request))
+          .catch((err: unknown) =>
+            request.log.warn({ err }, 'Industry report not published (or not emailed) on approval'),
+          );
       }
       return reply.send({ status: report.status });
     },

@@ -85,7 +85,7 @@ export async function listInstitutionEngagement(
 ): Promise<InstitutionEngagement[]> {
   const res = await query<RawEngRow>(
     pool,
-    `${ENG_SELECT} WHERE e.edition_id = $1 ORDER BY e.family_code, i.name`,
+    `${ENG_SELECT} WHERE e.edition_id = $1 AND e.retired_at IS NULL ORDER BY e.family_code, i.name`,
     [editionId],
   );
   return res.rows.map(mapEng);

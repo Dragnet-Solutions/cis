@@ -175,6 +175,7 @@ export async function sendFirmDigest(
       organizationId,
       code: null,
       kind: FIRM_DIGEST_EMAIL_KIND,
+      audience: 'firm',
       refId: organizationId,
       subject: `${digest.firmName}: your benchmark update`,
       heading: `${digest.firmName}: your benchmark update`,

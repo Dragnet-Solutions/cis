@@ -1,4 +1,4 @@
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import { query } from '../client';
 
 /**
@@ -121,6 +121,92 @@ export async function recordReminderSend(
   const row = res.rows[0];
   if (!row) throw new Error('reminder_send insert returned no rows');
   return mapReminder(row);
+}
+
+/**
+ * Record a reminder send at most once per (edition, response, step): the
+ * ledger's UNIQUE (edition_id, response_id, step) makes a second attempt — a
+ * repeated run, or another API pod racing this one — a no-op that returns
+ * null. Takes a transaction client so the reminder email is queued atomically
+ * with its ledger row.
+ */
+export async function recordReminderSendOnce(
+  db: Pool | PoolClient,
+  data: {
+    editionId: string;
+    responseId: string;
+    step: number;
+    scheduledFor: Date;
+    carriesStop: boolean;
+  },
+): Promise<ReminderSend | null> {
+  const res = await query<RawReminderRow>(
+    db as Pool,
+    `INSERT INTO reminder_send (edition_id, response_id, step, scheduled_for, carries_stop)
+     VALUES ($1,$2,$3,$4,$5)
+     ON CONFLICT (edition_id, response_id, step) DO NOTHING
+     RETURNING *`,
+    [data.editionId, data.responseId, data.step, data.scheduledFor, data.carriesStop],
+  );
+  const row = res.rows[0];
+  return row ? mapReminder(row) : null;
+}
+
+/** Why a response may no longer be reminded, re-read under a row lock inside
+ *  the send transaction (so a submit or STOP racing a run wins). */
+export interface ReminderEligibility {
+  submitted: boolean;
+  optedOut: boolean;
+  withdrawn: boolean;
+}
+
+/** Lock a respondent row (FOR UPDATE) and read what decides whether it may
+ *  still be reminded. Null when the respondent no longer exists. */
+export async function lockRespondentForReminder(
+  client: PoolClient,
+  respondentId: string,
+): Promise<ReminderEligibility | null> {
+  const res = await client.query<{
+    submitted: boolean;
+    reminders_opted_out: boolean;
+    withdrawn: boolean;
+  }>(
+    `SELECT submitted_at IS NOT NULL AS submitted,
+            reminders_opted_out,
+            withdrawn_at IS NOT NULL AS withdrawn
+       FROM respondents WHERE id = $1 FOR UPDATE`,
+    [respondentId],
+  );
+  const row = res.rows[0];
+  return row
+    ? { submitted: row.submitted, optedOut: row.reminders_opted_out, withdrawn: row.withdrawn }
+    : null;
+}
+
+/** Every reminder already sent to a response, oldest first (steps for the cap
+ *  and STOP flag; times for the minimum gap between two reminders). */
+export async function listReminderHistory(
+  db: Pool | PoolClient,
+  editionId: string,
+  responseId: string,
+): Promise<{ step: number; createdAt: Date }[]> {
+  const res = await query<{ step: number; created_at: Date }>(
+    db as Pool,
+    `SELECT step, created_at FROM reminder_send
+      WHERE edition_id = $1 AND response_id = $2 ORDER BY created_at, step`,
+    [editionId, responseId],
+  );
+  return res.rows.map((r) => ({ step: r.step, createdAt: r.created_at }));
+}
+
+/** Editions collecting responses (status 'open') — the scheduled reminder
+ *  run's scope. Draft, locked and archived editions are never reminded. */
+export async function listCollectingEditionIds(pool: Pool): Promise<string[]> {
+  const res = await query<{ id: string }>(
+    pool,
+    `SELECT id FROM editions WHERE status = 'open' ORDER BY created_at`,
+  );
+  return res.rows.map((r) => r.id);
 }
 
 /** Steps already sent to a response (for cap + first-vs-subsequent STOP flag). */

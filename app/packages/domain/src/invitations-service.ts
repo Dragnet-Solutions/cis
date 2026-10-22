@@ -30,6 +30,7 @@ import {
   listBouncedRecipients,
   recordDelivery,
   withTransaction,
+  getFirmSegmentContributionCounts,
 } from '@cis/db';
 import type {
   MessageTemplate,
@@ -42,7 +43,9 @@ import type {
   InvitationRequestItem,
 } from '@cis/shared-types';
 import { DomainError } from './errors';
-import { queueNotice, type EmailAction } from './email-content';
+import { queueNotice, queueTemplate, type EmailAction, type NoticeAudience } from './email-content';
+import type { MergeFields, TemplateId } from './email-templates';
+import { editionForEmail, fmtDate, requestRef, studyDates } from './email-fields';
 import {
   invitationLink,
   ensureFirmInvitationRecord,
@@ -94,6 +97,10 @@ export interface OutgoingMessage {
   heading?: string;
   paragraphs?: string[];
   action?: EmailAction;
+  /** Who it is for (the BASE layout's small print and sign-off). */
+  audience?: NoticeAudience;
+  /** One of the designed templates, rendered instead of subject/paragraphs. */
+  designed?: { template: TemplateId; fields: MergeFields };
   /** Outbox kind and reference, so the email's delivery can be looked up. */
   kind?: string;
   refId?: string | null;
@@ -133,10 +140,22 @@ export class ZeptomailSendingService implements SendingService {
   ): Promise<{ deliveryState: SendOutcome }> {
     const to = message.recipientEmail?.trim() ?? '';
     if (!to || !EMAIL_RE.test(to)) return { deliveryState: 'not_sent' };
+    const target = db ?? this.pool;
+    if (message.designed && message.kind) {
+      if (!target) throw new InvitationsError('No database to queue the message in', 'NO_DB');
+      await queueTemplate(target, {
+        kind: message.kind,
+        refId: message.refId ?? null,
+        to,
+        toName: message.recipientName ?? null,
+        template: message.designed.template,
+        fields: message.designed.fields,
+      });
+      return { deliveryState: 'sent' };
+    }
     if (!message.subject || !message.paragraphs || !message.kind) {
       throw new InvitationsError('A message must be rendered before it is sent', 'NOT_RENDERED');
     }
-    const target = db ?? this.pool;
     if (!target) throw new InvitationsError('No database to queue the message in', 'NO_DB');
     await queueNotice(target, {
       kind: message.kind,
@@ -147,6 +166,7 @@ export class ZeptomailSendingService implements SendingService {
       paragraphs: message.paragraphs,
       ...(message.heading ? { heading: message.heading } : {}),
       ...(message.action ? { action: message.action } : {}),
+      ...(message.audience ? { audience: message.audience } : {}),
     });
     return { deliveryState: 'sent' };
   }
@@ -524,6 +544,10 @@ interface BatchTarget {
   link: string | null;
   /** Whether the firm already has a space (its link signs in, not claims). */
   claimed: boolean;
+  /** How many of the firm's three surveys are complete (firm audiences). */
+  surveysDone?: number;
+  /** When the firm's invitation link expires, when it was opened for this email. */
+  expiresAt?: Date;
   /** An unclaimed firm with no usable invitation: one is opened for the
    *  recipient's address when the email is sent, and `link` becomes its link. */
   needsInvitation?: boolean;
@@ -579,7 +603,12 @@ async function withInvitationLink(
     actorId: ctx.actorId,
     via: ctx.via,
   });
-  return { ...t, link: invitationLink(ctx.portalUrl, inv.token), needsInvitation: false };
+  return {
+    ...t,
+    link: invitationLink(ctx.portalUrl, inv.token),
+    needsInvitation: false,
+    expiresAt: inv.expiresAt,
+  };
 }
 
 const PLACEHOLDER = (name: string) => new RegExp(`\\{\\{\\s*${name}\\s*\\}\\}`, 'g');
@@ -592,25 +621,172 @@ const PLACEHOLDER = (name: string) => new RegExp(`\\{\\{\\s*${name}\\s*\\}\\}`, 
  */
 export function renderTemplateText(
   text: string,
-  vars: { firm: string | null; link: string | null },
+  vars: {
+    firm: string | null;
+    link: string | null;
+    surveyLink?: string | null;
+    closeDate?: string | null;
+  },
 ): string {
   let out = text;
   if (!vars.firm?.trim()) out = out.replace(/Dear\s*\{\{\s*firm\s*\}\}/g, 'Hello');
   return out
     .replace(PLACEHOLDER('firm'), vars.firm?.trim() ?? '')
-    .replace(PLACEHOLDER('(?:code|link)'), vars.link ?? '');
+    .replace(PLACEHOLDER('(?:code|link)'), vars.link ?? '')
+    .replace(PLACEHOLDER('survey_link'), vars.surveyLink ?? '')
+    .replace(PLACEHOLDER('close_date'), vars.closeDate ?? '');
 }
 
-/** The rendered email for one batch recipient. */
-function renderBatchMessage(
+/**
+ * The approved design for a batch template, by the template's name: the six
+ * seeded firm templates and the retail survey invitation each have one. A
+ * template the operators wrote themselves is sent as written, in the shared
+ * layout. The designed wording replaces the stored body of a named template.
+ */
+const DESIGNED_FIRM_TEMPLATES: Readonly<Record<string, TemplateId>> = {
+  'first invitation': 'F-01',
+  reminder: 'F-02',
+  'reissued code': 'F-03',
+  'nobody assigned yet': 'F-06',
+  'surveys outstanding': 'F-07',
+  'invite your clients': 'F-09',
+};
+const DESIGNED_PARTICIPANT_TEMPLATES: Readonly<Record<string, TemplateId>> = {
+  'retail survey invitation': 'P-01',
+};
+
+export function designedBatchTemplate(
+  template: Pick<MessageTemplate, 'name' | 'audienceKind'>,
+  audienceId: string,
+): TemplateId | null {
+  const name = template.name.trim().toLowerCase();
+  if (audienceId in PARTICIPANT_INSTRUMENTS) {
+    return template.audienceKind === 'participant'
+      ? (DESIGNED_PARTICIPANT_TEMPLATES[name] ?? null)
+      : null;
+  }
+  if (audienceId === 'regsall' || template.audienceKind !== 'firm') return null;
+  return DESIGNED_FIRM_TEMPLATES[name] ?? null;
+}
+
+/**
+ * The bodies these templates were seeded with (test seed and production
+ * migration). A stored body that is none of them was edited by the operators:
+ * their text then replaces the design's opening paragraphs.
+ */
+const SEEDED_BODIES: Readonly<Record<string, readonly string[]>> = {
+  'first invitation': [
+    'Dear {{firm}},\n\nYour firm has a space on the study platform. Open your invitation link to set up your access:\n\n{{code}}',
+  ],
+  reminder: [
+    'Dear {{firm}},\n\nYour invitation to the 2026 benchmark study has not been used yet. Your invitation link is:\n\n{{code}}',
+  ],
+  'reissued code': ["Dear {{firm}},\n\nHere is your firm's invitation link again:\n\n{{code}}"],
+  'nobody assigned yet': [
+    'Dear {{firm}},\n\nYour space is set up, but the three surveys have not been assigned to anyone yet.',
+  ],
+  'surveys outstanding': [
+    'Dear {{firm}},\n\nAt least one of your three surveys is still outstanding.',
+  ],
+  'invite your clients': [
+    'Dear {{firm}},\n\nYour firm has not yet invited its own clients to take part.',
+  ],
+  'retail survey invitation': [
+    'Dear participant,\n\nYou have been selected to complete a brief survey as part of the 2026 benchmark study. Please follow the link to complete your survey: {{survey_link}}\n\nThank you.',
+    'You have been invited to share your experience for the independent Nigerian Capital Market Brokerage Benchmark.\n\nYour answers are anonymous. No broker is told whether you took part, and your name is never shared with any firm.\n\nStart your survey: {{survey_link}}\n\nIf you did not expect this invitation, you can disregard this message.',
+  ],
+};
+
+const normalise = (s: string) => s.replace(/\s+/g, ' ').trim();
+
+/** Whether the operators changed a seeded template's body. */
+export function operatorEditedBody(template: Pick<MessageTemplate, 'name' | 'body'>): boolean {
+  const seeded = SEEDED_BODIES[template.name.trim().toLowerCase()];
+  if (!seeded) return true;
+  return !seeded.some((b) => normalise(b) === normalise(template.body));
+}
+
+/** The public survey's entry, where an invited investor starts. */
+const retailSurveyLink = (portalUrl: string) => `${siteOrigin(portalUrl)}/survey`;
+
+interface BatchRenderContext {
+  db: Pool;
+  audienceId: string;
+  portalUrl: string;
+  edition: Awaited<ReturnType<typeof editionForEmail>>;
+}
+
+const AUDIENCE_OF: Record<MessageAudienceKind, NoticeAudience> = {
+  firm: 'firm',
+  participant: 'investor',
+  regulator: 'institution',
+  upload: 'firm',
+};
+
+/** The rendered email for one batch recipient: its designed template, else the operators' text. */
+async function renderBatchMessage(
   template: MessageTemplate,
   t: BatchTarget,
-): Pick<OutgoingMessage, 'subject' | 'paragraphs' | 'action'> {
-  const vars = { firm: t.firmName, link: t.link };
+  ctx: BatchRenderContext,
+): Promise<Pick<OutgoingMessage, 'subject' | 'paragraphs' | 'action' | 'audience' | 'designed'>> {
+  const designed = designedBatchTemplate(template, ctx.audienceId);
+  if (designed) {
+    const firm = t.firmName?.trim() || 'your firm';
+    const dates = studyDates(ctx.edition);
+    const portalLink = t.link ?? firmPortalLink(ctx.portalUrl);
+    let fields: MergeFields;
+    if (designed === 'P-01') {
+      fields = {
+        survey_link: retailSurveyLink(ctx.portalUrl),
+        close_date: dates.close_date,
+        edition: ctx.edition?.label,
+      };
+    } else {
+      fields = {
+        contact_name: t.recipientName?.trim() || firm,
+        firm,
+        portal_link: portalLink,
+        // There is no typed code: the firm's personal link is its invitation.
+        code: portalLink,
+        open_date: dates.open_date,
+        close_date: dates.close_date,
+        surveys_done: t.surveysDone ?? 0,
+        expires_on: t.expiresAt && !t.claimed ? fmtDate(t.expiresAt) : null,
+        edition: ctx.edition?.label,
+      };
+      if (designed === 'F-09') {
+        const c =
+          t.organizationId && ctx.edition
+            ? await getFirmSegmentContributionCounts(ctx.db, ctx.edition.id, t.organizationId)
+            : null;
+        fields['investor_responses'] = c
+          ? c.retail + c.localInstitutional + c.foreignInstitutional
+          : 0;
+      }
+    }
+    if (operatorEditedBody(template)) {
+      // The operators' own words, inside the approved design.
+      fields['body'] = textParagraphs(
+        renderTemplateText(template.body, {
+          firm: t.firmName,
+          link: portalLink,
+          surveyLink: retailSurveyLink(ctx.portalUrl),
+          closeDate: dates.close_date,
+        }),
+      );
+    }
+    return { designed: { template: designed, fields } };
+  }
+  const vars = {
+    firm: t.firmName,
+    link: t.link,
+    surveyLink: retailSurveyLink(ctx.portalUrl),
+  };
   const bodyHasLink = /\{\{\s*(?:code|link)\s*\}\}/.test(template.body);
   return {
     subject: renderTemplateText(template.subject, vars),
     paragraphs: textParagraphs(renderTemplateText(template.body, vars)),
+    audience: AUDIENCE_OF[template.audienceKind],
     // A template that does not carry the link itself still gets a button to it.
     ...(t.link && !bodyHasLink
       ? {
@@ -655,6 +831,7 @@ export async function sendBatch(
   const service = input.service ?? new ZeptomailSendingService();
   const portalUrl = siteOrigin(input.portalUrl);
   const alreadySent = await orgsSentTemplate(pool, input.editionId, input.templateId);
+  const edition = await editionForEmail(pool, input.editionId);
 
   // Resolve the target recipient set.
   const targets: BatchTarget[] = [];
@@ -729,6 +906,7 @@ export async function sendBatch(
         recipientName: contact?.name ?? null,
         firmName: f.firmName,
         organizationId: f.organizationId,
+        surveysDone: f.complete,
         ...plan,
       });
     }
@@ -787,7 +965,12 @@ export async function sendBatch(
               code: t.link,
               kind: INVITATION_BATCH_EMAIL_KIND,
               refId: recipient.id,
-              ...renderBatchMessage(template, t),
+              ...(await renderBatchMessage(template, t, {
+                db: c,
+                audienceId: input.audienceId,
+                portalUrl,
+                edition,
+              })),
             },
             client,
           )
@@ -886,24 +1069,36 @@ export function getInvitationRequests(
   return listInvitationRequests(pool, editionId, { includeResolved });
 }
 
+/** Outbox kinds of the answers to a request for an invitation; ref_id is the
+ *  invitation_requests row. Approved (F-11) goes with the invitation itself;
+ *  declined (F-12) carries the reason. */
+export const INVITATION_REQUEST_APPROVED_EMAIL_KIND = 'invitation-request-approved';
+export const INVITATION_REQUEST_DECLINED_EMAIL_KIND = 'invitation-request-declined';
+
 /**
- * Resolve a queued request — either by issuing the firm's invitation to the
- * requester, or by marking it done without one. Both close the queue item.
+ * Resolve a queued request — by issuing the firm's invitation to the
+ * requester, by declining it with a reason, or by marking it done without
+ * either. Each closes the queue item.
  *
- * Issuing emails the requester their firm's link — sign-in if the firm
- * already has a space, else its open invitation, else a new invitation opened
- * for the requester's address (no separate invitation email): rendered from the
- * reissue template when one is given — recorded as a one-recipient batch,
- * kind 'invitation-batch' — else a plain notice of kind
- * 'invitation-request-issued' referencing the request.
+ * Issuing tells the requester the firm has been added (F-11) and emails them
+ * their firm's link — sign-in if the firm already has a space (then no F-11:
+ * nothing was added), else its open invitation, else a new invitation opened
+ * for the requester's address: rendered from the reissue template when one is
+ * given — recorded as a one-recipient batch, kind 'invitation-batch' — else
+ * the firm invitation design (F-01) of kind 'invitation-request-issued'.
+ *
+ * Declining needs a reason, which the requester is sent (F-12). Marking done
+ * sends nothing.
  */
 export async function resolveInvitationRequest(
   pool: Pool,
   input: {
     requestId: string;
-    resolution: 'code_issued' | 'marked_done';
+    resolution: 'code_issued' | 'marked_done' | 'declined';
     resolvedBy?: string | null;
     reissueTemplateId?: string;
+    /** Required to decline: told to the requester. */
+    declineReason?: string | null;
     /** The public site's address (PORTAL_URL), for the link in the email. */
     portalUrl?: string;
   },
@@ -911,6 +1106,13 @@ export async function resolveInvitationRequest(
   const req = await getInvitationRequest(pool, input.requestId);
   if (!req) throw new InvitationsError('Request not found', 'NOT_FOUND');
   if (req.resolved) throw new InvitationsError('Request is already resolved', 'ALREADY_RESOLVED');
+  const declineReason = input.declineReason?.trim() ?? '';
+  if (input.resolution === 'declined' && declineReason.length < 4) {
+    throw new InvitationsError(
+      'Give the reason for declining: the requester is told it.',
+      'DECLINE_REASON_REQUIRED',
+    );
+  }
 
   const template =
     input.resolution === 'code_issued' && input.reissueTemplateId
@@ -927,9 +1129,28 @@ export async function resolveInvitationRequest(
     );
   }
   const plan = await planFirmLink(pool, portalUrl, req.organizationId, contact);
+  const edition = await editionForEmail(pool, req.editionId);
+  const to = req.email.trim();
+  const canEmail = EMAIL_RE.test(to);
+  const ref = requestRef(req.id);
 
   return withTransaction(pool, async (client) => {
     const c = client as unknown as Pool;
+    if (input.resolution === 'declined' && canEmail) {
+      await queueTemplate(client, {
+        kind: INVITATION_REQUEST_DECLINED_EMAIL_KIND,
+        refId: req.id,
+        to,
+        toName: req.requesterName,
+        template: 'F-12',
+        fields: {
+          requester_name: req.requesterName,
+          firm: req.firmName,
+          request_ref: ref,
+          decline_reason: declineReason,
+        },
+      });
+    }
     if (input.resolution === 'code_issued') {
       // An unclaimed firm with no open invitation: open one for the requester.
       const resolved = await withInvitationLink(
@@ -950,6 +1171,17 @@ export async function resolveInvitationRequest(
       );
       const claimed = resolved.claimed;
       const link = resolved.link ?? firmPortalLink(portalUrl);
+      // F-11 first: it says the invitation follows in a separate email.
+      if (!claimed && canEmail) {
+        await queueTemplate(client, {
+          kind: INVITATION_REQUEST_APPROVED_EMAIL_KIND,
+          refId: req.id,
+          to,
+          toName: req.requesterName,
+          template: 'F-11',
+          fields: { requester_name: req.requesterName, firm: req.firmName, request_ref: ref },
+        });
+      }
       if (template) {
         const service = new ZeptomailSendingService();
         const batch = await createBatch(c, {
@@ -985,39 +1217,56 @@ export async function resolveInvitationRequest(
             code: link,
             kind: INVITATION_BATCH_EMAIL_KIND,
             refId: recipient.id,
-            ...renderBatchMessage(template, target),
+            ...(await renderBatchMessage(template, target, {
+              db: c,
+              audienceId: 'request',
+              portalUrl,
+              edition,
+            })),
           },
           client,
         );
         if (deliveryState !== 'sent') await recordDelivery(c, recipient.id, { deliveryState });
-      } else if (EMAIL_RE.test(req.email.trim())) {
+      } else if (canEmail && !claimed) {
+        await queueTemplate(client, {
+          kind: INVITATION_REQUEST_EMAIL_KIND,
+          refId: req.id,
+          to,
+          toName: req.requesterName,
+          template: 'F-01',
+          fields: {
+            contact_name: req.requesterName,
+            firm: req.firmName,
+            code: link,
+            portal_link: link,
+            ...studyDates(edition),
+            expires_on: resolved.expiresAt ? fmtDate(resolved.expiresAt) : null,
+            edition: edition?.label,
+          },
+        });
+      } else if (canEmail) {
         await queueNotice(client, {
           kind: INVITATION_REQUEST_EMAIL_KIND,
           refId: req.id,
-          to: req.email.trim(),
+          to,
           toName: req.requesterName,
-          subject: `Your invitation to the CIS × Dragnet benchmark — ${req.firmName}`,
-          heading: claimed
-            ? `${req.firmName} already has its space`
-            : `Your invitation for ${req.firmName}`,
+          audience: 'firm',
+          subject: `Your invitation to the CIS-Dragnet 2026 Benchmark Study — ${req.firmName}`,
+          label: 'Your request',
+          heading: `${req.firmName} already has its space`,
           paragraphs: [
             `Dear ${req.requesterName},`,
-            `Thank you for asking to take part in the CIS × Dragnet benchmark for ${req.firmName}.`,
-            claimed
-              ? `Your firm has already set up its space. Its coordinators sign in with their email address and PIN; ask one of them to add you to your firm's team.`
-              : `Open the link below to set up your firm's space. You will be its coordinator: you give your name and mobile number and choose a 6-digit PIN, which you then use with your email address to sign in.`,
+            `Thank you for asking to take part in the CIS-Dragnet 2026 Benchmark Study for ${req.firmName} (ref ${ref}).`,
+            `Your firm has already set up its space. Its coordinators sign in with their email address and PIN; ask one of them to add you to your firm's team.`,
           ],
-          action: {
-            label: claimed ? 'Go to the firm portal' : "Set up your firm's space",
-            url: link,
-          },
-          footer: 'If you were not expecting this, reply to this email and the CIS team will help.',
+          action: { label: 'Go to the firm portal', url: link },
         });
       }
     }
     return resolveInvitationRequestRow(c, input.requestId, {
       resolution: input.resolution,
       resolvedBy: input.resolvedBy ?? null,
+      declineReason: input.resolution === 'declined' ? declineReason : null,
     });
   });
 }

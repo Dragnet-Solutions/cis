@@ -42,3 +42,6 @@ logs/
 *.swp
 .DS_Store
 Thumbs.db
+
+# Local email previews (pnpm --filter @cis/api email:preview)
+tmp/

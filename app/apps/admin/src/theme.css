@@ -1682,3 +1682,89 @@ tr.soft {
   margin: 0 10px;
   color: #6a6a6a;
 }
+
+/* Inline field validation (lib/useEmailField). */
+.field-error {
+  margin: 6px 0 0;
+  color: var(--stop);
+  font-size: 13px;
+  font-weight: 700;
+}
+input[aria-invalid='true'] {
+  border-color: var(--stop);
+}
+
+/* Which build is running (D-06): the operator footer and Setup › Mail. */
+.buildline {
+  display: block;
+  padding: 14px 20px 18px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--fg-3);
+  overflow-wrap: anywhere;
+}
+dd.buildline {
+  padding: 0;
+  font-size: 13px;
+}
+.buildline.mismatch {
+  color: var(--stop);
+}
+
+/* Edition switcher (D-15): which edition the console is working on. */
+.edition-switch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--fg-3);
+}
+.edition-switch select {
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 12px;
+}
+
+/* Audit (D-07) */
+.audit-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 0 16px;
+}
+.audit-table td {
+  vertical-align: top;
+  font-size: 13px;
+}
+.audit-nowrap {
+  white-space: nowrap;
+}
+.audit-mono,
+.audit-json {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  word-break: break-all;
+}
+.audit-detail pre {
+  margin: 0;
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 11px;
+}
+.audit-pageno {
+  align-self: center;
+  font-size: 13px;
+  color: var(--fg-3);
+}
+.audit-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

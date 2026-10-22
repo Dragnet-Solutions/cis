@@ -15,7 +15,8 @@ import { MailSendError, type MailTransport } from './transport';
  *
  * The mail service is chosen by selectTransport (ZeptoMail, else SMTP). With
  * neither configured, notices are marked `logged` — recorded, not sent — so
- * nothing is lost and the operator can see no mail service is set up.
+ * nothing is lost and the operator can see no mail service is set up. A
+ * notice to a reserved test domain is never sent either (isReservedTestAddress).
  *
  * A transient refusal (rate limit, provider outage, network) leaves the notice
  * queued and retries it after 1, 5, 15 then 60 minutes; a permanent refusal,
@@ -54,6 +55,30 @@ export function backoffMs(attempts: number): number {
   return BACKOFF_MS[i] ?? 60 * 60_000;
 }
 
+/**
+ * Domains reserved for documentation and testing (RFC 2606 / RFC 6761):
+ * example.com, example.net, example.org and anything under .example, .test or
+ * .invalid. Nobody receives mail there, so a notice addressed to one — a
+ * respondent-robot run, a demo seed — is recorded (`logged`, with the reason)
+ * and never handed to the mail service, where it would bounce and spend
+ * sending credits.
+ */
+const RESERVED_DOMAINS = ['example.com', 'example.net', 'example.org'];
+const RESERVED_TLDS = ['example', 'test', 'invalid'];
+export const RESERVED_DOMAIN_REASON = 'reserved test domain';
+
+export function isReservedTestAddress(address: string): boolean {
+  const at = address.lastIndexOf('@');
+  const domain = (at >= 0 ? address.slice(at + 1) : address)
+    .trim()
+    .toLowerCase()
+    .replace(/\.+$/, '');
+  if (!domain) return false;
+  if (RESERVED_DOMAINS.some((d) => domain === d || domain.endsWith(`.${d}`))) return true;
+  const tld = domain.slice(domain.lastIndexOf('.') + 1);
+  return RESERVED_TLDS.includes(tld);
+}
+
 let envTransport: MailTransport | null | undefined;
 function defaultTransport(): MailTransport | null {
   if (envTransport === undefined) envTransport = selectTransport(process.env);
@@ -74,6 +99,15 @@ export async function deliverDueEmails(
     const due = await claimDueEmails(pool, { limit: opts.limit ?? 25 });
     for (const email of due) {
       try {
+        if (isReservedTestAddress(email.toAddress)) {
+          await markEmailLogged(pool, email.id, RESERVED_DOMAIN_REASON);
+          log.info(
+            { emailId: email.id, kind: email.kind },
+            'Reserved test address — notice recorded, not sent',
+          );
+          summary.logged += 1;
+          continue;
+        }
         if (!transport) {
           await markEmailLogged(pool, email.id);
           log.info(

@@ -150,7 +150,12 @@ describe('POST /firm-reports/:id/regenerate', () => {
     const action = await requestFirmReportRelease(getPool(), maker, editionId, {
       reason: 'Read and ready',
     });
-    await decideFirmReportRelease(getPool(), checker, editionId, action.id, { approved: true });
+    const decided = await decideFirmReportRelease(getPool(), checker, editionId, action.id, {
+      approved: true,
+    });
+    // The precondition of this test: the report really was released.
+    expect(decided.releaseError).toBeNull();
+    expect(decided.release?.released.map((r) => r.id)).toEqual([report.id]);
 
     const token = await login('adaeze.okoro@cis.example');
     const res = await app.inject({

@@ -188,7 +188,11 @@ export async function getEditionInstrumentSnapshots(
 ): Promise<EditionInstrumentSnapshot[]> {
   const result = await query<RawSnapshotRow>(
     pool,
-    'SELECT * FROM edition_instrument_snapshots WHERE edition_id = $1',
+    `SELECT eis.* FROM edition_instrument_snapshots eis
+       JOIN instrument_definition_versions idv
+         ON idv.id = eis.instrument_definition_version_id
+       JOIN instrument_definitions d ON d.id = idv.instrument_definition_id
+      WHERE eis.edition_id = $1 AND d.retired_at IS NULL`,
     [editionId],
   );
   return result.rows.map(mapSnapshot);
@@ -216,7 +220,11 @@ export async function isEditionInstrumentSetFrozen(
   const result = await query<{ frozen: boolean }>(
     pool,
     `SELECT EXISTS (
-       SELECT 1 FROM edition_instrument_snapshots WHERE edition_id = $1
+       SELECT 1 FROM edition_instrument_snapshots eis
+         JOIN instrument_definition_versions idv
+           ON idv.id = eis.instrument_definition_version_id
+         JOIN instrument_definitions d ON d.id = idv.instrument_definition_id
+        WHERE eis.edition_id = $1 AND d.retired_at IS NULL
      ) AS frozen`,
     [editionId],
   );
@@ -231,7 +239,8 @@ export async function listInstrumentsNotFrozenForEdition(
 ): Promise<string[]> {
   const result = await db.query<{ code: string }>(
     `SELECT d.code FROM instrument_definitions d
-      WHERE NOT EXISTS (
+      WHERE d.retired_at IS NULL
+        AND NOT EXISTS (
         SELECT 1 FROM edition_instrument_snapshots eis
           JOIN instrument_definition_versions idv
             ON idv.id = eis.instrument_definition_version_id
@@ -255,7 +264,7 @@ export async function isInstrumentFrozenForEdition(
          JOIN instrument_definition_versions idv
            ON idv.id = eis.instrument_definition_version_id
          JOIN instrument_definitions d ON d.id = idv.instrument_definition_id
-        WHERE eis.edition_id = $1 AND d.code = $2
+        WHERE eis.edition_id = $1 AND d.code = $2 AND d.retired_at IS NULL
      ) AS frozen`,
     [editionId, instrumentCode],
   );
@@ -301,6 +310,7 @@ export async function getEditionInstrumentViews(
               WHERE idv.instrument_definition_id = d.id
               ORDER BY idv.version_number DESC LIMIT 1) AS meta
        FROM instrument_definitions d
+      WHERE d.retired_at IS NULL
       ORDER BY d.code`,
     [editionId],
   );

@@ -142,6 +142,14 @@ export const journeyApi = {
       'POST',
     ),
 
+  /** Opts out of the report and further contact (the link in a submission
+   *  confirmation email). */
+  reportOptOut: (token: string) =>
+    request<{ kind: 'report_opted_out' }>(
+      `/journeys/report-opt-out/${encodeURIComponent(token)}`,
+      'POST',
+    ),
+
   submit: (respondentId: string) =>
     request<{ submitted: boolean; responseCount: number }>(
       `/journeys/${respondentId}/submit`,

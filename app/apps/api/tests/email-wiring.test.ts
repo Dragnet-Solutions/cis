@@ -126,7 +126,7 @@ describe('POST /editions/:id/invitations/send', () => {
     );
     expect(emails).toHaveLength(1);
     expect(emails[0]!.toAddress).toBe('lead@wired.example');
-    expect(emails[0]!.bodyText).toContain('Dear Wired Firm Ltd,');
+    expect(emails[0]!.bodyText).toContain('Dear Wire Lead,'); // F-01 greets the contact
     expect(emails[0]!.bodyText).toContain(`${PORTAL}/firm`);
   });
 });

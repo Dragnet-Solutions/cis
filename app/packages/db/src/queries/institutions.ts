@@ -83,6 +83,28 @@ export const EXISTING_INSTRUMENT_ASSIGNMENTS: ReadonlyArray<{
 ];
 
 /**
+ * D-16 — role families retired from Version 1. Family D (Depository /
+ * Securities-account Infrastructure, questionnaire I-DEP) appears in no
+ * approved document: UX-OPS-007 v2.10 maps one registered institution to one
+ * bespoke instrument and introduces no new role family, and the six market
+ * institutions are SEC, NGX, CSCS, LCFE, NASD and FMDQ. CSCS keeps one role,
+ * clearing, settlement and custody (family C, I-CSCS). The rows are kept for
+ * provenance, stamped `retired_at`, and every listing skips them. Existing
+ * databases are retired by migration 20261023200000_retire-cscs-depository.js.
+ */
+export const RETIRED_FAMILY_CODES: readonly InstrumentFamilyCode[] = ['D'];
+
+/** Stamp the retired families' roles (idempotent). */
+export async function retireRetiredInstitutionRoles(pool: Pool): Promise<void> {
+  await query(
+    pool,
+    `UPDATE institution_roles SET retired_at = NOW()
+      WHERE family_code = ANY($1) AND retired_at IS NULL`,
+    [RETIRED_FAMILY_CODES],
+  );
+}
+
+/**
  * Seed the institutions/roles named in the controlled extension's mapping
  * table. Idempotent (ON CONFLICT DO NOTHING on the unique institution name /
  * (institution, family) pair) — safe to call every time `seedReferenceData`
@@ -150,6 +172,7 @@ export async function seedInstitutions(pool: Pool): Promise<void> {
       [r.institutionName, r.familyCode, r.instrumentCode, r.mandate],
     );
   }
+  await retireRetiredInstitutionRoles(pool);
 }
 
 export async function listInstitutions(pool: Pool): Promise<Institution[]> {
@@ -187,6 +210,7 @@ export async function listInstitutionRoles(pool: Pool): Promise<InstitutionRole[
   const res = await query<RawRoleRow>(
     pool,
     `SELECT institution_id, family_code, instrument_code, mandate FROM institution_roles
+      WHERE retired_at IS NULL
       ORDER BY family_code, institution_id`,
   );
   return res.rows.map(mapRole);
@@ -203,13 +227,13 @@ export async function listActiveInstitutionRoles(pool: Pool): Promise<Institutio
     `SELECT r.institution_id, r.family_code, r.instrument_code, r.mandate
        FROM institution_roles r
        JOIN institutions i ON i.id = r.institution_id
-      WHERE i.is_active = TRUE
+      WHERE i.is_active = TRUE AND r.retired_at IS NULL
       ORDER BY r.family_code, r.institution_id`,
   );
   return res.rows.map(mapRole);
 }
 
-/** Roles held by one institution (CSCS: two rows, C and D). */
+/** Roles held by one institution, retired ones excluded (CSCS: one, family C). */
 export async function listRolesForInstitution(
   pool: Pool,
   institutionId: string,
@@ -217,7 +241,7 @@ export async function listRolesForInstitution(
   const res = await query<RawRoleRow>(
     pool,
     `SELECT institution_id, family_code, instrument_code, mandate FROM institution_roles
-      WHERE institution_id = $1 ORDER BY family_code`,
+      WHERE institution_id = $1 AND retired_at IS NULL ORDER BY family_code`,
     [institutionId],
   );
   return res.rows.map(mapRole);
@@ -242,7 +266,7 @@ export async function listInstitutionsWithRoles(pool: Pool): Promise<Institution
     pool,
     `SELECT i.*, r.family_code, r.instrument_code, r.mandate
        FROM institutions i
-       JOIN institution_roles r ON r.institution_id = i.id
+       JOIN institution_roles r ON r.institution_id = i.id AND r.retired_at IS NULL
       ORDER BY r.family_code, i.name`,
   );
   return res.rows.map((r) => ({

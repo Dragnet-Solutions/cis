@@ -526,7 +526,8 @@ describe('UX-OPS-007 — register-driven institutions and questionnaire assignme
     expect(byKey.get('Securities and Exchange Commission/A')).toBe('I-SEC');
     expect(byKey.get('Nigerian Exchange Limited/B')).toBe('I-NGX');
     expect(byKey.get('Central Securities Clearing System/C')).toBe('I-CSCS');
-    expect(byKey.get('Central Securities Clearing System/D')).toBe('I-DEP');
+    // D-16: CSCS's depository role (I-DEP) is retired; CSCS answers once.
+    expect(byKey.has('Central Securities Clearing System/D')).toBe(false);
     expect(regs.every((r) => r.questionnaireAssigned)).toBe(true);
   });
 
@@ -607,10 +608,10 @@ describe('UX-INS-003 — the instrument resolves from the Register via the link'
 
 // ─── 7. Section 10: grouped by role, every label its own instrument's ────────
 
-describe('Section 10 — seven institutions, each card labelled by its own instrument', () => {
+describe('Section 10 — six institutions, each card labelled by its own instrument', () => {
   it('builds every reading with its own instrument wording and role, and so do the facts', async () => {
     const regs = await listRegulators(pool, editionId);
-    expect(regs).toHaveLength(7);
+    expect(regs).toHaveLength(6);
     for (const r of regs) {
       await saveContact(pool, editionId, r.institutionId, r.familyCode, CONTACT);
       const view = await issueSurveyLink(pool, editionId, r.institutionId, r.familyCode, {
@@ -622,7 +623,11 @@ describe('Section 10 — seven institutions, each card labelled by its own instr
     }
 
     const c = await buildIndustryReportContent(pool, editionId);
-    expect(c.institutional).toHaveLength(7);
+    expect(c.institutional).toHaveLength(6);
+    // CSCS once (D-16).
+    expect(
+      c.institutional.filter((r) => r.role === 'Central Securities Clearing System'),
+    ).toHaveLength(1);
     const facts = industryFacts(c);
     const consequenceTexts = new Map<string, string>();
     for (const r of regs) {
@@ -661,7 +666,6 @@ describe('Section 10 — seven institutions, each card labelled by its own instr
       'Regulatory / Supervisory',
       'Exchange / Market Operator',
       'Clearing / Settlement',
-      'Depository / Securities-account Infrastructure',
     ]);
     expect(
       c.institutional
@@ -708,7 +712,7 @@ describe('Freezing new instruments into an open edition', () => {
     const versionsBefore = (
       await pool.query(`SELECT * FROM instrument_definition_versions WHERE is_frozen ORDER BY id`)
     ).rows;
-    expect(snapshotsBefore).toHaveLength(10);
+    expect(snapshotsBefore).toHaveLength(9); // ten before the decision, less the retired I-DEP
 
     // The migration adds the three.
     await replayMigrationUp();
@@ -753,7 +757,7 @@ describe('Freezing new instruments into an open edition', () => {
     const snapshotsAfter = (
       await pool.query(`SELECT * FROM edition_instrument_snapshots ORDER BY id`)
     ).rows;
-    expect(snapshotsAfter).toHaveLength(13);
+    expect(snapshotsAfter).toHaveLength(12);
     for (const before of snapshotsBefore) {
       expect(snapshotsAfter).toContainEqual(before);
     }

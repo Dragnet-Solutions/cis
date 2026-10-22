@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { IndustryReport } from './IndustryReport';
 import { InstitutionalReport } from './InstitutionalReport';
+import { PublicReportMissing, publicReportKind } from './publicCopy';
 import { publicIndustrySource, publicInstitutionalSource } from './source';
 
 /**
@@ -13,6 +14,7 @@ export function PublicReport(): JSX.Element {
   const requested = new URLSearchParams(window.location.search).get('edition');
   const [editionId, setEditionId] = useState<string | null>(requested);
   const [missing, setMissing] = useState(false);
+  const kind = publicReportKind(window.location.pathname);
 
   useEffect(() => {
     if (requested) return;
@@ -25,21 +27,10 @@ export function PublicReport(): JSX.Element {
       .catch(() => setMissing(true));
   }, [requested]);
 
-  if (missing) {
-    return (
-      <main className="shell">
-        <p className="eyebrow">CIS × Dragnet</p>
-        <h1>No Industry report has been published yet.</h1>
-        <p className="lede">
-          It is published once the study closes and its national results are approved.{' '}
-          <a href="/survey">Back to the study</a>
-        </p>
-      </main>
-    );
-  }
+  if (missing) return <PublicReportMissing kind={kind} />;
   if (!editionId) return <p style={{ padding: 24 }}>Loading…</p>;
   const back = () => window.location.assign('/survey');
-  return window.location.pathname.startsWith('/reports/institutional') ? (
+  return kind === 'institutional' ? (
     <InstitutionalReport source={publicInstitutionalSource(editionId)} onBack={back} />
   ) : (
     <IndustryReport source={publicIndustrySource(editionId)} onBack={back} />

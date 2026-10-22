@@ -282,29 +282,23 @@ describe('History is free-text and append-only', () => {
   });
 });
 
-describe('Multi-role institution — CSCS holds Family C AND Family D independently', () => {
-  it('gives CSCS two independent engagement rows in the same edition, one per role', async () => {
+describe('D-16 — CSCS appears once: its depository role (Family D, I-DEP) is retired', () => {
+  it('lists CSCS once, for clearing, settlement and custody, and never reaches the retired role', async () => {
     const list = await listRegulators(pool, editionId);
     const cscsRows = list.filter((r) => r.institutionId === cscs);
-    expect(cscsRows.map((r) => r.familyCode).sort()).toEqual(['C', 'D']);
-
-    // Progressing the C role must not touch the D role.
-    await saveContact(pool, editionId, cscs, 'C', CONTACT);
-    const after = await listRegulators(pool, editionId);
-    const cRow = after.find((r) => r.institutionId === cscs && r.familyCode === 'C')!;
-    const dRow = after.find((r) => r.institutionId === cscs && r.familyCode === 'D')!;
-    expect(cRow.state).toBe('contact_added');
-    expect(dRow.state).toBe('no_contact');
+    expect(cscsRows.map((r) => [r.familyCode, r.instrumentCode])).toEqual([['C', 'I-CSCS']]);
+    await expect(saveContact(pool, editionId, cscs, 'D', CONTACT)).rejects.toThrow();
   });
 });
 
 describe('The institutional roster', () => {
   it('lists one row per REGISTERED (institution, family) role, all starting at no_contact', async () => {
     const list = await listRegulators(pool, editionId);
-    // 7 registered roles: SEC(A), NGX(B), LCFE(B), NASD(B), FMDQ Group(B),
-    // CSCS(C), CSCS(D). The three FMDQ subsidiaries are seeded inactive (FMDQ
-    // registers as one entity this edition) and carry no engagement row.
-    expect(list).toHaveLength(7);
+    // 6 registered roles: SEC(A), NGX(B), LCFE(B), NASD(B), FMDQ Group(B),
+    // CSCS(C). CSCS's depository role (D) is retired (D-16). The three FMDQ
+    // subsidiaries are seeded inactive (FMDQ registers as one entity this
+    // edition) and carry no engagement row.
+    expect(list).toHaveLength(6);
     expect(list.every((r) => r.state === 'no_contact')).toBe(true);
     expect(list.every((r) => r.nextStep === 'Add a contact')).toBe(true);
   });
@@ -372,13 +366,10 @@ describe('Submitting through the issued link confirms the role', () => {
 });
 
 describe('Each role reads as its own mandate', () => {
-  it('CSCS’s depository role does not borrow its clearing tagline', async () => {
+  it('CSCS reads as clearing, settlement and custody', async () => {
     const roles = await listRegulators(pool, editionId);
     const cscsRoles = roles.filter((r) => r.institutionId === cscs);
-    expect(cscsRoles.find((r) => r.familyCode === 'C')!.mandate).toBe(
-      'Clearing, settlement and custody',
-    );
-    expect(cscsRoles.find((r) => r.familyCode === 'D')!.mandate).toMatch(/Depository/);
+    expect(cscsRoles.map((r) => r.mandate)).toEqual(['Clearing, settlement and custody']);
   });
 });
 

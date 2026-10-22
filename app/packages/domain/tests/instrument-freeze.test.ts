@@ -15,7 +15,7 @@ import {
   updateEditionStatus,
   createUser,
   createCriticalAction,
-  INSTRUMENT_CODES,
+  ACTIVE_INSTRUMENT_CODES,
 } from '@cis/db';
 import { loadRbacContext, MakerCheckerViolationError, PermissionDeniedError } from '@cis/auth';
 import { seedReferenceData, requestFreeze, decideFreeze, EditionStateError } from '../src';
@@ -55,7 +55,16 @@ describe('Instrument freeze (maker-checker)', () => {
     expect(frozen).toBe(true);
 
     const snapshots = await getEditionInstrumentSnapshots(pool, seed.editionId);
-    expect(snapshots).toHaveLength(INSTRUMENT_CODES.length);
+    // Every instrument in use; the retired I-DEP (D-16) is never frozen.
+    expect(snapshots).toHaveLength(ACTIVE_INSTRUMENT_CODES.length);
+    const dep = await pool.query(
+      `SELECT 1 FROM edition_instrument_snapshots s
+         JOIN instrument_definition_versions v ON v.id = s.instrument_definition_version_id
+         JOIN instrument_definitions d ON d.id = v.instrument_definition_id
+        WHERE s.edition_id = $1 AND d.code = 'I-DEP'`,
+      [seed.editionId],
+    );
+    expect(dep.rowCount).toBe(0);
     expect(await isEditionInstrumentSetFrozen(pool, seed.editionId)).toBe(true);
 
     // Audit: the freeze decision is recorded.

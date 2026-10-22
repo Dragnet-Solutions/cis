@@ -32,7 +32,7 @@ import { requirePermission, type RbacContext } from '@cis/auth';
 import { DomainError } from './errors';
 import { FAMILY_META, instrumentCodeForRole } from './institution-family-service';
 import { acceptsResponses, assertCollectionOpen } from './journey-service';
-import { queueNotice } from './email-content';
+import { queueTemplate } from './email-content';
 import { surveyResumeLink } from './notice-links';
 
 /** Outbox kinds of the emails to a regulator contact; ref_id is the survey's
@@ -505,20 +505,18 @@ export async function issueSurveyLink(
     respondentId: respondent.id,
   });
   const url = surveyResumeLink(input.portalUrl, token);
-  await queueNotice(pool, {
+  await queueTemplate(pool, {
     kind: REGULATOR_SURVEY_LINK_EMAIL_KIND,
     refId: respondent.id,
     to: row.contact.email.trim(),
     toName: row.contact.who,
-    subject: `${row.institutionName}: your CIS × Dragnet benchmark survey`,
-    heading: `A survey for ${row.institutionName}`,
-    paragraphs: [
-      `Dear ${row.contact.who},`,
-      `Thank you for agreeing to take part. The CIS × Dragnet benchmark asks ${row.institutionName} about its ${FAMILY_META[familyCode].relationship} with licensed stockbroking firms.`,
-      `We would be grateful to have your answers by ${fmtHuman(targetDate)}. Your answers save as you go, so you can stop and come back to the same link at any time.`,
-      'This link is personal to you — please do not forward it. If someone else should answer instead, reply to this email and we will send them their own link.',
-    ],
-    action: { label: 'Open the survey', url },
+    template: 'I-01',
+    fields: {
+      contact_name: row.contact.who,
+      institution: row.institutionName,
+      respond_by: fmtHuman(targetDate),
+      survey_link: url,
+    },
   });
   await addRegulatorHistory(
     pool,
@@ -551,22 +549,20 @@ export async function sendReminder(
   if (!row.contact || !url || !row.respondentId) {
     throw new RegulatorEngagementError('No active survey link to remind against', 'NO_ACTIVE_LINK');
   }
-  const by = row.targetBy
-    ? ` We would be grateful to have your answers by ${fmtHuman(new Date(`${dbDateStr(row.targetBy)}T00:00:00.000Z`))}.`
-    : '';
-  await queueNotice(pool, {
+  await queueTemplate(pool, {
     kind: REGULATOR_REMINDER_EMAIL_KIND,
     refId: row.respondentId,
     to: row.contact.email.trim(),
     toName: row.contact.who,
-    subject: `Reminder: ${row.institutionName}'s CIS × Dragnet benchmark survey`,
-    heading: 'Your survey is still open',
-    paragraphs: [
-      `Dear ${row.contact.who},`,
-      `A gentle reminder that the CIS × Dragnet benchmark survey for ${row.institutionName} is still open.${by}`,
-      'Anything you have already answered is saved; the link below takes you back to where you stopped.',
-    ],
-    action: { label: 'Continue the survey', url },
+    template: 'I-02',
+    fields: {
+      contact_name: row.contact.who,
+      institution: row.institutionName,
+      respond_by: row.targetBy
+        ? fmtHuman(new Date(`${dbDateStr(row.targetBy)}T00:00:00.000Z`))
+        : 'As soon as you can',
+      survey_link: url,
+    },
   });
   // Only the email is sent: there is no text-message service yet.
   await addRegulatorHistory(

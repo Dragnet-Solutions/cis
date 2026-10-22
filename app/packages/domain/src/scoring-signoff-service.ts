@@ -18,6 +18,11 @@ import {
   listSignoffs,
   withTransaction,
 } from '@cis/db';
+import {
+  notifyApprovalDecided,
+  notifyApprovalRequested,
+  SCORING_SIGNOFF_ACTION,
+} from './approval-notices';
 import type {
   CalculationRun,
   CalculatedResult,
@@ -195,11 +200,20 @@ export async function requestSignoff(
     );
   }
 
-  return createSignoff(pool, {
-    editionId: input.editionId,
-    calculationRunId: input.calculationRunId,
-    requestedBy: input.requestedBy,
-    checkedAccount: input.checkedAccount,
+  return withTransaction(pool, async (client) => {
+    const c = client as unknown as Pool;
+    const signoff = await createSignoff(c, {
+      editionId: input.editionId,
+      calculationRunId: input.calculationRunId,
+      requestedBy: input.requestedBy,
+      checkedAccount: input.checkedAccount,
+    });
+    await notifyApprovalRequested(c, {
+      actionType: SCORING_SIGNOFF_ACTION,
+      refId: signoff.id,
+      requestedBy: input.requestedBy,
+    });
+    return signoff;
   });
 }
 
@@ -239,6 +253,13 @@ export async function approveSignoff(
     }
     // Supersede any earlier authoritative run — never this one.
     await supersedePriorSignoffs(c, approved.editionId, approved.id);
+    await notifyApprovalDecided(c, {
+      actionType: SCORING_SIGNOFF_ACTION,
+      refId: approved.id,
+      requestedBy: signoff.requestedBy,
+      decidedBy: input.approvedBy,
+      approved: true,
+    });
     return approved;
   });
 }
@@ -274,12 +295,23 @@ export async function rejectSignoff(
     );
   }
 
-  const rejected = await rejectSignoffRow(pool, input.signoffId, input.rejectedBy, reason);
-  if (!rejected) {
-    // Lost a race, or the maker-checker DB CHECK rejected it.
-    throw new ScoringSignoffError('Sign-off could not be rejected', 'NOT_REQUESTED');
-  }
-  return rejected;
+  return withTransaction(pool, async (client) => {
+    const c = client as unknown as Pool;
+    const rejected = await rejectSignoffRow(c, input.signoffId, input.rejectedBy, reason);
+    if (!rejected) {
+      // Lost a race, or the maker-checker DB CHECK rejected it.
+      throw new ScoringSignoffError('Sign-off could not be rejected', 'NOT_REQUESTED');
+    }
+    await notifyApprovalDecided(c, {
+      actionType: SCORING_SIGNOFF_ACTION,
+      refId: rejected.id,
+      requestedBy: signoff.requestedBy,
+      decidedBy: input.rejectedBy,
+      approved: false,
+      reason,
+    });
+    return rejected;
+  });
 }
 
 // ─── Score view (transparency before sign-off) ─────────────────────────────────

@@ -95,6 +95,11 @@ jobs:
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # Build version for GET /version and the operator footer (D-06).
+      - name: Record build time
+        id: build-meta
+        run: echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - name: Build Docker Image
         id: build-image
         uses: docker/build-push-action@v5
@@ -106,6 +111,10 @@ jobs:
           tags: ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           cache-from: type=gha,scope=${{ env.IMAGE_NAME }}
           cache-to: type=gha,mode=max,scope=${{ env.IMAGE_NAME }}
+          build-args: |
+            GIT_COMMIT=${{ github.sha }}
+            IMAGE_TAG=${{ github.sha }}
+            BUILD_TIME=${{ steps.build-meta.outputs.build_time }}
 
       - name: Scan Image
         uses: aquasecurity/trivy-action@master

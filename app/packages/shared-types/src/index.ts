@@ -787,7 +787,9 @@ export interface InvitationRequestItem {
   phone: string | null;
   flag: string | null;
   resolved: boolean;
-  resolution: 'code_issued' | 'marked_done' | null;
+  resolution: 'code_issued' | 'marked_done' | 'declined' | null;
+  /** Why it was declined (told to the requester); null otherwise. */
+  declineReason: string | null;
   resolvedBy: string | null;
   resolvedAt: Date | null;
   createdAt: Date;

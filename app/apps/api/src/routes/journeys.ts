@@ -7,6 +7,7 @@ import {
   getConfig,
   getEditionStatus,
   listEditions,
+  currentEditionOf,
 } from '@cis/db';
 import {
   startJourney,
@@ -15,9 +16,11 @@ import {
   saveDraftAnswer,
   getResume,
   submitJourney,
+  AlreadySubmittedError,
   createReferral,
   createColleagueInvite,
   stopReminders,
+  optOutOfReport,
   acceptsResponses,
   getPublicConsentContent,
 } from '@cis/domain';
@@ -50,7 +53,7 @@ export const journeyRoutes: FastifyPluginAsyncZod = async (app) => {
       listEditions(pool),
       getConfig<boolean>(pool, 'public.results_section_visible'),
     ]);
-    const current = editions.find((e) => e.status === 'open') ?? editions[0] ?? null;
+    const current = currentEditionOf(editions);
     return reply.send({
       editionId: current?.id ?? null,
       editionLabel: current?.label ?? null,
@@ -239,12 +242,47 @@ export const journeyRoutes: FastifyPluginAsyncZod = async (app) => {
     },
   );
 
+  // Opt out of the report (and further contact about the survey) — the link
+  // in a submission confirmation (?noReport=<recovery token>). Public: the
+  // token is the credential, so it is rate-limited like the other token routes.
+  app.post(
+    '/journeys/report-opt-out/:token',
+    {
+      config: { rateLimit: { max: 10, timeWindow: 60_000 } },
+      schema: { params: z.object({ token: z.string().min(1).max(200) }) },
+    },
+    async (request, reply) => {
+      const matched = await optOutOfReport(getPool(), request.params.token);
+      if (!matched) return not(reply, 404, 'Not Found', 'No survey for this link');
+      return reply.send({ kind: 'report_opted_out' });
+    },
+  );
+
   // Submit — freeze drafts into immutable responses (review-before-submit gate).
   app.post(
     '/journeys/:respondentId/submit',
     { schema: { params: z.object({ respondentId: z.string().uuid() }) } },
     async (request, reply) => {
-      const written = await submitJourney(getPool(), request.params.respondentId);
+      let written;
+      try {
+        written = await submitJourney(getPool(), request.params.respondentId, {
+          portalUrl: publicOrigin(),
+        });
+      } catch (err) {
+        // A repeated submit (double click, retry, second tab): answered once,
+        // cleanly — nothing is written again and no second email goes.
+        if (err instanceof AlreadySubmittedError) {
+          return reply.status(409).send({
+            error: 'Conflict',
+            statusCode: 409,
+            code: err.code,
+            message: err.message,
+          });
+        }
+        throw err;
+      }
+      // The submission confirmation was queued with the submission: send it now.
+      kickMailDispatcher();
       return reply.send({ submitted: true, responseCount: written.length });
     },
   );

@@ -1,6 +1,6 @@
 import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { getPool, listEditions } from '@cis/db';
+import { getPool, listEditions, currentEditionOf } from '@cis/db';
 import { getPublicContent, listPreviousPublishedEditions } from '@cis/domain';
 
 /**
@@ -24,7 +24,7 @@ export const publicContentRoutes: FastifyPluginAsyncZod = async (app) => {
       let currentEditionId = request.query.currentEditionId ?? null;
       if (!currentEditionId) {
         const editions = await listEditions(pool);
-        const current = editions.find((e) => e.status === 'open') ?? editions[0] ?? null;
+        const current = currentEditionOf(editions);
         currentEditionId = current?.id ?? null;
       }
       const editions = await listPreviousPublishedEditions(pool, currentEditionId);

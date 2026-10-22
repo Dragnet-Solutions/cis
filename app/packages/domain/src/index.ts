@@ -45,6 +45,7 @@ export {
   createReferral,
   createColleagueInvite,
   ReviewGapError,
+  AlreadySubmittedError,
   CollectionClosedError,
   RegulatorLinkRequiredError,
   ScopeClosedError,
@@ -55,6 +56,14 @@ export {
   SURVEY_RESUME_EMAIL_KIND,
 } from './journey-service';
 export type { ContactInput, ResumeState, PublicConsentContent } from './journey-service';
+
+export {
+  queueSubmissionConfirmation,
+  optOutOfReport,
+  reportOptOutLink,
+  SUBMISSION_CONFIRMATION_EMAIL_KIND,
+  FIRM_SEAT_PROGRESS_EMAIL_KIND,
+} from './submission-confirmation-service';
 
 export {
   createLeadCoordinator,
@@ -110,6 +119,7 @@ export {
   resolveOutreachToken,
   recordOutreachEvent,
   OutreachLinkNotFoundError,
+  INVITATION_REQUEST_RECEIVED_EMAIL_KIND,
 } from './firm-portal-service';
 export type {
   ClaimInput,
@@ -288,6 +298,8 @@ export {
   OPERATOR_SET_PASSWORD_EMAIL_KIND,
   INVITE_LINK_TTL_MS,
   RESET_LINK_TTL_MS,
+  requestPasswordReset,
+  SELF_SERVICE_RESETS_PER_HOUR,
 } from './password-set-service';
 export {
   checkPasswordPolicy,
@@ -319,6 +331,9 @@ export {
   renderTemplateText,
   INVITATION_BATCH_EMAIL_KIND,
   INVITATION_REQUEST_EMAIL_KIND,
+  INVITATION_REQUEST_APPROVED_EMAIL_KIND,
+  INVITATION_REQUEST_DECLINED_EMAIL_KIND,
+  designedBatchTemplate,
   InvitationsError,
 } from './invitations-service';
 export type {
@@ -458,6 +473,10 @@ export {
   triggerTimeFor,
   nextDueReminder,
   scheduleDueReminders,
+  runEditionReminders,
+  runReminderPass,
+  REMINDER_PASS_LOCK_KEY,
+  REMINDER_MIN_GAP_MS,
   getUnfinishedStats,
   getDropoffHistogram,
   ReminderTimingError,
@@ -467,6 +486,9 @@ export type {
   ReminderStepConfig,
   ReminderSchedule,
   DueReminder,
+  ReminderSkipReason,
+  ReminderRunSummary,
+  ReminderPassResult,
   UnfinishedStats,
   DropoffBucket,
 } from './reminder-timing-service';
@@ -509,6 +531,20 @@ export {
   DragnetPermissionError,
 } from './dragnet-service';
 export type { FirmMaturityEntry, FirmTier } from './dragnet-service';
+export {
+  getAuditPage,
+  getAuditFacets,
+  exportAuditCsv,
+  auditCsvCell,
+  auditCsvFilename,
+  toAuditFilter,
+  AuditExportTooLargeError,
+  AUDIT_PAGE_SIZE,
+  AUDIT_EXPORT_CAP,
+} from './audit-view-service';
+export type { AuditQuery, AuditPage } from './audit-view-service';
+export { createNextEdition, nextEditionLabel } from './edition-next-service';
+export type { NextEditionResult } from './edition-next-service';
 
 // ── Phase 15: Managed wording (UX-ADM-CNT-001) ───────────────────────────────
 export {
@@ -618,7 +654,11 @@ export {
   getReleasedFirmReport,
   queueReleaseNotices,
   publicNarrative,
+  sendPublishedReportToInvestors,
+  reportEmailedCount,
+  REPORT_PUBLISHED_EMAIL_KIND,
   type PublicNarrative,
+  type ReportDeliveryOptions,
 } from './report-publication-service';
 export {
   freezeFirmReport,
@@ -627,17 +667,48 @@ export {
   publishedIndustryReportContent,
 } from './report-snapshot-service';
 
-// ── Email content (every notice is queued through queueNotice) ──────────────
+// ── Email content (every notice is queued through queueNotice / queueTemplate) ──
 export {
   renderEmailHtml,
   renderEmailText,
   textToHtml,
   escapeHtml,
   queueNotice,
+  queueTemplate,
   type EmailAction,
   type EmailContent,
   type Notice,
+  type NoticeAudience,
+  type TemplateNotice,
 } from './email-content';
+export {
+  renderTemplate,
+  renderLayout,
+  htmlToText,
+  templateFields,
+  requiredFields,
+  emailBrand,
+  emailOrigin,
+  TEMPLATE_IDS,
+  TEMPLATE_SUBJECTS,
+  BRAND_FIELDS,
+  DEFAULT_SUPPORT_EMAIL,
+  MissingMergeFieldError,
+  type TemplateId,
+  type MergeFields,
+  type RenderedEmail,
+  type EmailBrand,
+} from './email-templates';
+export { SAMPLE_FIELDS, SAMPLE_BASE_NOTICES } from './email-templates/samples';
+export {
+  APPROVAL_REQUESTED_EMAIL_KIND,
+  APPROVAL_OUTCOME_EMAIL_KIND,
+  SCORING_SIGNOFF_ACTION,
+  approvalUrl,
+  notifyApprovalRequested,
+  notifyApprovalDecided,
+} from './approval-notices';
+export { fmtDate, fmtDateTime, requestRef, seatSurveyName } from './email-fields';
 
 // ── Scoring methodology approval (two-person) ────────────────────────────────
 export {

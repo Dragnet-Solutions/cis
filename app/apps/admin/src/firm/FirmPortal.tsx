@@ -30,6 +30,8 @@ import { portalFirmSource } from '../reports/source';
 import { usePortalSession, type PortalSession } from './usePortalSession';
 import { ApiError } from '../api/types';
 import { ErrorState, type ErrorStateKind } from '../shared/ErrorState';
+import { isValidEmail } from '../lib/email';
+import { useEmailField } from '../lib/useEmailField';
 
 /**
  * Firm claim / portal / team / seats / outreach / results — UX-FRM-001 and
@@ -51,8 +53,6 @@ import { ErrorState, type ErrorStateKind } from '../shared/ErrorState';
  * `/portal/auth/lookup` — the firm itself is still never disclosed before a
  * PIN is accepted.
  */
-
-const emailOk = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
 
 const ROLE_TO_SEAT: Record<string, SeatCode> = {
   'Managing Director or CEO': 'S1',
@@ -281,11 +281,13 @@ function EmailView({
   const [email, setEmail] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  const emailField = useEmailField('cEmail', email);
 
   async function submit(): Promise<void> {
     const a = email.trim().toLowerCase();
-    if (!emailOk(a)) {
-      setErr('Enter your email address.');
+    if (!isValidEmail(a)) {
+      emailField.reveal();
+      if (!a) setErr('Enter your email address.');
       return;
     }
     setBusy(true);
@@ -313,8 +315,9 @@ function EmailView({
       <div className="field">
         <label htmlFor="cEmail">Email address</label>
         <input
-          id="cEmail"
+          {...emailField.inputProps}
           type="email"
+          autoComplete="email"
           value={email}
           placeholder="name@yourfirm.com"
           onChange={(e) => {
@@ -322,10 +325,16 @@ function EmailView({
             setErr('');
           }}
         />
+        {emailField.error}
         {err && <div className="err">{err}</div>}
       </div>
       <div className="actions">
-        <button type="button" className="btn" disabled={busy} onClick={() => void submit()}>
+        <button
+          type="button"
+          className="btn"
+          disabled={busy || !emailField.valid}
+          onClick={() => void submit()}
+        >
           {busy ? 'Checking…' : 'Continue'}
         </button>
       </div>
@@ -444,6 +453,7 @@ function SetupView({
   const [pin, setPin] = useState('');
   const [pin2, setPin2] = useState('');
   const [contactEmail, setContactEmail] = useState(invite?.email ?? '');
+  const contactEmailField = useEmailField('setupEmail', contactEmail);
   const [showPriv, setShowPriv] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -453,7 +463,7 @@ function SetupView({
     ? 'Confirm you have read how your information is handled.'
     : !name.trim()
       ? 'Enter your name.'
-      : !emailOk(contactEmail)
+      : !isValidEmail(contactEmail)
         ? 'Enter your email address.'
         : !mobileDigits
           ? 'Enter a mobile number.'
@@ -556,12 +566,14 @@ function SetupView({
       <div className="field">
         <label htmlFor="setupEmail">Your email address</label>
         <input
-          id="setupEmail"
+          {...contactEmailField.inputProps}
           type="email"
+          autoComplete="email"
           value={contactEmail}
           placeholder="name@yourfirm.com"
           onChange={(e) => setContactEmail(e.target.value)}
         />
+        {contactEmailField.error}
       </div>
       <div className="field">
         <label htmlFor="mobile">Your mobile number</label>
@@ -655,6 +667,7 @@ function RequestView({
   const [name, setName] = useState('');
   const [role, setRole] = useState('');
   const [email, setEmail] = useState('');
+  const emailField = useEmailField('rEmail', email, { describedBy: 'rEmailHint' });
   const [phone, setPhone] = useState('');
   const [privacy, setPrivacy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -677,7 +690,7 @@ function RequestView({
         ? 'Enter your full name.'
         : !role.trim()
           ? 'Enter your designation.'
-          : !emailOk(email)
+          : !isValidEmail(email)
             ? 'Enter your work email address.'
             : !/^\+?[0-9][0-9\s()-]{7,}$/.test(phone.trim())
               ? 'Enter a phone number we can reach you on.'
@@ -771,16 +784,18 @@ function RequestView({
       </div>
       <div className="field">
         <label htmlFor="rEmail">Your work email address</label>
-        <p className="hint">
+        <p className="hint" id="rEmailHint">
           Whatever address you use for work. It does not need to be a company domain.
         </p>
         <input
-          id="rEmail"
+          {...emailField.inputProps}
           type="email"
+          autoComplete="email"
           value={email}
           placeholder="name@yourfirm.com"
           onChange={(e) => setEmail(e.target.value)}
         />
+        {emailField.error}
       </div>
       <div className="field">
         <label htmlFor="rPhone">A phone number we can reach you on</label>
@@ -1293,6 +1308,7 @@ function SeatRow({
 }): JSX.Element {
   const [name, setName] = useState(seat.assignedName ?? '');
   const [email, setEmail] = useState(seat.assignedEmail ?? '');
+  const emailField = useEmailField(`${seat.seatCode}Mail`, email);
   const [warning, setWarning] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -1410,17 +1426,18 @@ function SeatRow({
           <div>
             <label htmlFor={`${seat.seatCode}Mail`}>Email</label>
             <input
-              id={`${seat.seatCode}Mail`}
+              {...emailField.inputProps}
               type="email"
               value={email}
               placeholder="name@yourfirm.com"
               onChange={(e) => setEmail(e.target.value)}
             />
+            {emailField.error}
           </div>
           <button
             type="button"
             className="arsave"
-            disabled={!(name.trim() && emailOk(email)) || busy}
+            disabled={!(name.trim() && isValidEmail(email)) || busy}
             onClick={() => void save()}
           >
             Save
@@ -1666,6 +1683,7 @@ function TeamView({
   const [err, setErr] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const emailField = useEmailField('teamEmail', email);
   const [newPin, setNewPin] = useState('');
   const [currentPin, setCurrentPin] = useState('');
   const [pinMsg, setPinMsg] = useState<string | null>(null);
@@ -1834,17 +1852,18 @@ function TeamView({
       <div className="field">
         <label htmlFor="teamEmail">Email</label>
         <input
-          id="teamEmail"
+          {...emailField.inputProps}
           type="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
         />
+        {emailField.error}
       </div>
       <div className="actions">
         <button
           type="button"
           className="btn"
-          disabled={!name.trim() || !emailOk(email) || busy}
+          disabled={!name.trim() || !isValidEmail(email) || busy}
           onClick={() => void addMember()}
         >
           Add coordinator
