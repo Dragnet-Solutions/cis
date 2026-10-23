@@ -10,6 +10,7 @@ import {
   REGISTER_TODO_MARKER,
   withTransaction,
 } from '@cis/db';
+import { notifyApprovalDecided, notifyApprovalRequested } from './approval-notices';
 import {
   canRequestCriticalAction,
   canApproveCriticalAction,
@@ -110,6 +111,12 @@ export async function requestFreeze(
       instrumentCodes: pendingCodes,
     },
     editionId,
+  });
+  await notifyApprovalRequested(pool, {
+    actionType: INSTRUMENT_FREEZE_ACTION,
+    refId: action.id,
+    requestedBy: rbac.userId,
+    requestedAt: action.requestedAt,
   });
 
   await writeAudit(pool, {
@@ -232,6 +239,13 @@ export async function decideFreeze(
           [editionId, version.id, rbac.userId],
         );
       }
+      await notifyApprovalDecided(client, {
+        actionType: INSTRUMENT_FREEZE_ACTION,
+        refId: actionId,
+        requestedBy: action.requestedBy,
+        decidedBy: rbac.userId,
+        approved: true,
+      });
     });
 
     await writeAudit(pool, {
@@ -272,6 +286,14 @@ export async function decideFreeze(
       if (a.rowCount === 0) {
         throw new CriticalActionStateError('Freeze request could not be rejected');
       }
+      await notifyApprovalDecided(client, {
+        actionType: INSTRUMENT_FREEZE_ACTION,
+        refId: actionId,
+        requestedBy: action.requestedBy,
+        decidedBy: rbac.userId,
+        approved: false,
+        reason: rejectionReason,
+      });
     });
 
     await writeAudit(pool, {

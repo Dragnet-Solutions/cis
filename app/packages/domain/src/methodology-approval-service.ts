@@ -5,6 +5,7 @@ import {
   getMethodologyMeta,
   listCriticalActionsByType,
 } from '@cis/db';
+import { notifyApprovalDecided, notifyApprovalRequested } from './approval-notices';
 import {
   canApproveCriticalAction,
   canRequestCriticalAction,
@@ -120,6 +121,12 @@ export async function requestMethodologyApproval(
     },
     editionId: null,
   });
+  await notifyApprovalRequested(pool, {
+    actionType: METHODOLOGY_APPROVAL_ACTION,
+    refId: action.id,
+    requestedBy: rbac.userId,
+    requestedAt: action.requestedAt,
+  });
   await writeAudit(pool, {
     actorId: rbac.userId,
     actionType: 'critical_action.requested',
@@ -173,6 +180,14 @@ export async function decideMethodologyApproval(
         [rbac.userId, rejectionReason, actionId],
       );
   if (res.rowCount === 0) throw new CriticalActionStateError('The request could not be decided');
+  await notifyApprovalDecided(pool, {
+    actionType: METHODOLOGY_APPROVAL_ACTION,
+    refId: actionId,
+    requestedBy: action.requestedBy,
+    decidedBy: rbac.userId,
+    approved: decision.approved,
+    reason: decision.approved ? null : rejectionReason,
+  });
   await writeAudit(pool, {
     actorId: rbac.userId,
     actionType: decision.approved ? 'critical_action.approved' : 'critical_action.rejected',

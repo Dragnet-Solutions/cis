@@ -165,12 +165,17 @@ export async function markEmailSent(
   );
 }
 
-/** No mail service is configured: recorded, not sent. */
-export async function markEmailLogged(pool: Db, id: string): Promise<void> {
+/** Recorded, not sent: no mail service is configured, or (with `reason`) the
+ *  notice was deliberately held back, e.g. a reserved test address. */
+export async function markEmailLogged(
+  pool: Db,
+  id: string,
+  reason: string | null = null,
+): Promise<void> {
   await query(
     asPool(pool),
-    `UPDATE email_outbox SET status = 'logged', error = NULL, attempted_at = NOW() WHERE id = $1`,
-    [id],
+    `UPDATE email_outbox SET status = 'logged', error = $2, attempted_at = NOW() WHERE id = $1`,
+    [id, reason],
   );
 }
 

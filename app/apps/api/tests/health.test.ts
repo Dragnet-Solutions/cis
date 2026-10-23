@@ -37,6 +37,15 @@ describe('GET /health', () => {
   });
 });
 
+describe('security headers', () => {
+  it('sends a strict Content-Security-Policy on JSON responses', async () => {
+    const res = await app.inject({ method: 'GET', url: '/health' });
+    expect(res.headers['content-security-policy']).toBe(
+      "default-src 'none';frame-ancestors 'none'",
+    );
+  });
+});
+
 describe('GET /ready', () => {
   it('answers 200 when the database is reachable', async () => {
     const res = await app.inject({ method: 'GET', url: '/ready' });

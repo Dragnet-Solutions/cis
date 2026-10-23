@@ -97,6 +97,13 @@ function emptyRights(): Record<AccessRightKey, boolean> {
   };
 }
 
+/** The rights a person holds, named as People & access names them. */
+function rightLabels(rights: Record<AccessRightKey, boolean>): string[] {
+  return (Object.keys(RIGHT_LABEL) as AccessRightKey[])
+    .filter((k) => rights[k])
+    .map((k) => RIGHT_LABEL[k]);
+}
+
 /** Resolve a person's rights from the permission codes they hold. */
 function rightsFromCodes(codes: string[]): Record<AccessRightKey, boolean> {
   const rights = emptyRights();
@@ -324,6 +331,7 @@ export async function addPerson(
       purpose: 'invite',
       createdBy: input.actorId,
       portalUrl: opts.portalUrl ?? null,
+      rights: rightLabels(rights),
     });
     const perms = await getUserPermissions(c, user.id);
     return toPerson(
@@ -503,11 +511,13 @@ export async function sendPasswordLink(
   if (!user || !user.isActive) throw new PeopleAccessError('Person not found', 'NOT_FOUND');
   const setByLink = await usersWhoSetPasswordByLink(pool, [user.id]);
   const purpose = user.lastLoginAt === null && !setByLink.has(user.id) ? 'invite' : 'reset';
+  const codes = (await getUserPermissions(pool, user.id)).map((p) => p.code);
   const { expiresAt } = await withTransaction(pool, async (client) =>
     issuePasswordSetLink(client as unknown as Pool, user.id, {
       purpose,
       createdBy: input.actorId,
       portalUrl: opts.portalUrl ?? null,
+      rights: rightLabels(rightsFromCodes(codes)),
     }),
   );
   return { purpose, expiresAt };

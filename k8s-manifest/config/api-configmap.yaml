@@ -29,6 +29,8 @@ data:
   # Held in memory per pod — the effective limit scales with the replica count.
   RATE_LIMIT_AUTH_MAX: "10"
   RATE_LIMIT_AUTH_WINDOW_MS: "900000"
+  # "Forgot password?" requests per address per window (also capped per account).
+  RATE_LIMIT_RESET_MAX: "5"
 
   # ── Report PDFs & links ──────────────────────────────────────────────────
   # REPORT_RENDER_URL: where the API's headless Chromium opens the print pages.
@@ -47,6 +49,16 @@ data:
   # The sender's domain must be verified in the ZeptoMail Mail Agent.
   MAIL_FROM: "CIS × Dragnet <noreply@idhub.ng>"
   MAIL_REPLY_TO: "noreply@idhub.ng"
+  # Shown in every email's footer ("Questions? Contact …") and in the reports.
+  SUPPORT_EMAIL: "support@idhub.ng"
+
+  # ── Background jobs (in-process timers; no CronJob) ──────────────────────
+  # Defaults shown; uncomment to change. Several pods are safe (see README).
+  # MAIL_DISPATCH: "off"                    # stop sending the email outbox
+  # MAIL_DISPATCH_INTERVAL_MS: "15000"
+  # REMINDER_SCHEDULE: "off"                # stop sending respondent reminders automatically
+  # REMINDER_SCHEDULE_INTERVAL_MS: "3600000"  # one hour
+  # REMINDER_SCHEDULE_FIRST_RUN_MS: "60000"   # first pass a minute after a pod starts
 
   # ── AI report narrative (Azure AI Foundry) ───────────────────────────────
   # AZURE_AI_API_KEY comes from the ExternalSecret.

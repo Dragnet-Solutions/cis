@@ -27,6 +27,23 @@ ArgoCD's `Application` (see `../argocd`) applies this whole tree with `directory
   AI Foundry and ZeptoMail.
 - **`cis-api` → `cis-redis`** (in-cluster). Only `cis-api` pods may reach it.
 
+## Security headers (Content-Security-Policy)
+The application sets its own CSP; the Ingress adds none, and should not. Two policies:
+
+- **The SPA** (`cis-admin` nginx, `app/apps/admin/nginx/default.conf.template`, on `/` and
+  `/set-password`, so every client route including `/print/*` and `/reports/*`):
+  `default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`.
+  Google Fonts is the only third-party origin. The headless Chromium that prints PDFs is not
+  affected (puppeteer's waits run over the DevTools protocol, outside the page's CSP).
+- **The API** (helmet, `app/apps/api/src/plugins/security.ts`, on every `/api/*` response):
+  `default-src 'none'; frame-ancestors 'none'`.
+
+Do not add a CSP at the Ingress (`nginx.ingress.kubernetes.io/configuration-snippet` /
+`more_set_headers`): a second `Content-Security-Policy` header does not replace the app's, the
+browser enforces both, so an ingress policy can only tighten it and will silently break the app if
+it disagrees (for example, by omitting Google Fonts). If the page ever loads a new origin, change
+the nginx template.
+
 ## Sync-wave order
 0. ServiceAccounts, ConfigMaps, ExternalSecret, NetworkPolicies
 1. Redis StatefulSet + Services
@@ -72,6 +89,38 @@ exists, add a `ZEPTOMAIL_WEBHOOK_SECRET` entry for it to `eso/external-secret.ya
 `ZEPTOMAIL_API_TOKEN`). Until then Setup › Mail in the admin shows "Bounce and open reports: Not
 set up". The same page shows whether the API token is set at all (a red banner when notices are
 only being recorded) and can send a test email.
+
+## Background jobs in the API pods
+There are no CronJobs. Each `cis-api` pod runs two in-process timers, started after it begins
+listening and stopped on shutdown:
+
+- **Mail dispatcher** — sends the email outbox every `MAIL_DISPATCH_INTERVAL_MS` (default 15s).
+  Notices are leased, so several pods are safe. `MAIL_DISPATCH=off` disables it.
+- **Respondent reminders** — every `REMINDER_SCHEDULE_INTERVAL_MS` (default `3600000`, one hour)
+  and once `REMINDER_SCHEDULE_FIRST_RUN_MS` after start (default `60000`), it sends the reminders
+  due by the governed schedule (2 and 7 days after a respondent stopped, 3 days before close, up
+  to the cap) for every edition whose status is open. A Postgres advisory lock means only one pod
+  runs a pass at a time, and the reminder ledger's unique (edition, response, step) means a
+  reminder is never sent twice. `REMINDER_SCHEDULE=off` disables it; the Unfinished page's "Send
+  reminders now" button runs the same pass on demand.
+
+## Which build is running
+CI tags every image with the commit sha and bakes the commit, image tag and build time into both
+images. To state the deployed build in writing:
+
+```sh
+# What the running API reports (public, no secrets):
+curl https://dev-cis.idhub.ng/api/version
+# {"service":"cis-api","commit":"<full sha>","commitShort":"<7 chars>","imageTag":"<sha>","buildTime":"2026-10-22T14:05:00.000Z"}
+
+# Cross-check against the image the Deployment actually pins (tag = commit sha):
+kubectl -n dev get deploy cis-api -o jsonpath='{.spec.template.spec.containers[0].image}'
+kubectl -n dev get deploy cis-admin -o jsonpath='{.spec.template.spec.containers[0].image}'
+```
+
+`imageTag` must equal the tag after `cis-api:`. The operator footer (and Setup › Mail) shows the
+same, plus the admin bundle's own commit; it turns red when the admin and API images come from
+different builds. `unknown` means the image was built without the build args (not by CI).
 
 ## Seeding (dev only)
 Migrations only create the schema. `api/seed-job.yaml` runs `seedReferenceData`

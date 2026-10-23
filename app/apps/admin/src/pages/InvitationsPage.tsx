@@ -946,7 +946,13 @@ function RequestsView({
   const [error, setError] = useState<string | null>(null);
   const reissueTemplate = templates.find((t) => t.audienceKind === 'firm' && t.requiresCode);
 
-  async function resolve(id: string, resolution: 'code_issued' | 'marked_done'): Promise<void> {
+  const [declining, setDeclining] = useState<string | null>(null);
+  const [declineReason, setDeclineReason] = useState('');
+
+  async function resolve(
+    id: string,
+    resolution: 'code_issued' | 'marked_done' | 'declined',
+  ): Promise<void> {
     setBusyId(id);
     setError(null);
     try {
@@ -954,7 +960,10 @@ function RequestsView({
         id,
         resolution,
         resolution === 'code_issued' ? reissueTemplate?.id : undefined,
+        resolution === 'declined' ? declineReason.trim() : undefined,
       );
+      setDeclining(null);
+      setDeclineReason('');
       await onResolved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not resolve the request');
@@ -984,7 +993,9 @@ function RequestsView({
               {r.resolved
                 ? r.resolution === 'code_issued'
                   ? 'Code issued'
-                  : 'Marked done'
+                  : r.resolution === 'declined'
+                    ? 'Declined'
+                    : 'Marked done'
                 : new Date(r.createdAt).toLocaleDateString()}
             </span>
           </div>
@@ -1015,7 +1026,44 @@ function RequestsView({
                 >
                   Mark done without issuing
                 </button>
+                <button
+                  type="button"
+                  className="btn-2"
+                  disabled={busyId === r.id}
+                  onClick={() => {
+                    setDeclining(declining === r.id ? null : r.id);
+                    setDeclineReason('');
+                  }}
+                >
+                  Decline…
+                </button>
               </div>
+            )}
+            {!r.resolved && declining === r.id && (
+              <div className="note" style={{ marginTop: 8 }}>
+                <label>
+                  Reason for declining (emailed to {r.requesterName})
+                  <textarea
+                    value={declineReason}
+                    rows={3}
+                    style={{ display: 'block', width: '100%', marginTop: 4 }}
+                    onChange={(e) => setDeclineReason(e.target.value)}
+                  />
+                </label>
+                <div className="actions">
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={busyId === r.id || declineReason.trim().length < 4}
+                    onClick={() => void resolve(r.id, 'declined')}
+                  >
+                    Decline and tell them
+                  </button>
+                </div>
+              </div>
+            )}
+            {r.resolved && r.resolution === 'declined' && r.declineReason && (
+              <p className="muted">Reason given: {r.declineReason}</p>
             )}
           </div>
         </section>

@@ -19,6 +19,8 @@ import {
   requestLock,
   decideLock,
   EDITION_LOCK_ACTION,
+  createNextEdition,
+  nextEditionLabel,
 } from '@cis/domain';
 import type { CriticalAction } from '@cis/shared-types';
 
@@ -215,6 +217,70 @@ export const editionRoutes: FastifyPluginAsyncZod = async (app) => {
         userAgent: request.headers['user-agent'] ?? null,
       });
       return reply.send({ surveyCloseAt: updated.surveyCloseAt?.toISOString() ?? null });
+    },
+  );
+
+  // D-15 — the suggested label for the next edition (shown, editable, before creating).
+  app.get(
+    '/editions/:id/next',
+    {
+      preHandler: [app.authenticate],
+      schema: {
+        params: z.object({ id: z.string().uuid() }),
+        response: {
+          200: z.object({ suggestedLabel: z.string(), draftExists: z.string().nullable() }),
+        },
+      },
+    },
+    async (request, reply) => {
+      const pool = getPool();
+      const edition = await getEditionById(pool, request.params.id);
+      if (!edition) return not(reply, 404, 'Not Found', 'Edition not found');
+      const draft = (await listEditions(pool)).find((e) => e.status === 'draft');
+      return reply.send({
+        suggestedLabel: nextEditionLabel(edition.label),
+        draftExists: draft ? draft.label : null,
+      });
+    },
+  );
+
+  // D-15 — create the next edition as a draft copy of this one's configuration
+  // (setup right; audited). See edition-next-service for what is copied.
+  app.post(
+    '/editions/:id/next',
+    {
+      preHandler: [app.authenticate],
+      schema: {
+        params: z.object({ id: z.string().uuid() }),
+        body: z.object({ label: z.string().max(40).optional() }),
+        response: {
+          201: z.object({
+            id: z.string().uuid(),
+            label: z.string(),
+            status: z.enum(['draft', 'open', 'locked', 'archived']),
+            copied: z.object({
+              floors: z.number().int(),
+              templates: z.number().int(),
+              participants: z.number().int(),
+              institutionRoles: z.number().int(),
+            }),
+          }),
+        },
+      },
+    },
+    async (request, reply) => {
+      const pool = getPool();
+      const rbac = await loadRbacContext(pool, request.user.sub);
+      const { edition, copied } = await createNextEdition(
+        pool,
+        rbac,
+        request.params.id,
+        { label: request.body.label ?? null },
+        { ipAddress: request.ip, userAgent: request.headers['user-agent'] ?? null },
+      );
+      return reply
+        .status(201)
+        .send({ id: edition.id, label: edition.label, status: edition.status, copied });
     },
   );
 

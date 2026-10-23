@@ -379,6 +379,26 @@ export async function setRespondentContact(
   return mapRespondent(row);
 }
 
+/**
+ * The opt-out link in a submission confirmation: the respondent behind this
+ * recovery token wants no report and no further contact about the survey.
+ * Clears the report-delivery choice and stops reminders; answers and
+ * participation are untouched. Returns whether a respondent matched.
+ */
+export async function optOutOfReportByRecoveryToken(
+  pool: Pool,
+  recoveryToken: string,
+): Promise<boolean> {
+  const result = await query(
+    pool,
+    `UPDATE respondents
+        SET report_delivery = 'none', reminders_opted_out = TRUE
+      WHERE recovery_token = $1`,
+    [recoveryToken],
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
 /** Change only the report-delivery preference (UX-RET-008) — answers untouched. */
 export async function setReportDelivery(
   pool: Pool,

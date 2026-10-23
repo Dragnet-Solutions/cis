@@ -16,6 +16,8 @@ import {
   summaryLine,
   type InvitationFilter,
 } from './firmInvitationsModel';
+import { isValidEmail } from '../lib/email';
+import { useEmailField } from '../lib/useEmailField';
 
 type InvestorCategory = 'retail' | 'local_institutional' | 'foreign_institutional' | 'not_sure';
 
@@ -210,6 +212,7 @@ function FirmInvitationsCard({
   const [claimedOnServer, setClaimed] = useState(false);
   const claimed = claimedOnServer || hasLead;
   const [email, setEmail] = useState('');
+  const emailField = useEmailField('ftp-inv-email', email);
   const [contactName, setContactName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -254,8 +257,8 @@ function FirmInvitationsCard({
   }
 
   async function send(): Promise<void> {
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
-      setError('Enter a valid email address.');
+    if (!isValidEmail(email)) {
+      emailField.reveal();
       return;
     }
     await act(async () => {
@@ -290,12 +293,13 @@ function FirmInvitationsCard({
           <div className="field">
             <label htmlFor="ftp-inv-email">Email address</label>
             <input
-              id="ftp-inv-email"
+              {...emailField.inputProps}
               type="email"
               value={email}
               placeholder="name@firm.com"
               onChange={(e) => setEmail(e.target.value)}
             />
+            {emailField.error}
           </div>
           <div className="field">
             <label htmlFor="ftp-inv-name">Contact name (optional)</label>
@@ -309,7 +313,7 @@ function FirmInvitationsCard({
             <button
               type="button"
               className="btn"
-              disabled={busy || !email.trim()}
+              disabled={busy || !emailField.valid}
               onClick={() => void send()}
             >
               {busy ? 'Sending…' : 'Send invitation'}
@@ -863,6 +867,7 @@ export function FirmTeamPage({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [form, setForm] = useState({ name: '', email: '', role: '' });
+  const coordEmail = useEmailField('ftp-email', form.email);
   // Keep the per-firm invitation box and the edition-wide list in step.
   const [firmInvitesVersion, setFirmInvitesVersion] = useState(0);
   const [editionInvitesVersion, setEditionInvitesVersion] = useState(0);
@@ -913,6 +918,10 @@ export function FirmTeamPage({
   async function addOne(asLead: boolean): Promise<void> {
     if (!orgId || !form.name.trim() || !form.email.trim()) {
       setError('Name and email are required.');
+      return;
+    }
+    if (!isValidEmail(form.email)) {
+      coordEmail.reveal();
       return;
     }
     const body = {
@@ -1043,10 +1052,12 @@ export function FirmTeamPage({
         <div className="field">
           <label htmlFor="ftp-email">Email</label>
           <input
-            id="ftp-email"
+            {...coordEmail.inputProps}
+            type="email"
             value={form.email}
             onChange={(e) => setForm({ ...form, email: e.target.value })}
           />
+          {coordEmail.error}
         </div>
         <div className="field">
           <label htmlFor="ftp-role">Role (optional)</label>
@@ -1058,11 +1069,21 @@ export function FirmTeamPage({
         </div>
         <div className="actions">
           {!lead ? (
-            <button type="button" className="btn" onClick={() => void addOne(true)}>
+            <button
+              type="button"
+              className="btn"
+              disabled={!form.name.trim() || !coordEmail.valid}
+              onClick={() => void addOne(true)}
+            >
               Add as lead
             </button>
           ) : (
-            <button type="button" className="btn" onClick={() => void addOne(false)}>
+            <button
+              type="button"
+              className="btn"
+              disabled={!form.name.trim() || !coordEmail.valid}
+              onClick={() => void addOne(false)}
+            >
               Add coordinator
             </button>
           )}

@@ -109,9 +109,20 @@ export async function getRegulatorEngagement(
 ): Promise<RegulatorEngagementRow | null> {
   const res = await query<RawRow>(
     pool,
-    `${ROW_SELECT} WHERE e.edition_id = $1 AND e.institution_id = $2 AND e.family_code = $3`,
+    `${ROW_SELECT} WHERE e.edition_id = $1 AND e.institution_id = $2 AND e.family_code = $3
+        AND e.retired_at IS NULL`,
     [editionId, institutionId, familyCode],
   );
+  const row = res.rows[0];
+  return row ? mapRow(row) : null;
+}
+
+/** The engagement row whose issued link a respondent answered, if any. */
+export async function getRegulatorEngagementByRespondent(
+  pool: Pool,
+  respondentId: string,
+): Promise<RegulatorEngagementRow | null> {
+  const res = await query<RawRow>(pool, `${ROW_SELECT} WHERE e.respondent_id = $1`, [respondentId]);
   const row = res.rows[0];
   return row ? mapRow(row) : null;
 }
@@ -122,7 +133,8 @@ export async function listRegulatorEngagement(
 ): Promise<RegulatorEngagementRow[]> {
   const res = await query<RawRow>(
     pool,
-    `${ROW_SELECT} WHERE e.edition_id = $1 ORDER BY e.family_code, i.name`,
+    `${ROW_SELECT} WHERE e.edition_id = $1 AND e.retired_at IS NULL
+      ORDER BY e.family_code, i.name`,
     [editionId],
   );
   return res.rows.map(mapRow);

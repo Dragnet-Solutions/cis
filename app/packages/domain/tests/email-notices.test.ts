@@ -174,8 +174,9 @@ describe('Invitation batches render the template and resolve each firm’s addre
     const toLead = emails.find((e) => e.toAddress === 'lead@lead.example')!;
     expect(toLead.refId).toBe(byOrg.get(withLead.id)!.id);
     expect(toLead.toName).toBe('Lead Person');
-    expect(toLead.subject).toBe('Your firm has been invited to the 2026 benchmark');
-    expect(toLead.bodyText).toContain('Dear Lead Capital,');
+    // The seeded "First invitation" goes out in its approved design (F-01).
+    expect(toLead.subject).toBe('Lead Capital is invited to the CIS-Dragnet 2026 Benchmark Study');
+    expect(toLead.bodyText).toContain('Dear Lead Person,');
     expect(toLead.bodyText).not.toContain('{{');
     // A firm with a space is sent to the portal's sign-in, not a claim link.
     expect(toLead.bodyText).toContain(`${PORTAL}/firm`);
@@ -210,6 +211,42 @@ describe('Invitation batches render the template and resolve each firm’s addre
     expect(again.skippedDuplicates).toBe(3);
   });
 
+  it('an edited seeded template keeps its design, with the operators’ words and the link expiry', async () => {
+    const f = await firm('Edited Words Ltd');
+    await createFirmInvitation(pool, {
+      organizationId: f.id,
+      editionId,
+      email: 'old@edited.example',
+      expiresAt: new Date(Date.now() - 86_400_000),
+      invitedBy: makerUserId,
+    });
+    await pool.query(
+      `UPDATE message_templates SET body = $1 WHERE edition_id = $2 AND name = 'First invitation'`,
+      ['Dear {{firm}},\n\nWe would <really> like you to join. Your link: {{code}}', editionId],
+    );
+    const r = await sendBatch(pool, {
+      editionId,
+      templateId: await templateId('First invitation'),
+      audienceId: 'all',
+      sentBy: makerUserId,
+      portalUrl: PORTAL,
+    });
+    const [rec] = await listRecipients(pool, r.batch.id);
+    const [email] = await listEmailsFor(pool, INVITATION_BATCH_EMAIL_KIND, [rec!.id]);
+    // F-01's design (subject, code box, button) around the operators' text.
+    expect(email!.subject).toBe(
+      'Edited Words Ltd is invited to the CIS-Dragnet 2026 Benchmark Study',
+    );
+    expect(email!.bodyText).toContain(
+      'Dear Edited Words Ltd,\n\nWe would <really> like you to join.',
+    );
+    expect(email!.bodyHtml).toContain('We would &lt;really&gt; like you to join.');
+    expect(email!.bodyText).not.toContain('The study gives every participating firm');
+    expect(email!.bodyText).toContain('Your invitation code:');
+    // The reopened invitation's expiry is in the small print.
+    expect(email!.bodyText).toMatch(/This link is personal and expires on \d{1,2} \w+ \d{4}\./);
+  });
+
   it('an unclaimed firm whose invitation expired gets the same invitation reopened; templates without the link get a button', async () => {
     const f = await firm('Claim Me Ltd');
     const old = await createFirmInvitation(pool, {
@@ -232,7 +269,9 @@ describe('Invitation batches render the template and resolve each firm’s addre
     expect(email!.toAddress).toBe('old@claim.example');
     expect(email!.bodyText).toContain(`${PORTAL}/firm?invite=${old.token}`);
     expect(email!.bodyText).not.toContain('claim=');
-    expect(email!.bodyHtml).toContain('Set up your firm');
+    // "Nobody assigned yet" is F-06: its button carries the firm's link.
+    expect(email!.bodyHtml).toContain('Assign the surveys');
+    expect(email!.bodyHtml).toContain(`href="${PORTAL}/firm?invite=${old.token}"`);
     // Reopened, not duplicated: the link works again.
     const invs = await listFirmInvitationsForOrganization(pool, f.id);
     expect(invs).toHaveLength(1);
@@ -369,7 +408,8 @@ describe('Invitation batches render the template and resolve each firm’s addre
     });
     const batchEmails = await allEmails(INVITATION_BATCH_EMAIL_KIND);
     expect(batchEmails.map((e) => e.toAddress)).toEqual(['bola@requested.example']);
-    expect(batchEmails[0]!.bodyText).toContain('Dear Requested Firm,');
+    expect(batchEmails[0]!.subject).toBe('A new invitation code for Requested Firm');
+    expect(batchEmails[0]!.bodyText).toContain('Dear Bola,');
     // The firm already has an open invitation (Tunde's): its link is sent.
     expect(batchEmails[0]!.bodyText).toContain(`${PORTAL}/firm?invite=${inv!.token}`);
 
@@ -563,7 +603,8 @@ describe('Firm digest, new operators and respondent reminders are emailed', () =
     const [email] = await listEmailsFor(pool, OPERATOR_SET_PASSWORD_EMAIL_KIND, [person.userId]);
     expect(email!.toAddress).toBe('new.op@cis.example');
     expect(email!.bodyText).toMatch(new RegExp(`${PORTAL}/set-password\\?token=[A-Za-z0-9_-]{43}`));
-    expect(email!.bodyText).not.toMatch(/placeholder|unusable|password:/i);
+    // Never a password: only the link to choose one.
+    expect(email!.bodyText).not.toMatch(/placeholder|unusable|password: \S/i);
   });
 
   it('emails a due reminder to an investor who chose email, with STOP only after the first', async () => {
@@ -599,6 +640,9 @@ describe('Firm digest, new operators and respondent reminders are emailed', () =
     expect(e1!.toAddress).toBe('remind@x.example');
     expect(e1!.bodyText).toContain(`${PORTAL}/survey?resume=0b6f8c1e-2f6a-4f7e-9a51-1c2d3e4f5a6b`);
     expect(e1!.bodyText).not.toContain('/survey?stop=');
+    // The managed wording (Wording page) is the body, inside the P-02 design.
+    expect(e1!.subject).toBe('Your survey is still open');
+    expect(e1!.bodyText).toContain('That is completely fine — your answers are saved');
     expect(e2!.bodyText).toContain(`${PORTAL}/survey?stop=0b6f8c1e-2f6a-4f7e-9a51-1c2d3e4f5a6b`);
   });
 });

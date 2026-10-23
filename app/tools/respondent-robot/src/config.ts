@@ -139,7 +139,7 @@ Pace:
   --think <min-max>         Pause per question for a normal respondent (default 2s-8s; 0 = none)
 
 Targets (defaults are the study minimums):
-  --firms 80 --retail 1111 --local 25 --foreign 15 --regulators 7
+  --firms 80 --retail 1111 --local 25 --foreign 15 --regulators 6
   --firm-prefix "[Test]"    Only firms whose name starts with this are used
 
 Shape:

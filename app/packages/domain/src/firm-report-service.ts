@@ -22,6 +22,7 @@ import {
   insertReportSnapshot,
   withTransaction,
 } from '@cis/db';
+import { notifyApprovalDecided, notifyApprovalRequested } from './approval-notices';
 import {
   canRequestCriticalAction,
   canApproveCriticalAction,
@@ -258,6 +259,12 @@ export async function requestFirmReportRelease(
     payload: { reason, reportIds: covered.map((r) => r.id) },
     editionId,
   });
+  await notifyApprovalRequested(pool, {
+    actionType: FIRM_REPORT_RELEASE_ACTION,
+    refId: action.id,
+    requestedBy: rbac.userId,
+    requestedAt: action.requestedAt,
+  });
 
   await writeAudit(pool, {
     actorId: rbac.userId,
@@ -334,6 +341,14 @@ export async function decideFirmReportRelease(
     if (a.rowCount === 0) {
       throw new CriticalActionStateError('The release request could not be rejected');
     }
+    await notifyApprovalDecided(pool, {
+      actionType: FIRM_REPORT_RELEASE_ACTION,
+      refId: actionId,
+      requestedBy: action.requestedBy,
+      decidedBy: rbac.userId,
+      approved: false,
+      reason: rejectionReason,
+    });
     await writeAudit(pool, {
       actorId: rbac.userId,
       actionType: 'critical_action.rejected',
@@ -403,6 +418,13 @@ export async function decideFirmReportRelease(
       throw new CriticalActionStateError('The release request could not be approved');
     }
     for (const r of reports) await setApprovalState(c, r.id, 'approved');
+    await notifyApprovalDecided(c, {
+      actionType: FIRM_REPORT_RELEASE_ACTION,
+      refId: actionId,
+      requestedBy: action.requestedBy,
+      decidedBy: rbac.userId,
+      approved: true,
+    });
   });
 
   await writeAudit(pool, {

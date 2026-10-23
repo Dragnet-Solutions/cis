@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { AdminClient } from '../api/client';
+import { EMAIL_INVALID_MESSAGE, isValidEmail } from '../lib/email';
 import {
   ApiError,
   type RegulatorContact,
@@ -67,7 +68,6 @@ const PILL: Record<RegulatorView['state'], { cls: string; label: string }> = {
   invited: { cls: 'progress', label: 'Invited' },
 };
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 function phoneDigits(v: string): number {
   return v.replace(/[^0-9]/g, '').length;
 }
@@ -84,7 +84,7 @@ export function contactGaps(c: RegulatorContact): string[] {
   const gaps: string[] = [];
   if (!c.who.trim()) gaps.push('a name');
   if (!c.role.trim()) gaps.push('a role');
-  if (!EMAIL_RE.test(c.email.trim())) gaps.push('a working email address');
+  if (!isValidEmail(c.email)) gaps.push('a working email address');
   if (phoneDigits(c.phone) < 10) gaps.push('a mobile number');
   if (!c.how.trim()) gaps.push('how we got to them');
   return gaps;
@@ -252,14 +252,17 @@ function RegulatorDetail({
     );
   }
 
-  const okMail = EMAIL_RE.test(draft.email.trim());
+  const okMail = isValidEmail(draft.email);
   const okPhone = phoneDigits(draft.phone) >= 10;
   const draftGaps = contactGaps(draft);
   const draftValid = draftGaps.length === 0;
+  // The field the inline error is about, so the input can point at it.
+  const draftErrorKey: 'email' | 'phone' | null =
+    draft.email.length && !okMail ? 'email' : draft.phone.length && !okPhone ? 'phone' : null;
   const draftError =
-    draft.email.length && !okMail
-      ? 'That is not a working email address.'
-      : draft.phone.length && !okPhone
+    draftErrorKey === 'email'
+      ? EMAIL_INVALID_MESSAGE
+      : draftErrorKey === 'phone'
         ? 'That number is too short to send a text to.'
         : '';
 
@@ -303,6 +306,7 @@ function RegulatorDetail({
         valid={draftValid}
         gaps={draftGaps}
         validationError={draftError}
+        validationKey={draftErrorKey}
       />
 
       {/* 2. the survey */}
@@ -343,6 +347,8 @@ function ContactSection(props: {
   valid: boolean;
   gaps: string[];
   validationError: string;
+  /** The field validationError is about. */
+  validationKey: keyof RegulatorContact | null;
 }): JSX.Element {
   const { r, editing, draft, setDraft } = props;
   const invited = r.state === 'invited';
@@ -353,6 +359,8 @@ function ContactSection(props: {
       <input
         id={`f-${key}`}
         type={key === 'email' ? 'email' : key === 'phone' ? 'tel' : 'text'}
+        aria-invalid={props.validationKey === key || undefined}
+        aria-describedby={props.validationKey === key ? 'f-contact-error' : undefined}
         value={draft[key]}
         onChange={(e) => setDraft({ ...draft, [key]: e.target.value })}
       />
@@ -394,7 +402,7 @@ function ContactSection(props: {
             </div>
             {field('how', 'How we got to them', 'A note for whoever picks this up next.')}
             {props.validationError ? (
-              <div className="err" role="alert">
+              <div className="err" role="alert" id="f-contact-error">
                 {props.validationError}
               </div>
             ) : null}

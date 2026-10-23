@@ -445,7 +445,8 @@ interface RawRequestRow {
   phone: string | null;
   flag: string | null;
   resolved: boolean;
-  resolution: 'code_issued' | 'marked_done' | null;
+  resolution: 'code_issued' | 'marked_done' | 'declined' | null;
+  decline_reason: string | null;
   resolved_by: string | null;
   resolved_at: Date | null;
   created_at: Date;
@@ -464,6 +465,7 @@ function mapRequest(r: RawRequestRow): InvitationRequestItem {
     flag: r.flag,
     resolved: r.resolved,
     resolution: r.resolution,
+    declineReason: r.decline_reason ?? null,
     resolvedBy: r.resolved_by,
     resolvedAt: r.resolved_at,
     createdAt: r.created_at,
@@ -534,15 +536,20 @@ export async function listInvitationRequests(
 export async function resolveInvitationRequestRow(
   pool: Pool,
   id: string,
-  data: { resolution: 'code_issued' | 'marked_done'; resolvedBy: string | null },
+  data: {
+    resolution: 'code_issued' | 'marked_done' | 'declined';
+    resolvedBy: string | null;
+    declineReason?: string | null;
+  },
 ): Promise<InvitationRequestItem> {
   const res = await query<RawRequestRow>(
     pool,
     `UPDATE invitation_requests
-        SET resolved = TRUE, resolution = $2, resolved_by = $3, resolved_at = NOW()
+        SET resolved = TRUE, resolution = $2, resolved_by = $3, resolved_at = NOW(),
+            decline_reason = $4
       WHERE id = $1 AND resolved = FALSE
       RETURNING *`,
-    [id, data.resolution, data.resolvedBy],
+    [id, data.resolution, data.resolvedBy, data.declineReason ?? null],
   );
   const row = res.rows[0];
   if (!row) throw new Error(`Invitation request ${id} not found or already resolved`);

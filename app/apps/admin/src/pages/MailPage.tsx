@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import type { AdminClient } from '../api/client';
 import { ApiError, type MailStatus, type MailTestResult } from '../api/types';
+import { useBuildLine } from '../shared/BuildVersion';
 
 /**
  * Setup › Mail — is email actually going out? Shows which mail service this
@@ -91,6 +92,7 @@ export function MailPage({ client }: { client: AdminClient }): JSX.Element {
   const [busy, setBusy] = useState(false);
   const [testError, setTestError] = useState<string | null>(null);
   const [result, setResult] = useState<MailTestResult | null>(null);
+  const build = useBuildLine();
 
   const load = useCallback(async () => {
     setError(null);
@@ -159,6 +161,8 @@ export function MailPage({ client }: { client: AdminClient }): JSX.Element {
         <dd>{status.dispatcherRunning ? 'Running' : 'Not running on this server'}</dd>
         <dt>Oldest email waiting</dt>
         <dd>{fmt(status.oldestQueuedAt)}</dd>
+        <dt>Build</dt>
+        <dd className={build.mismatch ? 'buildline mismatch' : 'buildline'}>{build.text}</dd>
       </dl>
 
       <h2 style={{ marginTop: 22 }}>Last 7 days</h2>

@@ -111,8 +111,10 @@ describe('inviteFirm', () => {
     expect(email.subject).toContain('CORDROS Ltd');
     expect(email.bodyText).toContain(`${PORTAL}/firm?invite=${token}`);
     expect(email.bodyHtml).toContain(`${PORTAL}/firm?invite=${token}`);
-    expect(email.bodyText).toMatch(/6-digit PIN/);
-    expect(email.bodyText).toMatch(/expires on/);
+    // The approved firm invitation (F-01): the link is the invitation code.
+    expect(email.subject).toBe('CORDROS Ltd is invited to the CIS-Dragnet 2026 Benchmark Study');
+    expect(email.bodyText).toContain(`Your invitation code:\n${PORTAL}/firm?invite=${token}`);
+    expect(email.bodyText).toMatch(/Survey closes: /);
 
     const audit = await getAuditEntriesForEntity(pool, 'firm_invitation', invitation.id);
     expect(audit.map((a) => a.actionType)).toContain('firm_invitation.sent');
@@ -351,8 +353,7 @@ describe('claimSpace with an invitation', () => {
     expect(email.bodyText).toContain(`${PORTAL}/firm`);
     expect(email.bodyText).toContain(CLAIM.contactEmail);
     expect(email.bodyText).toMatch(/PIN you chose/);
-    expect(email.bodyText).toMatch(/assign the three seats/);
-    expect(email.bodyText).toMatch(/outreach links/);
+    expect(email.bodyText).toMatch(/Name who answers each of the three surveys/);
     expect(email.bodyText).not.toContain(CLAIM.pin);
     expect(email.bodyHtml).not.toContain(CLAIM.pin);
   });

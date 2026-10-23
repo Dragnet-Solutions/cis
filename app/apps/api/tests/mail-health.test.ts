@@ -165,7 +165,7 @@ describe('POST /mail/test', () => {
       method: 'POST',
       url: '/mail/test',
       headers: auth(token),
-      payload: { to: 'ops@cis.example' },
+      payload: { to: 'ops@cis-mailtest.ng' },
     });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({
@@ -174,7 +174,7 @@ describe('POST /mail/test', () => {
       providerMessageId: 'zm-123',
       error: null,
     });
-    expect(sentTo).toBe('ops@cis.example');
+    expect(sentTo).toBe('ops@cis-mailtest.ng');
   });
 
   it('reports "logged" (recorded, not sent) when there is no mail service', async () => {
@@ -184,7 +184,7 @@ describe('POST /mail/test', () => {
       method: 'POST',
       url: '/mail/test',
       headers: auth(token),
-      payload: { to: 'ops@cis.example' },
+      payload: { to: 'ops@cis-mailtest.ng' },
     });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ status: 'logged', providerMessageId: null });
@@ -199,7 +199,7 @@ describe('POST /mail/test', () => {
       method: 'POST',
       url: '/mail/test',
       headers: auth(token),
-      payload: { to: 'ops@cis.example' },
+      payload: { to: 'ops@cis-mailtest.ng' },
     });
     expect(res.json()).toMatchObject({ status: 'failed', error: 'Sender not verified' });
   });
@@ -222,7 +222,7 @@ describe('POST /mail/test', () => {
       method: 'POST',
       url: '/mail/test',
       headers: auth(token),
-      payload: { to: 'ops@cis.example' },
+      payload: { to: 'ops@cis-mailtest.ng' },
     });
     expect(res.statusCode).toBe(403);
   });

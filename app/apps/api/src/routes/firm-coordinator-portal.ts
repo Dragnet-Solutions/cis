@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { getPool, getOrganizationById, listEditions } from '@cis/db';
+import { getPool, getOrganizationById, listEditions, currentEditionOf } from '@cis/db';
 import {
   listCoordinators,
   addCoordinator,
@@ -46,7 +46,7 @@ export const firmCoordinatorPortalRoutes: FastifyPluginAsyncZod = async (app) =>
     status: 'draft' | 'open' | 'locked' | 'archived';
   } | null> {
     const editions = await listEditions(getPool());
-    const current = editions.find((e) => e.status === 'open') ?? editions[0] ?? null;
+    const current = currentEditionOf(editions);
     return current ? { id: current.id, status: current.status } : null;
   }
 

@@ -24,6 +24,7 @@ import {
   listOrganizations,
   insertInvitationRequest,
   getOrganizationById,
+  getActiveLead,
 } from '@cis/db';
 import type {
   SeatAssignment,
@@ -37,7 +38,8 @@ import { DomainError } from './errors';
 import { assertUsableInvitation, FirmInvitationError } from './firm-invitation-service';
 import { createLeadCoordinator, setCoordinatorPin } from './firm-team-service';
 import { assertCollectionOpen, startJourney } from './journey-service';
-import { queueNotice } from './email-content';
+import { queueTemplate } from './email-content';
+import { editionForEmail, requestRef, seatSurveyName, studyDates } from './email-fields';
 import { firmPortalLink, firmSeatLink } from './notice-links';
 
 /** Outbox kind of the email to a newly assigned seat holder; ref_id is the seat. */
@@ -45,6 +47,10 @@ export const SEAT_ASSIGNED_EMAIL_KIND = 'firm-seat-assigned';
 
 /** Outbox kind of the confirmation to whoever just claimed a firm's space; ref_id is the claim. */
 export const FIRM_SPACE_CLAIMED_EMAIL_KIND = 'firm-space-claimed';
+
+/** Outbox kind of the acknowledgement of a request for an invitation (F-10);
+ *  ref_id is the invitation_requests row. */
+export const INVITATION_REQUEST_RECEIVED_EMAIL_KIND = 'invitation-request-received';
 
 /** Firms whose name starts with this may claim without an invitation when the escape hatch is on. */
 export const TEST_FIRM_PREFIX = '[Test]';
@@ -309,22 +315,18 @@ async function queueClaimConfirmation(
 ): Promise<void> {
   const org = await getOrganizationById(db, claim.organizationId);
   const firmName = org?.displayName ?? 'Your firm';
-  const signIn = firmPortalLink(portalUrl);
-  await queueNotice(db, {
+  await queueTemplate(db, {
     kind: FIRM_SPACE_CLAIMED_EMAIL_KIND,
     refId: claim.id,
     to: claim.claimingContactEmail,
     toName: contactName,
-    subject: `${firmName}'s space is set up — CIS × Dragnet benchmark`,
-    heading: `${firmName}'s space is set up`,
-    paragraphs: [
-      `Dear ${contactName},`,
-      `You have set up ${firmName}'s space for the CIS × Dragnet benchmark, and you are its lead coordinator.`,
-      `To sign in, go to ${signIn} and use this email address (${claim.claimingContactEmail}) with the six-digit PIN you chose. We never send your PIN by email; if you forget it, ask the CIS team to reset it.`,
-      'Next steps: assign the three seats (Managing Director or CEO, Compliance and Operations) so each holder gets their own survey link, then share your outreach links with your clients.',
-    ],
-    action: { label: "Sign in to your firm's space", url: signIn },
-    footer: 'If you did not set this up, reply to this email and the CIS team will help.',
+    template: 'F-04',
+    fields: {
+      contact_name: contactName,
+      contact_email: claim.claimingContactEmail,
+      firm: firmName,
+      portal_link: firmPortalLink(portalUrl),
+    },
   });
 }
 
@@ -390,15 +392,32 @@ export async function requestInvitation(
       : null,
     firm ? null : 'Firm name not matched to the register.',
   ].filter((n): n is string => n !== null);
-  await insertInvitationRequest(pool, {
-    editionId: edition.id,
-    organizationId: firm?.id ?? null,
-    firmName: input.firmName.trim(),
-    requesterName: input.name.trim(),
-    role: input.designation.trim(),
-    email: input.email.trim(),
-    phone: input.phone.trim(),
-    flag: notes.length > 0 ? notes.join(' ') : null,
+  await withTransaction(pool, async (client) => {
+    const c = client as unknown as Pool;
+    const saved = await insertInvitationRequest(c, {
+      editionId: edition.id,
+      organizationId: firm?.id ?? null,
+      firmName: input.firmName.trim(),
+      requesterName: input.name.trim(),
+      role: input.designation.trim(),
+      email: input.email.trim(),
+      phone: input.phone.trim(),
+      flag: notes.length > 0 ? notes.join(' ') : null,
+    });
+    // F-10: the requester is told it arrived and what happens next — in the
+    // same transaction, so a request is never acknowledged without being kept.
+    await queueTemplate(c, {
+      kind: INVITATION_REQUEST_RECEIVED_EMAIL_KIND,
+      refId: saved.id,
+      to: saved.email,
+      toName: saved.requesterName,
+      template: 'F-10',
+      fields: {
+        requester_name: saved.requesterName,
+        firm: saved.firmName,
+        request_ref: requestRef(saved.id),
+      },
+    });
   });
   return { accepted: true, domainNote };
 }
@@ -476,7 +495,7 @@ export async function assignSeat(
   return seat;
 }
 
-/** Tell a seat holder which survey is theirs and give them its personal link. */
+/** Tell a seat holder which survey is theirs and give them its personal link: F-05. */
 async function queueSeatAssigned(
   pool: Pool,
   seat: SeatAssignment,
@@ -484,22 +503,22 @@ async function queueSeatAssigned(
 ): Promise<void> {
   const firmName =
     (await getOrganizationById(pool, seat.organizationId))?.displayName ?? 'Your firm';
-  const name = seat.assignedName ?? 'there';
-  await queueNotice(pool, {
+  const lead = await getActiveLead(pool, seat.organizationId);
+  const edition = await editionForEmail(pool, seat.editionId);
+  await queueTemplate(pool, {
     kind: SEAT_ASSIGNED_EMAIL_KIND,
     refId: seat.id,
     to: seat.assignedEmail ?? '',
     toName: seat.assignedName,
-    subject: `${firmName} has asked you to answer its ${seat.roleLabel} survey`,
-    heading: `Your ${seat.roleLabel} survey`,
-    paragraphs: [
-      `Dear ${name},`,
-      `${firmName} has asked you to answer its ${seat.roleLabel} survey for the CIS × Dragnet benchmark. It takes about fifteen minutes.`,
-      'Nobody at your firm sees your answers, including the coordinator who assigned this to you.',
-      'The link below is personal to you: please do not forward it. If you stop part-way, the same link picks up where you left off.',
-    ],
-    action: { label: 'Open your survey', url: firmSeatLink(notify.portalUrl, seat.linkToken) },
-    footer: 'If you were not expecting this, reply to this email and the CIS team will help.',
+    template: 'F-05',
+    fields: {
+      respondent_name: seat.assignedName?.trim() || 'colleague',
+      coordinator_name: lead?.name?.trim() || `${firmName}'s coordinator`,
+      firm: firmName,
+      survey_name: seatSurveyName(seat),
+      survey_link: firmSeatLink(notify.portalUrl, seat.linkToken),
+      close_date: studyDates(edition).close_date,
+    },
   });
 }
 

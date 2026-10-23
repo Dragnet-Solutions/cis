@@ -15,6 +15,8 @@ module.exports = [
       '**/*.cjs',
       '**/*.mjs',
       'eslint.config.cjs',
+      '**/*.generated.ts',
+      'tmp/**',
     ],
   },
   {

@@ -188,3 +188,19 @@ export async function lockEdition(pool: Pool, id: string, lockedBy: string): Pro
   if (!row) throw new Error(`Edition ${id} not found or is already locked`);
   return mapEdition(row);
 }
+
+/**
+ * The edition the study is currently "on", from a list ordered newest first
+ * (as listEditions returns it): the open (collecting) one; else the newest
+ * locked one (collection over, still being scored and reported on); else the
+ * newest. A next-year draft therefore never displaces the edition that is
+ * collecting or reporting; once that edition is archived, the draft is next.
+ */
+export function currentEditionOf<T extends { status: string }>(editions: T[]): T | null {
+  return (
+    editions.find((e) => e.status === 'open') ??
+    editions.find((e) => e.status === 'locked') ??
+    editions[0] ??
+    null
+  );
+}

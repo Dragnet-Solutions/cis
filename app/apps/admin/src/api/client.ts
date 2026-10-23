@@ -6,6 +6,9 @@ import {
   type Coordinator,
   type EditionDetail,
   type EditionSummary,
+  type NextEditionCreated,
+  type AuditPageResponse,
+  type AuditFacets,
   type FirmReport,
   type FirmSummary,
   type FirmImportResult,
@@ -41,6 +44,7 @@ import {
   type ScoringSignoff,
   type SendBatchResult,
   type UnfinishedResponse,
+  type ReminderRunResult,
   type UploadCheckResult,
   type RegulatorContact,
   type RegulatorFamilyCode,
@@ -116,12 +120,27 @@ export function setPasswordWithLink(
   return baseRequest('/auth/password-set', { method: 'POST', body: { token, password } });
 }
 
+/** "Forgot password?": always the same neutral answer, account or not. */
+export function requestPasswordReset(
+  email: string,
+): Promise<{ requested: boolean; message: string }> {
+  return baseRequest('/auth/password-reset/request', { method: 'POST', body: { email } });
+}
+
 export function login(email: string, password: string): Promise<LoginResponse> {
   return baseRequest<LoginResponse>('/auth/login', { method: 'POST', body: { email, password } });
 }
 
 export interface AdminClient {
   listEditions(): Promise<EditionSummary[]>;
+  /** D-15: the suggested label for the next edition, and any draft in the way. */
+  getNextEditionHint(id: string): Promise<{ suggestedLabel: string; draftExists: string | null }>;
+  /** D-15: create the next edition as a draft copy of this one's configuration. */
+  createNextEdition(id: string, label: string): Promise<NextEditionCreated>;
+  /** D-07: one page of the audit trail (query string from auditQueryString). */
+  getAudit(query: string): Promise<AuditPageResponse>;
+  getAuditFacets(): Promise<AuditFacets>;
+  downloadAuditCsv(query: string): Promise<Blob>;
   getEdition(id: string): Promise<EditionDetail>;
   setFloors(id: string, floors: SampleFloor[]): Promise<{ floors: SampleFloor[] }>;
   setClosingDate(id: string, closingDate: string): Promise<{ surveyCloseAt: string | null }>;
@@ -230,7 +249,7 @@ export interface AdminClient {
     /** The release request awaiting a second person, if any. */
     pendingRelease: PendingFirmReportRelease | null;
   }>;
-  publishIndustryReport(id: string): Promise<{ publishedAt: string }>;
+  publishIndustryReport(id: string): Promise<{ publishedAt: string; reportEmailed: number }>;
   // Report documents — content computed from submitted responses.
   getIndustryReport(id: string): Promise<IndustryReportContent>;
   getFirmReport(id: string, firmId: string): Promise<FirmReportContent>;
@@ -302,8 +321,9 @@ export interface AdminClient {
   ): Promise<{ requests: InvitationRequestItem[] }>;
   resolveInvitationRequest(
     requestId: string,
-    resolution: 'code_issued' | 'marked_done',
+    resolution: 'code_issued' | 'marked_done' | 'declined',
     reissueTemplateId?: string,
+    declineReason?: string,
   ): Promise<{ request: InvitationRequestItem }>;
   getInstrumentItems(code: string): Promise<SurveyItem[]>;
   requestFreeze(id: string, reason: string): Promise<{ criticalActionId: string }>;
@@ -370,6 +390,7 @@ export interface AdminClient {
   getUnfinished(editionId: string): Promise<UnfinishedResponse>;
   setReminderSchedule(schedule: ReminderSchedule): Promise<{ schedule: ReminderSchedule }>;
   setReminderCap(cap: number): Promise<{ cap: number }>;
+  runReminders(editionId: string): Promise<ReminderRunResult>;
   /** Generic escape hatch — used by surfaces that call many endpoints without adding per-method stubs. */
   get<T = unknown>(path: string): Promise<T>;
   post<T = unknown>(path: string, body: unknown): Promise<T>;
@@ -433,6 +454,12 @@ export function createClient(token: string | null, hooks: SessionHooks = {}): Ad
 
   return {
     listEditions: () => request('/editions', { token }),
+    getNextEditionHint: (id) => request(`/editions/${id}/next`, { token }),
+    createNextEdition: (id, label) =>
+      request(`/editions/${id}/next`, { method: 'POST', body: { label }, token }),
+    getAudit: (query) => request(`/audit${query ? `?${query}` : ''}`, { token }),
+    getAuditFacets: () => request('/audit/facets', { token }),
+    downloadAuditCsv: (query) => requestBlob(`/audit.csv${query ? `?${query}` : ''}`, token),
     getEdition: (id) => request(`/editions/${id}`, { token }),
     setFloors: (id, floors) =>
       request(`/editions/${id}/floors`, { method: 'PATCH', body: { floors }, token }),
@@ -627,10 +654,14 @@ export function createClient(token: string | null, hooks: SessionHooks = {}): Ad
         `/editions/${id}/invitations/requests${includeResolved ? '?includeResolved=true' : ''}`,
         { token },
       ),
-    resolveInvitationRequest: (requestId, resolution, reissueTemplateId) =>
+    resolveInvitationRequest: (requestId, resolution, reissueTemplateId, declineReason) =>
       request(`/invitations/requests/${requestId}/resolve`, {
         method: 'POST',
-        body: { resolution, ...(reissueTemplateId ? { reissueTemplateId } : {}) },
+        body: {
+          resolution,
+          ...(reissueTemplateId ? { reissueTemplateId } : {}),
+          ...(declineReason ? { declineReason } : {}),
+        },
         token,
       }),
     getInstrumentItems: (code) =>
@@ -710,6 +741,8 @@ export function createClient(token: string | null, hooks: SessionHooks = {}): Ad
     setReminderSchedule: (schedule) =>
       request('/reminders/schedule', { method: 'PUT', body: schedule, token }),
     setReminderCap: (cap) => request('/reminders/cap', { method: 'PUT', body: { cap }, token }),
+    runReminders: (editionId) =>
+      request(`/editions/${editionId}/reminders/run`, { method: 'POST', body: {}, token }),
     get: <T = unknown>(path: string) => request<T>(path, { token }),
     post: <T = unknown>(path: string, body: unknown) =>
       request<T>(path, { method: 'POST', body, token }),

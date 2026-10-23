@@ -117,3 +117,20 @@ export async function setUserPasswordHash(db: Db, userId: string, passwordHash: 
     userId,
   ]);
 }
+
+/** How many self-service reset links ("Forgot password?", created_by NULL) a
+ *  user was sent in the last `withinMs` — the per-account cap on that form. */
+export async function countRecentSelfServiceResets(
+  db: Db,
+  userId: string,
+  withinMs: number,
+): Promise<number> {
+  const res = await query<{ n: number }>(
+    asPool(db),
+    `SELECT COUNT(*)::int AS n FROM password_set_tokens
+      WHERE user_id = $1 AND purpose = 'reset' AND created_by IS NULL
+        AND created_at > NOW() - ($2::int * INTERVAL '1 millisecond')`,
+    [userId, withinMs],
+  );
+  return res.rows[0]?.n ?? 0;
+}

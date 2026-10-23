@@ -5,10 +5,11 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "node scripts/gen-email-templates.mjs && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src/",
-    "test": "vitest run"
+    "test": "vitest run",
+    "email:templates": "node scripts/gen-email-templates.mjs"
   },
   "dependencies": {
     "@cis/audit": "workspace:*",

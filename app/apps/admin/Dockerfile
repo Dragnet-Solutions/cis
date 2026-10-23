@@ -39,6 +39,15 @@ COPY tsconfig.base.json turbo.json ./
 COPY packages/survey ./packages/survey
 COPY apps/admin ./apps/admin
 
+# The admin bundle's own build version, compiled in by Vite and shown in the
+# operator footer next to the API's (D-06), so an admin/API image mismatch is
+# visible. CI passes the commit sha, the pushed image tag and the build time.
+ARG GIT_COMMIT=""
+ARG IMAGE_TAG=""
+ARG BUILD_TIME=""
+ENV VITE_GIT_COMMIT=${GIT_COMMIT} \
+    VITE_IMAGE_TAG=${IMAGE_TAG} \
+    VITE_BUILD_TIME=${BUILD_TIME}
 RUN pnpm exec turbo run build --filter=@cis/admin
 
 # ──────────────────────────────────────────────────────────────────────────────

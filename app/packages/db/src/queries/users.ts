@@ -384,3 +384,35 @@ export async function countActiveUsersWithPermission(pool: Pool, code: string): 
   );
   return parseInt(result.rows[0]?.n ?? '0', 10);
 }
+
+/**
+ * Every active person who may approve a critical action of `actionType`
+ * (a can_approve_critical_action permission scoped to it, or unscoped), held
+ * through a role or directly — except `excludeUserId` (the requester, who can
+ * never approve their own request).
+ */
+export async function listCriticalActionApprovers(
+  pool: Pool,
+  actionType: string,
+  excludeUserId: string | null,
+): Promise<Array<{ id: string; email: string; displayName: string }>> {
+  const result = await query<{ id: string; email: string; display_name: string }>(
+    pool,
+    `SELECT DISTINCT u.id, u.email, u.display_name
+       FROM users u
+       JOIN (
+         SELECT ur.user_id, rp.permission_id
+           FROM user_roles ur JOIN role_permissions rp ON rp.role_id = ur.role_id
+         UNION
+         SELECT up.user_id, up.permission_id FROM user_permissions up
+       ) held ON held.user_id = u.id
+       JOIN permissions p ON p.id = held.permission_id
+      WHERE u.is_active = TRUE
+        AND p.permission_type = 'can_approve_critical_action'
+        AND (p.action_scope IS NULL OR p.action_scope = $1)
+        AND ($2::text IS NULL OR u.id::text <> $2::text)
+      ORDER BY u.email`,
+    [actionType, excludeUserId],
+  );
+  return result.rows.map((r) => ({ id: r.id, email: r.email, displayName: r.display_name }));
+}

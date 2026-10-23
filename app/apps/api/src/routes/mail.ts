@@ -84,6 +84,8 @@ export const mailRoutes: FastifyPluginAsyncZod = async (app) => {
 
       const queued = await queueNotice(pool, {
         kind: MAIL_TEST_EMAIL_KIND,
+        audience: 'operator',
+        label: 'Test',
         refId: null,
         to: request.body.to,
         subject: 'CIS × Dragnet — test email',

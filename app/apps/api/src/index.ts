@@ -1,5 +1,6 @@
 import { closePool, initializePool } from '@cis/db';
 import { startMailDispatcher } from './mail/dispatcher';
+import { startReminderScheduler } from './reminders/scheduler';
 import { buildServer } from './server';
 
 async function main() {
@@ -12,12 +13,14 @@ async function main() {
   // On SIGTERM (a rollout or scale-down) stop accepting connections, let
   // in-flight requests finish, then release the database pool.
   let stopMailDispatcher: () => void = () => {};
+  let stopReminderScheduler: () => void = () => {};
   let shuttingDown = false;
   const shutdown = async (signal: NodeJS.Signals) => {
     if (shuttingDown) return;
     shuttingDown = true;
     app.log.info({ signal }, 'shutting down');
     try {
+      stopReminderScheduler();
       stopMailDispatcher();
       await app.close();
       await closePool();
@@ -40,6 +43,9 @@ async function main() {
   // Sends the email outbox in the background (started here, not in
   // buildServer, so tests stay hermetic).
   stopMailDispatcher = startMailDispatcher(pool, app.log);
+  // Sends due respondent reminders hourly while an edition is collecting
+  // (REMINDER_SCHEDULE=off disables; one pod at a time via an advisory lock).
+  stopReminderScheduler = startReminderScheduler(pool, app.log);
 }
 
 main();

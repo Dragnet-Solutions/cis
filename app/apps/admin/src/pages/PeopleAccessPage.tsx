@@ -8,6 +8,7 @@ import {
   type PeopleResponse,
   type PersonAccess,
 } from '../api/types';
+import { isValidEmail } from '../lib/email';
 
 /**
  * UX-OPS-006 — People & Access (RBAC admin), live-wired to the real evaluator
@@ -75,7 +76,6 @@ const RIGHTS: Array<{ k: RightKey; label: string; sub: string; dragnetOnly?: boo
   },
 ];
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const FLOOR = 2;
 
 function summarise(p: PersonAccess): string {
@@ -198,14 +198,14 @@ export function PeopleAccessPage({
 
   const validation: string = (() => {
     const e = email.trim();
-    if (e.length && !EMAIL_RE.test(e)) return 'That is not a working email address.';
+    if (e.length && !isValidEmail(e)) return 'That is not a working email address.';
     if (e && people.some((p) => p.email === e && p.userId !== editUserId))
       return 'Somebody with that address already has access.';
     if (draft.dragnet && org !== 'Dragnet') return 'The Dragnet analysis is Dragnet only.';
     return '';
   })();
 
-  const canSave = !!name.trim() && EMAIL_RE.test(email.trim()) && !validation;
+  const canSave = !!name.trim() && isValidEmail(email) && !validation;
 
   // The second-to-last approver's approve right cannot be un-ticked — same
   // floor, second door. Disabled here (UX hint) AND refused server-side (the

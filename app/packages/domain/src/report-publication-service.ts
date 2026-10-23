@@ -10,6 +10,8 @@ import {
   getLatestNationalReportForEdition,
   withTransaction,
   insertReportSnapshot,
+  claimReportDeliveryRecipients,
+  countReportDeliverySends,
   type ReportNarrative,
   type ReportPublication,
 } from '@cis/db';
@@ -27,7 +29,11 @@ import {
   ReportPublicationError,
   type NarrativeModel,
 } from './report-narrative-service';
-import { queueNotice } from './email-content';
+import { writeAudit } from '@cis/audit';
+import { queueTemplate } from './email-content';
+import { emailBrand } from './email-templates';
+import { siteOrigin } from './notice-links';
+import { reportOptOutLink } from './submission-confirmation-service';
 
 /**
  * Report delivery: what leaves CIS, frozen as it left.
@@ -169,28 +175,118 @@ export async function queueReleaseNotices(
       listActiveCoordinators(pool, report.organizationId),
     ]);
     const firm = org?.displayName ?? 'your firm';
-    const label = edition?.label ?? '';
     for (const c of coordinators) {
-      await queueNotice(pool, {
+      await queueTemplate(pool, {
         kind: 'firm-report-released',
         refId: report.id,
         to: c.email,
         toName: c.name,
-        subject: `Your ${label} CIS-Dragnet firm report is ready`,
-        heading: 'Your firm report is ready',
-        paragraphs: [
-          `Dear ${c.name},`,
-          `The private ${label} CIS-Dragnet Benchmark report for ${firm} has been released.\n` +
-            'It sets your firm’s results against the anonymised industry benchmark, with your own investors’ view of your service.',
-          'Sign in to the firm portal to read it and download the PDF:',
-        ],
-        action: { label: 'Open the firm portal', url: portalUrl },
-        footer:
-          'The report is private to your firm. It is never shared with other firms or any third party.\n\n' +
-          'CIS × Dragnet Benchmark Study',
+        template: 'F-13',
+        fields: { contact_name: c.name, edition: edition?.label, firm, portal_link: portalUrl },
       });
       queued += 1;
     }
   }
   return queued;
+}
+
+// ─── D-04: the published report, to the investors who asked for it ───────────
+
+/** Outbox kind of the published-report email; ref_id is the respondent. */
+export const REPORT_PUBLISHED_EMAIL_KIND = 'report-published';
+
+const DELIVERY_BATCH = 200;
+
+export interface ReportDeliveryOptions {
+  /** The public site's address (PORTAL_URL); links are built from its origin. */
+  portalUrl?: string | null;
+  /** Where questions go (SUPPORT_EMAIL); defaults to support@idhub.ng. */
+  supportEmail?: string | null;
+  /** The operator who published, for the audit entry. */
+  actor?: { userId: string | null; ipAddress?: string | null; userAgent?: string | null };
+  /** Respondents claimed and queued per transaction. */
+  batchSize?: number;
+}
+
+/**
+ * Email the published Industry report to every investor of its edition who
+ * asked for it by email (report delivery 'email' or 'both', with an address,
+ * submitted, not withdrawn, not opted out — opting out sets delivery to
+ * 'none'). The Institutional Perspectives report is published with it, so one
+ * email links both.
+ *
+ * Never twice: each respondent is written to the `report_delivery_sends`
+ * ledger for this publication in the same transaction as their outbox email,
+ * ON CONFLICT DO NOTHING, and only newly written rows are emailed. Safe to
+ * retry, and to run again after a publish retry; a publication is permanent,
+ * so an edition's report goes to a respondent once. Batched, so a long list
+ * is never one huge transaction; the mail dispatcher throttles sending.
+ *
+ * The email carries a link only — never an answer or a figure. Returns how
+ * many emails this call queued; an audit entry records the count.
+ */
+export async function sendPublishedReportToInvestors(
+  pool: Pool,
+  publication: ReportPublication,
+  opts: ReportDeliveryOptions = {},
+): Promise<number> {
+  if (publication.kind !== 'industry') return 0;
+  const origin = siteOrigin(opts.portalUrl);
+  const edParam = `edition=${encodeURIComponent(publication.editionId)}`;
+  const reportUrl = `${origin}/reports/industry?${edParam}`;
+  const institutionalUrl = `${origin}/reports/institutional?${edParam}`;
+  const edition = (await getEditionById(pool, publication.editionId))?.label;
+  const batch = Math.max(1, opts.batchSize ?? DELIVERY_BATCH);
+  const brand = opts.supportEmail?.trim()
+    ? { ...emailBrand(), supportEmail: opts.supportEmail.trim() }
+    : null;
+
+  let queued = 0;
+  for (;;) {
+    const n = await withTransaction(pool, async (client) => {
+      const recipients = await claimReportDeliveryRecipients(
+        client,
+        publication.id,
+        publication.editionId,
+        batch,
+      );
+      for (const r of recipients) {
+        await queueTemplate(client, {
+          kind: REPORT_PUBLISHED_EMAIL_KIND,
+          refId: r.respondentId,
+          to: r.email,
+          template: 'P-05',
+          fields: {
+            report_url: reportUrl,
+            institutional_url: institutionalUrl,
+            optout_url: r.recoveryToken ? reportOptOutLink(opts.portalUrl, r.recoveryToken) : null,
+            edition,
+          },
+          ...(brand ? { brand } : {}),
+        });
+      }
+      return recipients.length;
+    });
+    queued += n;
+    if (n < batch) break;
+  }
+
+  if (queued > 0) {
+    await writeAudit(pool, {
+      actorId: opts.actor?.userId ?? null,
+      actionType: 'report_delivery.sent',
+      entityType: 'report_publication',
+      entityId: publication.id,
+      editionId: publication.editionId,
+      newValue: { count: queued, kind: REPORT_PUBLISHED_EMAIL_KIND },
+      ipAddress: opts.actor?.ipAddress ?? null,
+      userAgent: opts.actor?.userAgent ?? null,
+    });
+  }
+  return queued;
+}
+
+/** How many investors a publication's report has been emailed to. */
+export async function reportEmailedCount(pool: Pool, publicationId: string): Promise<number> {
+  return countReportDeliverySends(pool, publicationId);
 }

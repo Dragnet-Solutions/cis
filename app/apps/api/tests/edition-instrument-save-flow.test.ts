@@ -149,10 +149,13 @@ describe('Instrument freeze request/approve flow, over real HTTP (§2)', () => {
     });
     expect(afterRes.json<{ frozen: boolean }>().frozen).toBe(true);
 
-    // The underlying rows: every instrument version frozen, and the
-    // maker-checker record shows two different users.
+    // The underlying rows: every instrument version in use frozen (the
+    // retired I-DEP never is, D-16), and the maker-checker record shows two
+    // different users.
     const versions = await getPool().query<{ is_frozen: boolean }>(
-      `SELECT is_frozen FROM instrument_definition_versions`,
+      `SELECT v.is_frozen FROM instrument_definition_versions v
+         JOIN instrument_definitions d ON d.id = v.instrument_definition_id
+        WHERE d.retired_at IS NULL`,
     );
     expect(versions.rows.length).toBeGreaterThan(0);
     expect(versions.rows.every((r) => r.is_frozen)).toBe(true);

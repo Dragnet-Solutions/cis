@@ -57,6 +57,7 @@ export async function truncateAllTables(pool: Pool): Promise<void> {
       email_outbox,
       password_set_tokens,
       report_snapshots,
+      report_delivery_sends,
       report_publications,
       firm_report_release_history,
       firm_reports,

@@ -1,6 +1,8 @@
 import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { getPool } from '@cis/db';
+import { loadRbacContext, requirePermission } from '@cis/auth';
+import { writeAudit } from '@cis/audit';
 import {
   getResponsesMonitor,
   getUnfinishedStats,
@@ -9,7 +11,7 @@ import {
   setReminderSchedule,
   getReminderCap,
   setReminderCap,
-  scheduleDueReminders,
+  runReminderPass,
   withdrawRespondent,
 } from '@cis/domain';
 import { kickMailDispatcher } from '../mail/dispatcher';
@@ -90,15 +92,55 @@ export const monitoringRoutes: FastifyPluginAsyncZod = async (app) => {
     },
   );
 
+  // D-03 — "Send reminders now": the same pass the hourly scheduler runs
+  // (advisory-locked, idempotent per step), for this edition only. Writing to
+  // participants needs "access:send"; every manual run is audited.
   app.post(
     '/editions/:id/reminders/run',
     { preHandler: [app.authenticate], schema: { params: editionParam, querystring: asOfQuery } },
     async (request, reply) => {
-      const sent = await scheduleDueReminders(getPool(), request.params.id, asOfOf(request.query), {
+      const pool = getPool();
+      const actorId = request.session.sub;
+      requirePermission(await loadRbacContext(pool, actorId), 'access:send');
+      const editionId = request.params.id;
+      const result = await runReminderPass(pool, {
+        asOf: asOfOf(request.query),
         portalUrl: publicOrigin(),
+        editionIds: [editionId],
       });
-      kickMailDispatcher();
-      return reply.send({ sent });
+      if (!result.ran) {
+        return reply.status(409).send({
+          error: 'Conflict',
+          statusCode: 409,
+          code: 'REMINDER_RUN_IN_PROGRESS',
+          message: 'Reminders are being sent right now. Try again in a minute.',
+        });
+      }
+      const run = result.editions[0];
+      const summary = {
+        collecting: run?.collecting ?? false,
+        emailed: run?.emailed ?? 0,
+        recorded: run?.sends.length ?? 0,
+        notDue: run?.notDue ?? 0,
+        skipped: run?.skipped ?? {
+          notEmail: 0,
+          noWording: 0,
+          alreadySent: 0,
+          noLongerEligible: 0,
+        },
+      };
+      if (summary.emailed > 0) kickMailDispatcher();
+      await writeAudit(pool, {
+        actorId,
+        actionType: 'reminders.run_manual',
+        entityType: 'edition',
+        entityId: editionId,
+        editionId,
+        newValue: summary,
+        ipAddress: request.ip,
+        userAgent: request.headers['user-agent'] ?? null,
+      });
+      return reply.send({ ...summary, sent: run?.sends ?? [] });
     },
   );
 

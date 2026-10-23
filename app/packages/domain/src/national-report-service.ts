@@ -27,6 +27,7 @@ import {
   getPendingCriticalActionForEdition,
   withTransaction,
 } from '@cis/db';
+import { notifyApprovalDecided, notifyApprovalRequested } from './approval-notices';
 import {
   canApproveCriticalAction,
   canRequestCriticalAction,
@@ -586,6 +587,12 @@ export async function requestNationalApproval(
       requestedBy: data.requestedByLabel ?? rbac.userId,
       requestedReason: reason,
     });
+    await notifyApprovalRequested(c, {
+      actionType: NATIONAL_REPORT_APPROVAL_ACTION,
+      refId: created.id,
+      requestedBy: rbac.userId,
+      requestedAt: created.requestedAt,
+    });
     return created;
   });
 
@@ -663,6 +670,13 @@ export async function approveNational(
     if (a.rowCount === 0) {
       throw new CriticalActionStateError('The approval request could not be approved');
     }
+    await notifyApprovalDecided(c, {
+      actionType: NATIONAL_REPORT_APPROVAL_ACTION,
+      refId: pending.id,
+      requestedBy: pending.requestedBy,
+      decidedBy: rbac.userId,
+      approved: true,
+    });
     return dbApprove(c, reportId, data.approvedByLabel ?? rbac.userId);
   });
 

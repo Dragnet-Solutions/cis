@@ -42,6 +42,7 @@ type Screen =
       started: boolean;
     }
   | { name: 'reminders-stopped'; token: string }
+  | { name: 'report-opted-out' }
   | { name: 'error'; kind: ErrorStateKind }
   | { name: 'help-about' }
   | { name: 'previous-editions' };
@@ -112,7 +113,25 @@ export function RespondentApp(): JSX.Element {
         const outreachRef = new URLSearchParams(window.location.search).get('ref');
         // "Stop these reminders" from a reminder email: ?stop=<recovery token>.
         const stopToken = new URLSearchParams(window.location.search).get('stop');
-        if (stopToken) {
+        // "No report, no further contact" from a submission confirmation:
+        // ?noReport=<recovery token>.
+        const noReportToken = new URLSearchParams(window.location.search).get('noReport');
+        if (noReportToken) {
+          try {
+            await journeyApi.reportOptOut(noReportToken);
+            if (cancelled) return;
+            setScreen({ name: 'report-opted-out' });
+          } catch (err) {
+            if (cancelled) return;
+            setScreen({
+              name: 'error',
+              kind:
+                err instanceof ApiError && err.statusCode === 404
+                  ? 'no_unfinished_survey'
+                  : 'service_unavailable',
+            });
+          }
+        } else if (stopToken) {
           try {
             await journeyApi.stopReminders(stopToken);
             if (cancelled) return;
@@ -389,6 +408,16 @@ export function RespondentApp(): JSX.Element {
             <a className="btn" href={`/survey?resume=${encodeURIComponent(screen.token)}`}>
               Return to my survey
             </a>
+          </div>
+        )}
+
+        {screen.name === 'report-opted-out' && (
+          <div className="card">
+            <h2>You will not receive the report.</h2>
+            <p>
+              We will not send you the report or contact you again about this survey. Your answers
+              still count, and nothing has been deleted.
+            </p>
           </div>
         )}
 

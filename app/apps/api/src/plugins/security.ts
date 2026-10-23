@@ -34,7 +34,11 @@ function createRateLimitRedis(): Redis | null {
 
 export async function registerSecurity(app: FastifyInstance): Promise<void> {
   await app.register(fastifyHelmet, {
+    // The API serves JSON and PDFs only, never a page: nothing may load, and
+    // nothing may frame it. useDefaults:false keeps helmet from merging its
+    // page-oriented defaults (script-src, style-src, ...) into this policy.
     contentSecurityPolicy: {
+      useDefaults: false,
       directives: {
         defaultSrc: ["'none'"],
         frameAncestors: ["'none'"],
