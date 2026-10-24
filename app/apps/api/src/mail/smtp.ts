@@ -1,25 +1,39 @@
 import nodemailer from 'nodemailer';
-import { MailSendError, senderFromEnv, type MailTransport } from './transport';
+import { MailSendError, replyToFromEnv, senderFromEnv, type MailTransport } from './transport';
 
 /**
  * Plain SMTP, the fallback when ZeptoMail is not configured.
  *   SMTP_URL — e.g. smtps://user:pass@smtp.example.com:465
+ * Sender and reply-to as for ZeptoMail (MAIL_FROM, MAIL_REPLY_TO / SUPPORT_EMAIL).
  */
 export function createSmtpTransport(env: NodeJS.ProcessEnv = process.env): MailTransport {
   const url = env['SMTP_URL'];
   if (!url) throw new Error('SMTP_URL is not set');
   const smtp = nodemailer.createTransport(url);
   const from = senderFromEnv(env);
+  const replyTo = replyToFromEnv(env, from);
   return {
     name: 'smtp',
     async send(msg) {
       try {
         const info = await smtp.sendMail({
           from: { name: from.name, address: from.address },
+          replyTo: { name: replyTo.name, address: replyTo.address },
           to: msg.toName ? { name: msg.toName, address: msg.to } : msg.to,
           subject: msg.subject,
           text: msg.text,
           ...(msg.html ? { html: msg.html } : {}),
+          ...(msg.inlineImages?.length
+            ? {
+                attachments: msg.inlineImages.map((img) => ({
+                  filename: `${img.cid}.png`,
+                  content: Buffer.from(img.content, 'base64'),
+                  contentType: img.contentType,
+                  cid: img.cid,
+                  contentDisposition: 'inline' as const,
+                })),
+              }
+            : {}),
         });
         return info.messageId ? { messageId: String(info.messageId) } : {};
       } catch (err) {

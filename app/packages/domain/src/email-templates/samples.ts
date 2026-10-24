@@ -1,3 +1,4 @@
+import { STUDY_NAME } from '@cis/survey';
 import type { EmailContent } from '../email-content';
 import type { MergeFields, TemplateId } from './index';
 
@@ -43,7 +44,7 @@ const RAW_SAMPLES: Readonly<Record<TemplateId, MergeFields>> = {
     respondent_name: 'Tunde Bakare',
     coordinator_name: 'Adaeze Okonkwo',
     firm: 'Meristem Stockbrokers Limited',
-    survey_name: 'S2 Compliance survey',
+    survey_name: 'Compliance survey',
     survey_link: `${PORTAL}/survey?firmSeat=Zr2mE8qN4tY1uI0oP9aS7dF6gH5jK3lX`,
     close_date: '15 December 2026',
   },
@@ -62,10 +63,10 @@ const RAW_SAMPLES: Readonly<Record<TemplateId, MergeFields>> = {
   'F-08': {
     respondent_name: 'Tunde Bakare',
     firm: 'Meristem Stockbrokers Limited',
-    survey_name: 'S2 Compliance survey',
+    survey_name: 'Compliance survey',
     submitted_at: '22 October 2026, 14:05 (Lagos time)',
     surveys_done: 2,
-    still_to_come: 'Operations (S3)',
+    still_to_come: 'Operations survey',
   },
   'F-09': {
     contact_name: 'Adaeze Okonkwo',
@@ -177,12 +178,12 @@ export const SAMPLE_BASE_NOTICES: ReadonlyArray<{ kind: string; subject: string 
   [
     {
       kind: 'mail-test',
-      subject: 'CIS × Dragnet — test email',
+      subject: `${STUDY_NAME}: test email`,
       audience: 'operator',
       label: 'Test',
       heading: 'Test email',
       paragraphs: [
-        'This is a test email from the CIS × Dragnet study operations site.',
+        `This is a test email from the ${STUDY_NAME} operations site.`,
         'It was sent by Kola Ade to check that email is working. No action is needed.',
       ],
     },
@@ -194,7 +195,7 @@ export const SAMPLE_BASE_NOTICES: ReadonlyArray<{ kind: string; subject: string 
       heading: "Welcome to Meristem Stockbrokers Limited's space",
       paragraphs: [
         'Dear Ngozi Chukwu,',
-        'You have been added as a coordinator for Meristem Stockbrokers Limited in the CIS × Dragnet benchmark. From the firm portal you can follow your firm’s surveys and help its team.',
+        `You have been added as a coordinator for Meristem Stockbrokers Limited in the ${STUDY_NAME}. From the firm portal you can follow your firm’s surveys and help its team.`,
         'You sign in to the firm portal with this email address and a six-digit PIN.',
       ],
       action: { label: 'Open the firm portal', url: `${PORTAL}/firm` },
@@ -202,12 +203,12 @@ export const SAMPLE_BASE_NOTICES: ReadonlyArray<{ kind: string; subject: string 
     },
     {
       kind: 'survey-resume-link',
-      subject: 'Your link back to the CIS × Dragnet survey',
+      subject: `Your link back to the ${STUDY_NAME} survey`,
       audience: 'investor',
       label: 'Your survey',
       heading: 'Your link back to the survey',
       paragraphs: [
-        'Thank you for taking part in the CIS × Dragnet benchmark survey.',
+        `Thank you for taking part in the ${STUDY_NAME} survey.`,
         'Your answers save as you go. If you stop part-way, use the link below to come back to where you left off — on this device or another.',
       ],
       action: {

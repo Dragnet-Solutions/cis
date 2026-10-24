@@ -300,14 +300,18 @@ describe('Q0 scope gate — a conditional route the server enforces', () => {
     const { respondentId, items } = await openLink('Lagos Commodities and Futures Exchange');
     await answerQ0(respondentId, items, 'Rare');
 
-    // Nothing after the gate may be answered.
-    await expect(
-      saveDraftAnswer(pool, respondentId, {
-        questionId: 'I-LCFE-Q1',
-        ratedFirmId: null,
-        answer: { a: { picked: ['Manual processes'], greatest: 'Manual processes' } },
-      }),
-    ).rejects.toBeInstanceOf(ScopeClosedError);
+    // Nothing after the gate may be answered — and the institution is told
+    // so without the question's ID (D-18), which stays on the error.
+    const refused = await saveDraftAnswer(pool, respondentId, {
+      questionId: 'I-LCFE-Q1',
+      ratedFirmId: null,
+      answer: { a: { picked: ['Manual processes'], greatest: 'Manual processes' } },
+    }).catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(ScopeClosedError);
+    expect((refused as ScopeClosedError).message).toBe(
+      'This question is not part of this survey: an earlier answer closed it.',
+    );
+    expect((refused as ScopeClosedError).questionId).toBe('I-LCFE-Q1');
 
     const written = await submitJourney(pool, respondentId);
     expect(written.map((r) => r.questionId)).toEqual(['I-LCFE-Q0']);

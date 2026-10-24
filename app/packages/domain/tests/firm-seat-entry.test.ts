@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { Pool } from 'pg';
-import { createOrganization, getSeat } from '@cis/db';
+import { createOrganization, getSeat, markRespondentSubmitted } from '@cis/db';
 import {
   getSeats,
   assignSeat,
@@ -15,6 +15,7 @@ import {
   startSeatEntry,
   completeSeatEntry,
   SeatLinkNotFoundError,
+  SeatNotSubmittedError,
   FirmPortalError,
   seedReferenceData,
 } from '../src';
@@ -135,6 +136,7 @@ describe('startSeatEntry', () => {
     const again = await startSeatEntry(pool, seat.linkToken);
     expect(again.respondentId).toBe(first.respondentId);
 
+    await markRespondentSubmitted(pool, first.respondentId);
     await completeSeatEntry(pool, seat.linkToken);
     await expect(startSeatEntry(pool, seat.linkToken)).rejects.toBeInstanceOf(FirmPortalError);
   });
@@ -149,7 +151,13 @@ describe('completeSeatEntry', () => {
       assignedName: 'Jane MD',
       assignedEmail: 'jane3@seat-entry-firm.example',
     });
-    await startSeatEntry(pool, seat.linkToken);
+    const { respondentId } = await startSeatEntry(pool, seat.linkToken);
+    await expect(completeSeatEntry(pool, seat.linkToken)).rejects.toBeInstanceOf(
+      SeatNotSubmittedError,
+    );
+    expect((await getSeat(pool, editionId, orgId, 'S1'))?.state).toBe('started');
+
+    await markRespondentSubmitted(pool, respondentId);
     await completeSeatEntry(pool, seat.linkToken);
 
     const row = await getSeat(pool, editionId, orgId, 'S1');

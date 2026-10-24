@@ -33,6 +33,7 @@ import {
 } from './invitations-service';
 import { firmPortalLink } from './notice-links';
 import { DomainError } from './errors';
+import { STUDY_NAME } from '@cis/survey';
 
 export class FirmDigestError extends DomainError {
   constructor(message: string, code = 'FIRM_DIGEST') {
@@ -138,7 +139,7 @@ export function digestParagraphs(digest: FirmDigest, leadName: string | null): s
   const c = digest.investorContribution;
   return [
     leadName?.trim() ? `Dear ${leadName.trim()},` : 'Hello,',
-    `Here is where ${digest.firmName} stands in the CIS × Dragnet benchmark.`,
+    `Here is where ${digest.firmName} stands in the ${STUDY_NAME}.`,
     `Firm surveys: ${digest.seatCompletion.complete} of ${digest.seatCompletion.total} complete.`,
     `Investors who answered through your firm's links: ${c.total} — ${plural(c.retail, 'retail investor')}, ${plural(c.localInstitutional, 'Nigerian institution')}, ${plural(c.foreignInstitutional, 'institution')} abroad.`,
     `What needs attention: ${digest.attention.label}`,

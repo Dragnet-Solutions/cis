@@ -1,4 +1,4 @@
-import { MailSendError, parseAddress, senderFromEnv, type MailTransport } from './transport';
+import { MailSendError, replyToFromEnv, senderFromEnv, type MailTransport } from './transport';
 
 /**
  * ZeptoMail (Zoho's transactional email API) over HTTPS.
@@ -9,7 +9,8 @@ import { MailSendError, parseAddress, senderFromEnv, type MailTransport } from '
  *                         regional host the account lives on (api.zeptomail.eu,
  *                         api.zeptomail.in, …).
  *   MAIL_FROM           — "Name <addr>"; the domain must be verified in the agent.
- *   MAIL_REPLY_TO       — optional reply-to ("Name <addr>" or bare address).
+ *   MAIL_REPLY_TO       — reply-to ("Name <addr>" or bare address); unset, replies
+ *                         go to SUPPORT_EMAIL (see replyToFromEnv).
  *
  * The token is only ever placed in the Authorization header — never in an
  * error message or a log line.
@@ -70,7 +71,7 @@ export function createZeptomailTransport(env: NodeJS.ProcessEnv = process.env): 
   if (!token.trim()) throw new Error('ZEPTOMAIL_API_TOKEN is not set');
   const url = env['ZEPTOMAIL_API_URL']?.trim() || DEFAULT_ZEPTOMAIL_API_URL;
   const from = senderFromEnv(env);
-  const replyTo = parseAddress(env['MAIL_REPLY_TO'], from.name);
+  const replyTo = replyToFromEnv(env, from);
   const authorization = zeptomailAuthorization(token);
   // Belt and braces: whatever the provider echoes, the token never leaves here.
   const rawToken = token.trim().replace(new RegExp(`^${AUTH_PREFIX}\\s*`), '');
@@ -92,8 +93,15 @@ export function createZeptomailTransport(env: NodeJS.ProcessEnv = process.env): 
         track_opens: false,
       };
       if (msg.html) body['htmlbody'] = msg.html;
+      if (msg.inlineImages?.length) {
+        body['inline_images'] = msg.inlineImages.map((img) => ({
+          cid: img.cid,
+          mime_type: img.contentType,
+          content: img.content,
+        }));
+      }
       if (msg.reference) body['client_reference'] = msg.reference;
-      if (replyTo) body['reply_to'] = [{ address: replyTo.address, name: replyTo.name }];
+      body['reply_to'] = [{ address: replyTo.address, name: replyTo.name }];
 
       let res: Response;
       try {

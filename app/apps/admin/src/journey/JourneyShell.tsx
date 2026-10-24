@@ -1,16 +1,25 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   applyScopeGate,
   buildJourneySequence,
+  closesScope,
   describeAnswer,
   firmContextAt,
   getCanonical,
   isAnswered,
   outstanding,
+  resumeStepOf,
   type SurveyItem,
 } from '@cis/survey';
 import { ItemControl } from '../renderer/controls';
-import { journeyApi, type DraftRow, type ParticipatingFirm } from './journeyClient';
+import { afterSave, type AfterSave } from './scopeClose';
+import {
+  isAlreadySubmitted,
+  journeyApi,
+  type DraftRow,
+  type ParticipatingFirm,
+  type SavedAnswer,
+} from './journeyClient';
 import { ApiError } from '../api/types';
 
 const key = (qid: string, firmId: string | null): string => `${qid}::${firmId ?? ''}`;
@@ -26,7 +35,12 @@ const key = (qid: string, firmId: string | null): string => `${qid}::${firmId ??
  * Rules enforced here (not per-instrument):
  *  - one question at a time; a mandatory answer blocks progression (outstanding);
  *  - NO save control — every change autosaves as a draft;
- *  - submission is final only via an explicit review-before-submit step.
+ *  - submission is final only via an explicit review-before-submit step —
+ *    except a scope gate's closing answer (Q0 "Rare" / "Effectively none"),
+ *    which ends the survey on the answer itself and goes straight to the
+ *    thank-you (D-21);
+ *  - a resumed journey opens where it left off, worked out from the saved
+ *    answers (D-23).
  */
 export function JourneyShell({
   respondentId,
@@ -34,7 +48,6 @@ export function JourneyShell({
   ratedFirmIds,
   firmsById,
   initialDrafts,
-  initialStep,
   onSubmitted,
 }: {
   respondentId: string;
@@ -42,7 +55,6 @@ export function JourneyShell({
   ratedFirmIds: string[];
   firmsById: Record<string, ParticipatingFirm>;
   initialDrafts: DraftRow[];
-  initialStep: number;
   onSubmitted: (outcome: { closedByScopeGate: boolean }) => void;
 }): JSX.Element {
   const fullSequence = useMemo(
@@ -59,7 +71,11 @@ export function JourneyShell({
   // closing option ends the journey there — nothing after it is shown.
   const gated = applyScopeGate(fullSequence, (s) => answers[key(s.item.id, s.ratedFirmId)]);
   const sequence = gated.steps;
-  const [rawStep, setStep] = useState(() => Math.max(initialStep, 0));
+  // Resume where the saved answers say, not at a stored step number: a reload
+  // or another device lands on the first question still to answer (D-23).
+  const [rawStep, setStep] = useState(() =>
+    resumeStepOf(sequence, (s) => answers[key(s.item.id, s.ratedFirmId)]),
+  );
   // Clamped every render: a closing gate answer can shorten the journey under
   // a resume point that was further on.
   const step = Math.min(rawStep, Math.max(sequence.length - 1, 0));
@@ -67,6 +83,8 @@ export function JourneyShell({
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  /** A closing gate answer is being sent: the thank-you follows. */
+  const [finishing, setFinishing] = useState(false);
   const saveSeq = useRef(0);
   const latest = useRef<
     Record<
@@ -76,6 +94,19 @@ export function JourneyShell({
   >({});
   const queue = useRef<Record<string, Promise<void>>>({});
   const failed = useRef<Set<string>>(new Set());
+  const closedOnOpen = useRef(gated.closedAt !== null);
+
+  // Opened on a survey whose gate already closed but was never sent (saved
+  // before the gate ended surveys on the answer): send it now, so it can
+  // never sit unsent behind questions the server will refuse.
+  useEffect(() => {
+    if (closedOnOpen.current) {
+      closedOnOpen.current = false;
+      setFinishing(true);
+      void doSubmit();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (sequence.length === 0) {
     return <p className="lede">This survey has no questions.</p>;
@@ -103,13 +134,16 @@ export function JourneyShell({
     firmId: string | null,
     next: { a: unknown; c?: string },
     atStep: number,
-  ): void {
+  ): Promise<SavedAnswer | undefined> {
     const k = key(qid, firmId);
     latest.current[k] = { qid, firmId, answer: next, step: atStep };
     const mine = (saveSeq.current += 1);
     setSaveState('saving');
     const run = (queue.current[k] ?? Promise.resolve()).then(() => saveLatest(k));
-    queue.current[k] = run.catch(() => undefined);
+    queue.current[k] = run.then(
+      () => undefined,
+      () => undefined,
+    );
     run.then(
       () => {
         if (saveSeq.current === mine) setSaveState('saved');
@@ -121,19 +155,21 @@ export function JourneyShell({
         }
       },
     );
+    return run;
   }
 
-  async function saveLatest(k: string): Promise<void> {
+  async function saveLatest(k: string): Promise<SavedAnswer | undefined> {
     const l = latest.current[k];
-    if (!l) return;
+    if (!l) return undefined;
     try {
-      await journeyApi.saveAnswer(respondentId, {
+      const saved = await journeyApi.saveAnswer(respondentId, {
         questionId: l.qid,
         ratedFirmId: l.firmId,
         answer: l.answer,
         step: l.step,
       });
       failed.current.delete(k);
+      return saved;
     } catch (err) {
       failed.current.add(k);
       throw err;
@@ -144,7 +180,24 @@ export function JourneyShell({
     const envelope = next as { a: unknown; c?: string };
     const k = key(current.item.id, current.ratedFirmId);
     setAnswers((prev) => ({ ...prev, [k]: envelope }));
-    void persist(current.item.id, current.ratedFirmId, envelope, step);
+    const saving = persist(current.item.id, current.ratedFirmId, envelope, step);
+    // A closing gate answer ends the survey on the answer itself (D-21): the
+    // server sends it with the save, and the thank-you follows — never the
+    // next question.
+    if (closesScope(current.item, envelope)) {
+      setFinishing(true);
+      const item = current.item;
+      const act = (next: AfterSave): void => {
+        if (next === 'thank-you') onSubmitted({ closedByScopeGate: true });
+        // This render's `gated` predates the closing answer: say so.
+        else if (next === 'submit') void doSubmit(true);
+        else setFinishing(false);
+      };
+      saving.then(
+        (saved) => act(afterSave(item, envelope, { saved })),
+        (error: unknown) => act(afterSave(item, envelope, { error })),
+      );
+    }
   }
 
   function goNext(): void {
@@ -166,7 +219,7 @@ export function JourneyShell({
     if (step > 0) setStep(step - 1);
   }
 
-  async function doSubmit(): Promise<void> {
+  async function doSubmit(closedByGate = gated.closedAt !== null): Promise<void> {
     setSubmitting(true);
     setError(null);
     try {
@@ -175,11 +228,25 @@ export function JourneyShell({
       await Promise.all(Object.values(queue.current));
       for (const k of [...failed.current]) await saveLatest(k);
       await journeyApi.submit(respondentId);
-      onSubmitted({ closedByScopeGate: gated.closedAt !== null });
+      onSubmitted({ closedByScopeGate: closedByGate });
     } catch (err) {
+      // Already sent (the closing answer's own save, a second tab): done.
+      if (isAlreadySubmitted(err)) {
+        onSubmitted({ closedByScopeGate: closedByGate });
+        return;
+      }
       setError(err instanceof ApiError ? err.message : 'Could not submit');
       setSubmitting(false);
+      setFinishing(false);
     }
+  }
+
+  if (finishing) {
+    return (
+      <div className="journey" aria-busy="true">
+        <p className="lede">Thank you — finishing…</p>
+      </div>
+    );
   }
 
   // ── Review-before-submit ─────────────────────────────────────────────────────

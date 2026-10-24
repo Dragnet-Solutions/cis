@@ -1,5 +1,5 @@
 /*
- * Design tokens and base styles for the CIS × Dragnet admin surfaces.
+ * Design tokens and base styles for the CIS - Dragnet Study admin surfaces.
  * Colour, type and spacing are taken from the approved Product Polish layer of
  * the UX-ADM-001 / UX-ADM-002 reference artefacts so every admin surface built
  * later stays visually consistent without being told each time.
@@ -122,6 +122,52 @@ h1[tabindex='-1']:focus {
   font-size: 11px;
   font-weight: 400;
   color: var(--fg-3);
+}
+/* The CIS crest | Dragnet logo pair (components/BrandLockup.tsx): one height,
+   widths from each image's own proportions, a thin rule between. */
+.brand-lockup {
+  --lockup-h: 36px;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  vertical-align: middle;
+}
+.brand-lockup img {
+  display: block;
+  height: var(--lockup-h);
+  width: auto;
+}
+.brand-lockup-rule {
+  align-self: stretch;
+  width: 1px;
+  background: var(--line-strong);
+}
+.brand-lockup-sm {
+  --lockup-h: 28px;
+  gap: 10px;
+}
+.brand-lockup-lg {
+  --lockup-h: 48px;
+  gap: 16px;
+}
+.brand-lockup-plate {
+  padding: 6px 10px;
+  background: #fff;
+  border-radius: 4px;
+}
+.top .lockup {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.brand-row {
+  display: flex;
+  margin-bottom: 18px;
+}
+@media (max-width: 480px) {
+  .top .lockup .lockup-text {
+    display: none;
+  }
 }
 .whoami {
   font-size: 12px;

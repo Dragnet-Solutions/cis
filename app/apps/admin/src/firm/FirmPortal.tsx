@@ -32,6 +32,8 @@ import { ApiError } from '../api/types';
 import { ErrorState, type ErrorStateKind } from '../shared/ErrorState';
 import { isValidEmail } from '../lib/email';
 import { useEmailField } from '../lib/useEmailField';
+import { STUDY_NAME } from '@cis/survey';
+import { BrandLockup } from '../components/BrandLockup';
 
 /**
  * Firm claim / portal / team / seats / outreach / results — UX-FRM-001 and
@@ -157,8 +159,11 @@ function ClaimOrSignIn({
     <div className="shell firmportal">
       <header className="top">
         <div className="lockup">
-          CIS × Dragnet Benchmark
-          <small>Stockbroking firm portal</small>
+          <BrandLockup size="sm" />
+          <span className="lockup-text">
+            {STUDY_NAME}
+            <small>Stockbroking firm portal</small>
+          </span>
         </div>
         <div className="steps" aria-hidden="true">
           {Array.from({ length: PROGRESS_PIP_COUNT }, (_, i) => (
@@ -988,8 +993,11 @@ function Portal({
     <div className="shell firmportal">
       <header className="top">
         <div className="lockup">
-          CIS × Dragnet Benchmark
-          <small>Stockbroking firm portal</small>
+          <BrandLockup size="sm" />
+          <span className="lockup-text">
+            {STUDY_NAME}
+            <small>Stockbroking firm portal</small>
+          </span>
         </div>
       </header>
       <main>
@@ -1078,7 +1086,8 @@ function PortalLanding({
   const assigned = seats.filter((s) => s.state !== 'empty').length;
   const complete = seats.filter((s) => s.state === 'complete').length;
   const allAssigned = assigned === seats.length;
-  const mine = seats.find((s) => s.isSelf);
+  // The coordinator's own seat: the only one whose link the portal holds.
+  const mine = seats.find((s) => s.isSelf && s.linkToken);
 
   return (
     <>
@@ -1377,11 +1386,15 @@ function SeatRow({
             <b>This one is yours.</b> You told us your role when you set up your access, so this
             survey is already assigned to you.
           </p>
-          <div className="actions">
-            <a className="btn-2" href={`/survey?firmSeat=${seat.linkToken}`}>
-              Open your survey
-            </a>
-          </div>
+          {seat.linkToken ? (
+            <div className="actions">
+              <a className="btn-2" href={`/survey?firmSeat=${seat.linkToken}`}>
+                Open your survey
+              </a>
+            </div>
+          ) : (
+            <p className="hint">Its link went to {seat.assignedEmail}.</p>
+          )}
         </div>
       ) : seat.state !== 'empty' ? (
         <div className="ardone">
@@ -1399,8 +1412,7 @@ function SeatRow({
           </div>
           {seat.state === 'invited' && (
             <p className="hint">
-              We emailed them this link. You can also send it yourself:{' '}
-              <code>{`${window.location.origin}/survey?firmSeat=${seat.linkToken}`}</code>
+              We emailed them their own link. Only they can open it, so their answers stay theirs.
             </p>
           )}
           <button

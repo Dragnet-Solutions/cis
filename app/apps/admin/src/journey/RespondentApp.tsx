@@ -1,14 +1,25 @@
 import { useEffect, useState } from 'react';
+import { clientSurveyName } from '@cis/survey';
 import { PublicLanding } from './PublicLanding';
 import { RetailEntry } from './RetailEntry';
 import { FirmSeatEntry } from './FirmSeatEntry';
 import { RunJourney } from './RunJourney';
-import { Completion } from './Completion';
+import { Completion, ScopeClosedThanks } from './Completion';
 import { HelpPrivacyAbout } from './HelpPrivacyAbout';
 import { PreviousEditions } from './PreviousEditions';
 import { journeyApi, type ParticipatingFirm } from './journeyClient';
 import { ApiError } from '../api/types';
 import { ErrorState, type ErrorStateKind } from '../shared/ErrorState';
+import { STUDY_NAME } from '@cis/survey';
+import { BrandLockup } from '../components/BrandLockup';
+import {
+  deviceStore,
+  forgetPlace,
+  keepPlaceInAddress,
+  recalledPlace,
+  rememberPlace,
+  resumeSearch,
+} from './resumePlace';
 
 type Screen =
   | { name: 'landing' }
@@ -32,6 +43,7 @@ type Screen =
       closedByScopeGate: boolean;
     }
   | { name: 'already-submitted' }
+  | { name: 'scope-closed' }
   | { name: 'link-invalidated' }
   | {
       name: 'institution-start';
@@ -91,6 +103,8 @@ export function RespondentApp(): JSX.Element {
   // all), and threaded into the 'running' screen so the real start/finish
   // events can be recorded against it.
   const [outreachToken, setOutreachToken] = useState<string | null>(null);
+  // An unfinished survey started on this device (D-23), offered on the landing page.
+  const [savedPlace, setSavedPlace] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -148,6 +162,61 @@ export function RespondentApp(): JSX.Element {
           }
         } else if (firmSeatToken) {
           setScreen({ name: 'firm-seat-entry', linkToken: firmSeatToken });
+        } else if (token) {
+          try {
+            const state = await journeyApi.resumeByToken(token);
+            if (cancelled) return;
+            if (state.kind === 'resume') {
+              rememberPlace(deviceStore(), token);
+            } else {
+              forgetPlace(deviceStore());
+            }
+            if (state.kind === 'participation_closed') {
+              setScreen({ name: 'error', kind: 'participation_closed' });
+            } else if (state.kind === 'already_submitted') {
+              // A survey its scope gate closed: the same neutral thank-you.
+              setScreen(
+                state.closedByScopeGate ? { name: 'scope-closed' } : { name: 'already-submitted' },
+              );
+            } else if (state.kind === 'link_invalidated') {
+              setScreen({ name: 'link-invalidated' });
+            } else if (state.instrument?.instrumentType === 'regulator') {
+              // UX-INS-003: a market institution's link opens on its own start
+              // screen, with the instrument resolved from the Register.
+              setScreen({
+                name: 'institution-start',
+                respondentId: state.respondent.id,
+                code: state.respondent.instrumentCode,
+                institution:
+                  state.respondent.institutionName ??
+                  clientSurveyName(state.instrument.code, state.instrument.name),
+                questionCount: state.items.length,
+                started: state.drafts.length > 0,
+              });
+            } else {
+              const firms = ctx.editionId ? await journeyApi.participatingFirms(ctx.editionId) : [];
+              if (cancelled) return;
+              setScreen({
+                name: 'running',
+                respondentId: state.respondent.id,
+                firms,
+                code: state.respondent.instrumentCode,
+                retail: state.respondent.instrumentCode.startsWith('S'),
+                firmSeatLinkToken: null,
+                // A reloaded journey that came in on a firm's outreach link
+                // keeps it, so its finish is still counted for that link.
+                outreachToken: outreachRef,
+              });
+            }
+          } catch (err) {
+            if (cancelled) return;
+            if (err instanceof ApiError && err.statusCode === 404) {
+              forgetPlace(deviceStore());
+              setScreen({ name: 'error', kind: 'no_unfinished_survey' });
+            } else {
+              setScreen({ name: 'error', kind: 'service_unavailable' });
+            }
+          }
         } else if (outreachRef && !ctx.collectionOpen) {
           // A firm's link followed after collection ended: the landing page
           // says collection has closed — no entry form to fill in for nothing.
@@ -172,48 +241,9 @@ export function RespondentApp(): JSX.Element {
             // a gate — fall through to the ordinary landing page.
             if (!cancelled) setScreen({ name: 'landing' });
           }
-        } else if (token) {
-          try {
-            const state = await journeyApi.resumeByToken(token);
-            if (cancelled) return;
-            if (state.kind === 'participation_closed') {
-              setScreen({ name: 'error', kind: 'participation_closed' });
-            } else if (state.kind === 'already_submitted') {
-              setScreen({ name: 'already-submitted' });
-            } else if (state.kind === 'link_invalidated') {
-              setScreen({ name: 'link-invalidated' });
-            } else if (state.instrument?.instrumentType === 'regulator') {
-              // UX-INS-003: a market institution's link opens on its own start
-              // screen, with the instrument resolved from the Register.
-              setScreen({
-                name: 'institution-start',
-                respondentId: state.respondent.id,
-                code: state.respondent.instrumentCode,
-                institution: state.respondent.institutionName ?? state.instrument.name,
-                questionCount: state.items.length,
-                started: state.drafts.length > 0,
-              });
-            } else {
-              const firms = ctx.editionId ? await journeyApi.participatingFirms(ctx.editionId) : [];
-              if (cancelled) return;
-              setScreen({
-                name: 'running',
-                respondentId: state.respondent.id,
-                firms,
-                code: state.respondent.instrumentCode,
-                retail: state.respondent.instrumentCode.startsWith('S'),
-                firmSeatLinkToken: null,
-                outreachToken: null,
-              });
-            }
-          } catch (err) {
-            if (cancelled) return;
-            if (err instanceof ApiError && err.statusCode === 404) {
-              setScreen({ name: 'error', kind: 'no_unfinished_survey' });
-            } else {
-              setScreen({ name: 'error', kind: 'service_unavailable' });
-            }
-          }
+        } else {
+          // Plain /survey: offer an unfinished survey this device started.
+          setSavedPlace(recalledPlace(deviceStore()));
         }
         setReady(true);
       } catch (err) {
@@ -231,6 +261,15 @@ export function RespondentApp(): JSX.Element {
   if (!ready) {
     return (
       <div className="shell respondent">
+        <header className="top">
+          <div className="lockup">
+            <BrandLockup size="sm" />
+            <span className="lockup-text">
+              {STUDY_NAME}
+              <small>Benchmark survey</small>
+            </span>
+          </div>
+        </header>
         <main>
           <p className="lede">Loading…</p>
         </main>
@@ -240,12 +279,42 @@ export function RespondentApp(): JSX.Element {
 
   return (
     <div className="shell respondent">
+      <header className="top">
+        <div className="lockup">
+          <BrandLockup size="sm" />
+          <span className="lockup-text">
+            {STUDY_NAME}
+            <small>Benchmark survey</small>
+          </span>
+        </div>
+      </header>
       <main>
         {error && <div className="err">{error}</div>}
         {!editionId && <div className="err">No open edition is available right now.</div>}
 
         {editionId && screen.name === 'landing' && (
           <>
+            {savedPlace && (
+              <div className="card">
+                <h2>You have a survey in progress on this device.</h2>
+                <p>Your answers are saved. Carry on from where you stopped.</p>
+                <div className="actions">
+                  <a className="btn" href={`/survey${resumeSearch(savedPlace, null)}`}>
+                    Continue your survey
+                  </a>
+                  <button
+                    type="button"
+                    className="btn-2"
+                    onClick={() => {
+                      forgetPlace(deviceStore());
+                      setSavedPlace(null);
+                    }}
+                  >
+                    Not mine — forget it on this device
+                  </button>
+                </div>
+              </div>
+            )}
             <PublicLanding
               editionLabel={editionLabel}
               editionStatus={editionStatus}
@@ -265,8 +334,14 @@ export function RespondentApp(): JSX.Element {
             editionId={editionId}
             instrumentCode={screen.code}
             recruitingFirmId={screen.recruitingFirmId}
-            onStarted={(respondentId, firms) => {
+            onStarted={(respondentId, firms, recoveryToken) => {
               if (outreachToken) void journeyApi.outreachEvent(outreachToken, 'starts');
+              // Keep the place (D-23): a reload, or coming back on this
+              // device, resumes this journey instead of starting over.
+              if (recoveryToken) {
+                keepPlaceInAddress(recoveryToken, outreachToken);
+                rememberPlace(deviceStore(), recoveryToken);
+              }
               setScreen({
                 name: 'running',
                 respondentId,
@@ -345,6 +420,7 @@ export function RespondentApp(): JSX.Element {
             respondentId={screen.respondentId}
             firms={screen.firms}
             onSubmitted={(outcome) => {
+              forgetPlace(deviceStore());
               if (screen.firmSeatLinkToken) {
                 void journeyApi.firmSeatComplete(screen.firmSeatLinkToken);
               }
@@ -468,6 +544,8 @@ export function RespondentApp(): JSX.Element {
             </p>
           </div>
         )}
+
+        {screen.name === 'scope-closed' && <ScopeClosedThanks />}
 
         {screen.name === 'already-submitted' && (
           <div className="card">

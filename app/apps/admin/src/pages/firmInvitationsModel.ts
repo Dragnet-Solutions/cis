@@ -24,6 +24,23 @@ export function deliveryLabel(d: FirmInvitation['delivery']): { text: string; cl
   }
 }
 
+/**
+ * Whether any invitation's email is still waiting on the mail service. Its
+ * status changes on the server after the page has loaded (Queued → Accepted),
+ * so while one is waiting the page re-reads BOTH invitation tables together —
+ * they never show the same invitation in two different states (D-25).
+ */
+export function hasQueuedDelivery(invitations: FirmInvitation[]): boolean {
+  return invitations.some(
+    (i) => !!i.delivery && !['sent', 'logged', 'failed'].includes(i.delivery.status),
+  );
+}
+
+/** How often, and at most how many times in a row, the page re-reads while an
+ *  email is queued (a mail service that is down must not poll forever). */
+export const QUEUED_POLL_MS = 5_000;
+export const QUEUED_POLL_LIMIT = 12;
+
 /** The edition-wide list's filter: one state, failed emails, or everything. */
 export type InvitationFilter = 'all' | FirmInvitationState | 'failed';
 

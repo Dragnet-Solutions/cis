@@ -90,11 +90,11 @@ export interface DependencyRow {
 const REGULATOR_OUTPUTS = new Set(['INSTITUTIONAL_PERSPECTIVES', 'PUBLIC_REPORT.PUB_10']);
 
 /**
- * Institutional Perspectives is only published with all three regulators (SEC,
- * NGX and CSCS) — the national report's own `requires_all_regulators` rule,
- * which counts distinct institutions with a confirmed response.
+ * Institutional Perspectives draws on every market institution taking part —
+ * SEC, NGX, CSCS, LCFE, NASD and FMDQ: each institution with a live (not
+ * retired) role in the edition. Counted by distinct institution, so CSCS is
+ * one however many roles it answers in (D-22).
  */
-const REGULATORS_REQUIRED = 3;
 
 export interface RegulatorStanding {
   confirmed: number;
@@ -112,6 +112,7 @@ function regulatorStanding(
   const confirmed = new Set(
     institutions.filter((i) => i.status === 'confirmed').map((i) => i.institutionId),
   ).size;
+  const required = new Set(institutions.map((i) => i.institutionId)).size;
   const slipping = institutions.some(
     (i) =>
       i.status === 'declined' ||
@@ -119,7 +120,7 @@ function regulatorStanding(
         ['not_started', 'invited', 'in_progress'].includes(i.status) &&
         today > i.targetBy),
   );
-  return { confirmed, required: REGULATORS_REQUIRED, slipping, closed };
+  return { confirmed, required, slipping, closed };
 }
 
 export interface ResponsesMonitor {
@@ -173,25 +174,22 @@ function dependencyDisplay(
     requiredInstruments: dep.requiredInstruments,
     enabled: dep.enabled,
   };
-  // Institutional Perspectives rests on the regulators, never on the local or
-  // foreign investor segments: on track while all three can still respond, at
-  // risk once one declines or slips past its target, or collection closes short.
+  // Institutional Perspectives rests on the market institutions, never on the
+  // local or foreign investor segments: on track while every one can still
+  // respond, at risk once one declines or slips past its target, or collection
+  // closes short.
   if (REGULATOR_OUTPUTS.has(dep.outputId)) {
     const { confirmed, required } = regulators;
-    const met = confirmed >= required;
+    const met = required > 0 && confirmed >= required;
     const atRisk = !met && (regulators.slipping || regulators.closed);
-    const progress = `${confirmed} of ${required} regulators have responded`;
+    const progress = `${confirmed} of ${required} market institutions have responded`;
     return {
       ...base,
       dependsOn: ['regulators'],
       requiredInstruments: null,
       regulators: { confirmed, required },
       displayState: atRisk ? 'at_risk' : 'on_track',
-      note: met
-        ? `${progress}.`
-        : atRisk
-          ? `${progress}. The section is published only with all ${required}.`
-          : `${progress} so far. The section is published only with all ${required}.`,
+      note: met || atRisk ? `${progress}.` : `${progress} so far.`,
     };
   }
   // §B4: the two firm-report rows are special.

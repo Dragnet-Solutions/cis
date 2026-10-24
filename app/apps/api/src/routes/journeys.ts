@@ -13,7 +13,7 @@ import {
   startJourney,
   registerContact,
   setRatedFirms,
-  saveDraftAnswer,
+  saveAnswer,
   getResume,
   submitJourney,
   AlreadySubmittedError,
@@ -156,6 +156,9 @@ export const journeyRoutes: FastifyPluginAsyncZod = async (app) => {
   );
 
   // Autosave one answer (no save control — every change persists a draft).
+  // A scope gate's closing answer (Q0 "Rare" / "Effectively none") also sends
+  // the response there and then: `submitted` tells the renderer to go straight
+  // to the thank-you (D-21).
   app.put(
     '/journeys/:respondentId/answers',
     {
@@ -170,13 +173,20 @@ export const journeyRoutes: FastifyPluginAsyncZod = async (app) => {
       },
     },
     async (request, reply) => {
-      const draft = await saveDraftAnswer(getPool(), request.params.respondentId, {
-        questionId: request.body.questionId,
-        ratedFirmId: request.body.ratedFirmId,
-        answer: request.body.answer as AnswerValue,
-        ...(request.body.step !== undefined ? { step: request.body.step } : {}),
-      });
-      return reply.send({ draft });
+      const saved = await saveAnswer(
+        getPool(),
+        request.params.respondentId,
+        {
+          questionId: request.body.questionId,
+          ratedFirmId: request.body.ratedFirmId,
+          answer: request.body.answer as AnswerValue,
+          ...(request.body.step !== undefined ? { step: request.body.step } : {}),
+        },
+        { portalUrl: publicOrigin() },
+      );
+      // A closing answer queued the submission confirmation: send it now.
+      if (saved.submitted) kickMailDispatcher();
+      return reply.send(saved);
     },
   );
 
@@ -221,7 +231,10 @@ export const journeyRoutes: FastifyPluginAsyncZod = async (app) => {
         return reply.send({ kind: 'participation_closed' });
       }
       if (respondent.submittedAt) {
-        return reply.send({ kind: 'already_submitted' });
+        // A survey its scope gate closed gets the same neutral thank-you on a
+        // reload as on the answer itself.
+        const { closedByScopeGate } = await getResume(pool, respondent.id);
+        return reply.send({ kind: 'already_submitted', closedByScopeGate });
       }
       const state = await getResume(pool, respondent.id);
       return reply.send({ kind: 'resume', ...state });

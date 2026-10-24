@@ -1,10 +1,12 @@
 /**
  * The approved email designs: every template renders with its merge fields
- * filled and escaped, the CIS crest and the support address, and a plain-text
+ * filled and escaped, the CIS crest beside the Dragnet logo, the study's name
+ * and the support address, and a plain-text
  * alternative that carries the email's link. The embedded copy of the HTML
  * files is checked to be current.
  */
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import {
@@ -16,12 +18,36 @@ import {
   requiredFields,
   optionalFields,
   emailBrand,
+  EMAIL_LOGO,
+  embedEmailLogos,
+  DEFAULT_SUPPORT_EMAIL,
   type TemplateId,
 } from '../src/email-templates';
 import { SAMPLE_FIELDS, SAMPLE_BASE_NOTICES } from '../src/email-templates/samples';
 import { renderEmailHtml, renderEmailText } from '../src/email-content';
 
-const BRAND = { logoUrl: 'https://cis.example/cis-logo.png', supportEmail: 'help@cis.example' };
+const BRAND = {
+  logoUrl: 'https://cis.example/cis-logo.png',
+  partnerLogoUrl: 'https://cis.example/dragnet-logo.png',
+  supportEmail: 'help@cis.example',
+};
+
+/** Both logos, at one height, split by a thin rule; alt text names both
+ *  organisations (Outlook blocks images by default). */
+function expectLogoPair(html: string): void {
+  const h = EMAIL_LOGO.height;
+  expect(html).toContain(
+    `<img src="https://cis.example/cis-logo.png" width="${EMAIL_LOGO.cisWidth}" height="${h}" alt="Chartered Institute of Stockbrokers"`,
+  );
+  expect(html).toContain(
+    `<img src="https://cis.example/dragnet-logo.png" width="${EMAIL_LOGO.partnerWidth}" height="${h}" alt="Dragnet Solutions"`,
+  );
+  expect(html).toMatch(
+    /border-left:1px solid #DCCDA8;"><img src="https:\/\/cis\.example\/dragnet-logo\.png"/,
+  );
+  // The old joint name, in any spelling, is gone.
+  expect(html).not.toMatch(/×|&times;/);
+}
 
 /** The link each template exists to deliver (null: it carries none). */
 const KEY_LINK: Record<TemplateId, string | null> = {
@@ -75,8 +101,8 @@ describe.each(TEMPLATE_IDS)('template %s', (id) => {
     expect(r.subject.length).toBeGreaterThan(5);
   });
 
-  it('shows the CIS crest and the support address', () => {
-    expect(r.html).toContain('<img src="https://cis.example/cis-logo.png"');
+  it('shows the CIS crest beside the Dragnet logo, and the support address', () => {
+    expectLogoPair(r.html);
     expect(r.html).toContain('href="mailto:help@cis.example"');
     expect(r.text).toContain('help@cis.example');
   });
@@ -91,6 +117,13 @@ describe.each(TEMPLATE_IDS)('template %s', (id) => {
     expect(r.text).not.toMatch(/<\/?[a-z][^>]*>/i);
     expect(r.text).not.toContain('Button not working');
     expect(r.text).toContain('Kind regards,');
+    expect(r.text).not.toContain('×');
+  });
+
+  it('signs off as the study team, by its one name', () => {
+    if (id.startsWith('O-')) return; // operator emails sign off from Study Operations
+    expect(r.html).toContain('The CIS - Dragnet Study Team');
+    expect(r.text).toContain('The CIS - Dragnet Study Team');
   });
 
   it('escapes every merge value', () => {
@@ -139,8 +172,10 @@ describe('template details', () => {
   it('the brand comes from PORTAL_URL and SUPPORT_EMAIL, with a default address', () => {
     expect(emailBrand({ PORTAL_URL: 'https://dev-cis.idhub.ng/firm' })).toEqual({
       logoUrl: 'https://dev-cis.idhub.ng/cis-logo.png',
-      supportEmail: 'support@idhub.ng',
+      partnerLogoUrl: 'https://dev-cis.idhub.ng/dragnet-logo.png',
+      supportEmail: 'support@cisdragnetstudy.com',
     });
+    expect(DEFAULT_SUPPORT_EMAIL).toBe('support@cisdragnetstudy.com');
     expect(
       emailBrand({ PORTAL_URL: 'https://x.example', SUPPORT_EMAIL: ' help@x.example ' })
         .supportEmail,
@@ -153,8 +188,10 @@ describe('the shared layout (notices without a template)', () => {
     const html = renderEmailHtml(n, { brand: BRAND });
     const text = renderEmailText(n, { brand: BRAND });
     expect(html).not.toMatch(/\{\{|\}\}/);
-    expect(html).toContain('<img src="https://cis.example/cis-logo.png"');
+    expectLogoPair(html);
     expect(text).toContain('help@cis.example');
+    expect(`${n.subject}\n${text}`).not.toContain('×');
+    if (n.audience !== 'operator') expect(text).toContain('The CIS - Dragnet Study Team');
     if (n.action) expect(text).toContain(n.action.url);
   });
 
@@ -265,5 +302,40 @@ describe('optional parts (restored for platform parity)', () => {
     );
     expect(base).toContain('CIS-Dragnet 2027 Benchmark Study');
     expect(base).not.toContain('2026');
+  });
+});
+
+describe('logos travel inside the email', () => {
+  const ASSETS = join(__dirname, '..', 'src', 'email-templates', 'assets');
+  const PUBLIC = join(__dirname, '..', '..', '..', 'apps', 'admin', 'public');
+
+  it('every template carries both logos inline, not as links', () => {
+    for (const id of TEMPLATE_IDS) {
+      const { html } = renderTemplate(id, SAMPLE_FIELDS[id], BRAND);
+      const out = embedEmailLogos(html);
+      expect(out.html, id).toContain('src="cid:cis-logo"');
+      expect(out.html, id).toContain('src="cid:dragnet-logo"');
+      expect(out.html, id).not.toMatch(/src="[^"]*-logo\.png"/);
+      expect(out.inlineImages.map((i) => i.cid).sort(), id).toEqual(['cis-logo', 'dragnet-logo']);
+    }
+  });
+
+  it('carries the same image files the site serves', () => {
+    const { inlineImages } = embedEmailLogos(
+      '<img src="https://x.example/cis-logo.png"><img src="dragnet-logo.png">',
+    );
+    for (const img of inlineImages) {
+      const file = readFileSync(join(ASSETS, `${img.cid}.png`));
+      expect(Buffer.from(img.content, 'base64').equals(file)).toBe(true);
+      expect(readFileSync(join(PUBLIC, `${img.cid}.png`)).equals(file), img.cid).toBe(true);
+    }
+  });
+
+  it('leaves HTML without the logos alone', () => {
+    expect(embedEmailLogos('<p>Hi</p>')).toEqual({ html: '<p>Hi</p>', inlineImages: [] });
+  });
+
+  it('sizes the Dragnet logo from its 597×144 file', () => {
+    expect(EMAIL_LOGO.partnerWidth).toBe(Math.round((EMAIL_LOGO.height * 597) / 144));
   });
 });

@@ -25,7 +25,12 @@ export function RetailEntry({
   editionId: string;
   instrumentCode: string;
   recruitingFirmId: string | null;
-  onStarted: (respondentId: string, firms: ParticipatingFirm[]) => void;
+  /** `recoveryToken` is the journey's key back in, kept so a reload resumes it. */
+  onStarted: (
+    respondentId: string,
+    firms: ParticipatingFirm[],
+    recoveryToken: string | null,
+  ) => void;
 }): JSX.Element {
   const [consent, setConsent] = useState<ConsentContent | null>(null);
   // null until the list has loaded — an empty list means there really are none.
@@ -99,14 +104,14 @@ export function RetailEntry({
         recruitingFirmId,
         institutionName: isInstitutional ? institutionName.trim() : null,
       });
-      await journeyApi.contact(respondentId, {
+      const { recoveryToken } = await journeyApi.contact(respondentId, {
         consentAccepted: accepted,
         channel,
         email: wantsEmail ? email.trim() : null,
         phone: channel === 'text' || channel === 'both' ? phone : null,
       });
       await journeyApi.ratedFirms(respondentId, picked);
-      onStarted(respondentId, firms ?? []);
+      onStarted(respondentId, firms ?? [], recoveryToken);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not start the survey');
       setBusy(false);

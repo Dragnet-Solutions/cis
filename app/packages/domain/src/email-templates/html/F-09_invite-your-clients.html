@@ -3,6 +3,8 @@
   Added for platform parity:
   - the year is the edition label (merge field "edition") instead of a fixed 2026.
   - optional "body": when the operators edited this invitation template, their paragraphs replace the opening paragraphs (same paragraph style).
+  - the header shows the CIS crest and the Dragnet logo side by side, split by a thin rule
+    (sizes are brand fields); the sign-off names the study through "study_name".
 -->
 <html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
 <head>
@@ -30,7 +32,10 @@
 <tr><td style="height:5px;line-height:5px;font-size:0;background:#22006A;">&nbsp;</td></tr>
 <tr><td class="px" style="padding:26px 40px 20px;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-    <td valign="middle"><img src="{{logo_url}}" width="180" height="59" alt="Chartered Institute of Stockbrokers" style="display:block;width:180px;height:59px;"></td>
+    <td valign="middle"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+      <td valign="middle" style="padding:0 16px 0 0;"><img src="{{logo_url}}" width="{{logo_width}}" height="{{logo_height}}" alt="Chartered Institute of Stockbrokers" style="display:block;width:{{logo_width}}px;height:{{logo_height}}px;"></td>
+      <td valign="middle" style="padding:0 0 0 16px;border-left:1px solid #DCCDA8;"><img src="{{partner_logo_url}}" width="{{partner_logo_width}}" height="{{logo_height}}" alt="Dragnet Solutions" style="display:block;width:{{partner_logo_width}}px;height:{{logo_height}}px;"></td>
+    </tr></table></td>
     <td valign="middle" align="right" class="hdr-right" style="font-family:Arial, Helvetica, sans-serif;font-size:11px;line-height:16px;letter-spacing:2px;text-transform:uppercase;color:#86692C;">{{edition}} Benchmark<br>Study</td>
   </tr></table>
 </td></tr>
@@ -47,7 +52,7 @@
 <!--[if mso]><v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" href="{{portal_link}}" style="height:50px;v-text-anchor:middle;width:300px;" arcsize="6%" stroke="f" fillcolor="#22006A"><center style="color:#ffffff;font-family:Arial,sans-serif;font-size:15px;font-weight:bold;">Get your firm's investor links</center></v:roundrect><![endif]-->
 <!--[if !mso]><!--><a href="{{portal_link}}" style="display:inline-block;padding:16px 34px;font-family:Arial, Helvetica, sans-serif;font-size:15px;font-weight:bold;line-height:18px;letter-spacing:0.3px;color:#ffffff;text-decoration:none;border-radius:3px;">Get your firm's investor links&nbsp;&nbsp;&rarr;</a><!--<![endif]-->
 </td></tr></table>
-<p style="margin:0 0 24px;font-family:Arial, Helvetica, sans-serif;font-size:12px;line-height:18px;color:#6E6A7C;">Button not working? Copy this link into your browser:<br><a href="{{portal_link}}" style="color:#22006A;word-break:break-all;">{{portal_link}}</a></p><p style="margin:0 0 16px;font-family:Arial, Helvetica, sans-serif;font-size:15px;line-height:24px;color:#3B3848;">Your firm space has a ready-made message and a separate link for each type of investor you serve.</p><p style="margin:8px 0 0;font-family:Arial, Helvetica, sans-serif;font-size:15px;line-height:24px;color:#3B3848;">Kind regards,<br><strong style="color:#1B1530;">The CIS &times; Dragnet Study Team</strong></p>
+<p style="margin:0 0 24px;font-family:Arial, Helvetica, sans-serif;font-size:12px;line-height:18px;color:#6E6A7C;">Button not working? Copy this link into your browser:<br><a href="{{portal_link}}" style="color:#22006A;word-break:break-all;">{{portal_link}}</a></p><p style="margin:0 0 16px;font-family:Arial, Helvetica, sans-serif;font-size:15px;line-height:24px;color:#3B3848;">Your firm space has a ready-made message and a separate link for each type of investor you serve.</p><p style="margin:8px 0 0;font-family:Arial, Helvetica, sans-serif;font-size:15px;line-height:24px;color:#3B3848;">Kind regards,<br><strong style="color:#1B1530;">The {{study_name}} Team</strong></p>
 </td></tr>
 <tr><td class="px" style="background:#1B1530;padding:26px 40px 28px;">
   <p style="margin:0;font-family:Georgia, 'Times New Roman', Times, serif;font-size:15px;line-height:22px;color:#ffffff;">Chartered Institute of Stockbrokers</p>

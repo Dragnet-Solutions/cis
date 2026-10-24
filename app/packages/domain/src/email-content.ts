@@ -1,5 +1,6 @@
 import type { Pool, PoolClient } from 'pg';
 import { queueEmail, type OutboxEmail } from '@cis/db';
+import { STUDY_NAME } from '@cis/survey';
 import {
   escapeHtml,
   htmlToText,
@@ -143,7 +144,7 @@ export function renderEmailHtml(content: EmailContent, opts: RenderOptions = {})
     }
   }
   const team =
-    audience === 'operator' ? 'CIS-Dragnet Study Operations' : 'The CIS &times; Dragnet Study Team';
+    audience === 'operator' ? 'CIS-Dragnet Study Operations' : `The ${escapeHtml(STUDY_NAME)} Team`;
   parts.push(
     `<p style="margin:8px 0 0;${ARIAL}font-size:15px;line-height:24px;color:#3B3848;">Kind regards,<br><strong style="color:#1B1530;">${team}</strong></p>`,
   );

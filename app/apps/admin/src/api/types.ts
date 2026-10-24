@@ -184,7 +184,15 @@ export interface MessageBatch {
 export interface AudienceCategory {
   key: 'firms' | 'regs' | 'parts' | 'other';
   label: string;
-  audiences: Array<{ id: string; label: string; sub: string; count: number | null }>;
+  audiences: Array<{
+    id: string;
+    label: string;
+    sub: string;
+    count: number | null;
+    /** Participant audiences: how many have NOT finished and can be emailed —
+     *  the people a survey reminder goes to (D-03). */
+    unfinishedCount?: number;
+  }>;
 }
 
 export interface BatchReport {

@@ -1,4 +1,5 @@
-import { TEMPLATE_HTML } from './templates.generated';
+import { STUDY_NAME } from '@cis/survey';
+import { EMAIL_LOGO_PNG, TEMPLATE_HTML } from './templates.generated';
 import { htmlToText } from './text';
 
 export { htmlToText };
@@ -17,7 +18,8 @@ export { htmlToText };
  *
  * `{{name}}` is a merge field: its value is HTML-escaped. `{{{name}}}` (BASE
  * only) is HTML the platform itself built and escaped. Every template is
- * rendered with `logo_url` and `support_email` from `emailBrand()`.
+ * rendered with the brand fields (BRAND_FIELDS): the two logos and their
+ * sizes, the study name and the support address, from `emailBrand()`.
  */
 
 export type TemplateId =
@@ -82,15 +84,71 @@ export const TEMPLATE_SUBJECTS: Readonly<Record<TemplateId, string>> = {
 export const TEMPLATE_IDS = Object.keys(TEMPLATE_SUBJECTS) as TemplateId[];
 
 /** Filled for every template from the deployment, never by the caller. */
-export const BRAND_FIELDS = ['logo_url', 'support_email'] as const;
+export const BRAND_FIELDS = [
+  'logo_url',
+  'partner_logo_url',
+  'logo_width',
+  'partner_logo_width',
+  'logo_height',
+  'study_name',
+  'support_email',
+] as const;
 
-export const DEFAULT_SUPPORT_EMAIL = 'support@idhub.ng';
+/** Where questions — and every reply to an email — go, unless SUPPORT_EMAIL says otherwise. */
+export const DEFAULT_SUPPORT_EMAIL = 'support@cisdragnetstudy.com';
 const DEV_ORIGIN = 'http://localhost:5174';
 
+/**
+ * The header shows the CIS crest and the Dragnet logo side by side at one
+ * height. Outlook ignores CSS sizes, so each image carries explicit width and
+ * height attributes, worked out from the image's own proportions — this is
+ * the one place they are set. cis-logo.png is 440×144 px, dragnet-logo.png
+ * 597×144 px. If a logo file is replaced (apps/admin/public/ and
+ * email-templates/assets/ hold the same files), set its width here to
+ * round(height × its width ÷ its height).
+ */
+export const EMAIL_LOGO = {
+  height: 48,
+  /** round(48 × 440 / 144) */
+  cisWidth: 147,
+  /** round(48 × 597 / 144) */
+  partnerWidth: 199,
+} as const;
+
+/** An image carried inside the message and referenced as `cid:<cid>`. */
+export interface InlineImage {
+  cid: string;
+  contentType: 'image/png';
+  /** base64 */
+  content: string;
+}
+
+/**
+ * Makes the header logos travel inside the email. A stored notice links them
+ * from the public site (…/cis-logo.png, …/dragnet-logo.png), which most mail
+ * apps — Outlook above all — block until the reader asks for images. At send
+ * time each link becomes `cid:<name>` and the image goes with the message as
+ * an inline part, so the logos show straight away. HTML without the logos is
+ * returned unchanged.
+ */
+export function embedEmailLogos(html: string): { html: string; inlineImages: InlineImage[] } {
+  const inlineImages: InlineImage[] = [];
+  let out = html;
+  for (const [name, content] of Object.entries(EMAIL_LOGO_PNG)) {
+    const link = new RegExp(`src="(?:[^"]*/)?${name}\\.png"`, 'g');
+    if (!link.test(out)) continue;
+    out = out.replace(link, `src="cid:${name}"`);
+    inlineImages.push({ cid: name, contentType: 'image/png', content });
+  }
+  return { html: out, inlineImages };
+}
+
 export interface EmailBrand {
-  /** `<public site origin>/cis-logo.png` — the crest, served by the admin app. */
+  /** `<public site origin>/cis-logo.png` — the CIS crest, served by the admin app. */
   logoUrl: string;
-  /** SUPPORT_EMAIL, else support@idhub.ng. */
+  /** `<public site origin>/dragnet-logo.png` — the Dragnet logo, beside the crest. */
+  partnerLogoUrl: string;
+  /** SUPPORT_EMAIL, else support@cisdragnetstudy.com. */
   supportEmail: string;
 }
 
@@ -107,6 +165,7 @@ export function emailOrigin(env: NodeJS.ProcessEnv = process.env): string {
 export function emailBrand(env: NodeJS.ProcessEnv = process.env): EmailBrand {
   return {
     logoUrl: `${emailOrigin(env)}/cis-logo.png`,
+    partnerLogoUrl: `${emailOrigin(env)}/dragnet-logo.png`,
     supportEmail: env['SUPPORT_EMAIL']?.trim() || DEFAULT_SUPPORT_EMAIL,
   };
 }
@@ -242,7 +301,16 @@ export interface RenderedEmail {
 }
 
 function withBrand(fields: MergeFields, brand: EmailBrand): MergeFields {
-  return { ...fields, logo_url: brand.logoUrl, support_email: brand.supportEmail };
+  return {
+    ...fields,
+    logo_url: brand.logoUrl,
+    partner_logo_url: brand.partnerLogoUrl,
+    logo_width: EMAIL_LOGO.cisWidth,
+    partner_logo_width: EMAIL_LOGO.partnerWidth,
+    logo_height: EMAIL_LOGO.height,
+    study_name: STUDY_NAME,
+    support_email: brand.supportEmail,
+  };
 }
 
 /** Render one of the designed templates: subject (unescaped), HTML and plain text. */

@@ -1,4 +1,4 @@
-import type { SurveyItem } from '@cis/survey';
+import { clientMessage, type SurveyItem } from '@cis/survey';
 import { ApiError } from '../api/types';
 
 /**
@@ -7,6 +7,27 @@ import { ApiError } from '../api/types';
  * the recovery token are the only handles into a journey.
  */
 const BASE = '/api';
+
+/** An API refusal, with the server's error name or code kept so a caller can
+ *  tell "already submitted" from any other 409. */
+export class JourneyApiError extends ApiError {
+  constructor(
+    statusCode: number,
+    message: string,
+    public readonly code: string | null,
+  ) {
+    super(statusCode, message);
+  }
+}
+
+/** The survey was already sent — a second tab or a retried submit. */
+export function isAlreadySubmitted(err: unknown): boolean {
+  return (
+    err instanceof JourneyApiError &&
+    err.statusCode === 409 &&
+    (err.code === 'ALREADY_SUBMITTED' || err.code === 'AlreadySubmittedError')
+  );
+}
 
 async function request<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
   const headers: Record<string, string> = {};
@@ -17,11 +38,22 @@ async function request<T>(path: string, method = 'GET', body?: unknown): Promise
   const text = await res.text();
   const data: unknown = text ? JSON.parse(text) : null;
   if (!res.ok) {
+    const body = (data && typeof data === 'object' ? data : {}) as {
+      message?: unknown;
+      code?: unknown;
+      error?: unknown;
+    };
     const message =
-      data && typeof data === 'object' && 'message' in data
-        ? String((data as { message: unknown }).message)
+      body.message !== undefined
+        ? clientMessage(String(body.message))
         : `Request failed (${res.status})`;
-    throw new ApiError(res.status, message);
+    const code =
+      typeof body.code === 'string'
+        ? body.code
+        : typeof body.error === 'string'
+          ? body.error
+          : null;
+    throw new JourneyApiError(res.status, message, code);
   }
   return data as T;
 }
@@ -60,12 +92,22 @@ export interface ResumeState {
     consentAccepted: boolean;
     recoveryToken: string | null;
     institutionName?: string | null;
+    submittedAt?: string | null;
   };
   /** The instrument, resolved from the Survey Register. */
   instrument?: { code: string; name: string; instrumentType: string } | null;
   items: SurveyItem[];
   drafts: DraftRow[];
   firmContext: FirmContext;
+  /** A scope gate's closing answer ended this survey (D-21). */
+  closedByScopeGate?: boolean;
+}
+
+/** What one autosave did: a scope gate's closing answer also sends the survey. */
+export interface SavedAnswer {
+  draft: DraftRow;
+  closedByScopeGate?: boolean;
+  submitted?: boolean;
 }
 
 export const journeyApi = {
@@ -123,14 +165,14 @@ export const journeyApi = {
       answer: { a: unknown; c?: string };
       step?: number;
     },
-  ) => request<{ draft: DraftRow }>(`/journeys/${respondentId}/answers`, 'PUT', body),
+  ) => request<SavedAnswer>(`/journeys/${respondentId}/answers`, 'PUT', body),
 
   resume: (respondentId: string) => request<ResumeState>(`/journeys/${respondentId}/resume`),
 
   resumeByToken: (token: string) =>
     request<
       | ({ kind: 'resume' } & ResumeState)
-      | { kind: 'already_submitted' }
+      | { kind: 'already_submitted'; closedByScopeGate?: boolean }
       | { kind: 'participation_closed' }
       | { kind: 'link_invalidated' }
     >(`/journeys/resume/${encodeURIComponent(token)}`),

@@ -39,6 +39,7 @@ export {
   registerContact,
   setRatedFirms,
   saveDraftAnswer,
+  saveAnswer,
   getResume,
   getResumeByToken,
   submitJourney,
@@ -55,7 +56,12 @@ export {
   getPublicConsentContent,
   SURVEY_RESUME_EMAIL_KIND,
 } from './journey-service';
-export type { ContactInput, ResumeState, PublicConsentContent } from './journey-service';
+export type {
+  ContactInput,
+  ResumeState,
+  PublicConsentContent,
+  SavedAnswer,
+} from './journey-service';
 
 export {
   queueSubmissionConfirmation,
@@ -93,6 +99,7 @@ export {
   recordFollowUpConsent,
   requestInvitation,
   getSeats,
+  seatForCoordinator,
   assignSeat,
   SEAT_ASSIGNED_EMAIL_KIND,
   FIRM_SPACE_CLAIMED_EMAIL_KIND,
@@ -112,6 +119,7 @@ export {
   PrivacyConsentRequiredError,
   AlreadyClaimedError,
   SeatConflictError,
+  SeatNotSubmittedError,
   getSeatEntryContext,
   startSeatEntry,
   completeSeatEntry,
@@ -127,6 +135,7 @@ export type {
   SeatNotify,
   SeatEntryContext,
   OutreachLinkContext,
+  CoordinatorSeatView,
 } from './firm-portal-service';
 
 export {
@@ -334,6 +343,7 @@ export {
   INVITATION_REQUEST_APPROVED_EMAIL_KIND,
   INVITATION_REQUEST_DECLINED_EMAIL_KIND,
   designedBatchTemplate,
+  isParticipantReminder,
   InvitationsError,
 } from './invitations-service';
 export type {
@@ -693,11 +703,14 @@ export {
   TEMPLATE_SUBJECTS,
   BRAND_FIELDS,
   DEFAULT_SUPPORT_EMAIL,
+  EMAIL_LOGO,
+  embedEmailLogos,
   MissingMergeFieldError,
   type TemplateId,
   type MergeFields,
   type RenderedEmail,
   type EmailBrand,
+  type InlineImage,
 } from './email-templates';
 export { SAMPLE_FIELDS, SAMPLE_BASE_NOTICES } from './email-templates/samples';
 export {

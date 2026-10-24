@@ -15,6 +15,7 @@ import {
   show,
   signed,
 } from './parts';
+import { STUDY_NAME } from '@cis/survey';
 
 /**
  * A firm's private report, laid out to the approved sample
@@ -138,11 +139,11 @@ export function FirmReport({
             title="What this report is, and what it is not"
           />
           <p>
-            This is your firm’s private report from the CIS-Dragnet Benchmark Study. Everything in
-            it is about your firm: your own results, how your own active investors experience you,
-            and where you sit against the anonymised industry benchmark. It is never shared with
-            other firms or with any third party; within the study, only the CIS and Dragnet staff
-            who check each report before it is released can open it.
+            This is your firm’s private report from the {STUDY_NAME}. Everything in it is about your
+            firm: your own results, how your own active investors experience you, and where you sit
+            against the anonymised industry benchmark. It is never shared with other firms or with
+            any third party; within the study, only the CIS and Dragnet staff who check each report
+            before it is released can open it.
           </p>
           <div className="rpt-box">
             <p className="rpt-eyebrow">Three rules that protect you, and everyone</p>
@@ -290,9 +291,9 @@ export function FirmReport({
           <Prose narrative={c.narrative} section="F3" />
           <p className="rpt-note">
             Your firm believes: your leadership’s confidence that the firm consistently meets
-            investor expectations (S1-Q11). It is one person’s answer — the managing director’s seat
-            — so it is never shown as a figure: a single answer is not a reading, and seat answers
-            stay confidential to the person who gave them. Your investors report: every ease,
+            investor expectations. It is one person’s answer — the managing director’s seat — so it
+            is never shown as a figure: a single answer is not a reading, and seat answers stay
+            confidential to the person who gave them. Your investors report: every ease,
             responsiveness and transparency rating of your firm, with each investor counted once; it
             is shown from ten investors up. The industry gap pools every firm and is shown from ten
             firms up.
@@ -435,9 +436,9 @@ export function FirmReport({
             <Brand />
             <div>
               State of Stockbroking Operations and Investor Experience in Nigeria: A{' '}
-              {c.edition.label} CIS-Dragnet Study
+              {c.edition.label} {STUDY_NAME}
             </div>
-            <div>The CIS-Dragnet Benchmark Study · Private Member Report</div>
+            <div>{STUDY_NAME} · Private Member Report</div>
           </div>
           <p className="rpt-method">
             This report is private to {c.firm.name}: it is never shared with other firms or any

@@ -26,7 +26,14 @@ export function RunJourney({
     void (async () => {
       try {
         const s = await journeyApi.resume(respondentId);
-        if (!cancelled) setState(s);
+        if (cancelled) return;
+        // Already sent (e.g. its scope gate closed it): the thank-you, never
+        // the questions again.
+        if (s.respondent.submittedAt) {
+          onSubmitted({ closedByScopeGate: s.closedByScopeGate ?? false });
+          return;
+        }
+        setState(s);
       } catch (err) {
         if (!cancelled)
           setError(err instanceof ApiError ? err.message : 'Could not load the survey');
@@ -35,6 +42,7 @@ export function RunJourney({
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [respondentId]);
 
   if (error) return <div className="err">{error}</div>;
@@ -50,7 +58,6 @@ export function RunJourney({
       ratedFirmIds={state.respondent.ratedFirmIds}
       firmsById={firmsById}
       initialDrafts={state.drafts}
-      initialStep={state.respondent.resumeStep}
       onSubmitted={onSubmitted}
     />
   );

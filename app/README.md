@@ -1,4 +1,4 @@
-# CIS × Dragnet Survey Platform
+# CIS - Dragnet Study Survey Platform
 
 Reusable multi-year survey, measurement and reporting platform. Year 1 (2026) is the first configured edition, not a one-off build.
 
@@ -736,9 +736,17 @@ footer for every notice without a template of its own).
   and a test fails if it is stale).
 - `renderTemplate(id, fields)` escapes every merge value, refuses a missing
   field outside production, and derives the plain-text part from the HTML;
-  `queueTemplate` queues both. `{{logo_url}}` is `<PORTAL_URL>/cis-logo.png`
-  (served by the admin app from `apps/admin/public/`), `{{support_email}}` is
-  `SUPPORT_EMAIL` (default `support@idhub.ng`).
+  `queueTemplate` queues both. Every header shows the CIS crest and the
+  Dragnet logo side by side: `{{logo_url}}` is `<PORTAL_URL>/cis-logo.png` and
+  `{{partner_logo_url}}` `<PORTAL_URL>/dragnet-logo.png` (both served by the
+  admin app from `apps/admin/public/`), sized by `EMAIL_LOGO` in
+  `email-templates/index.ts`; `{{study_name}}` is `STUDY_NAME` from
+  `@cis/survey` ("CIS - Dragnet Study"); `{{support_email}}` is
+  `SUPPORT_EMAIL` (default `support@cisdragnetstudy.com`). Every email's
+  Reply-To is `MAIL_REPLY_TO`, else that support address.
+- The Dragnet logo is a placeholder until the client supplies it: replace
+  `apps/admin/public/dragnet-logo.png`. If its proportions differ from
+  440×144, also set `EMAIL_LOGO.partnerWidth` (emails need explicit widths).
 - `pnpm --filter @cis/api email:preview` renders every email with sample data
   to `app/tmp/email-previews/` (git-ignored); add `--send-to you@example.com`
   to send one of each through the configured mail service.

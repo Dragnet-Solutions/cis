@@ -10,6 +10,7 @@ import {
   ensureSeats,
   getSeat,
   getSeatByLinkToken,
+  getRespondentById,
   assignSeat as dbAssignSeat,
   clearSeat,
   setSeatState,
@@ -128,6 +129,13 @@ export class InvitationRequiredError extends FirmPortalError {
 }
 
 /** The same address cannot hold two seats in one firm/edition. */
+/** "Complete" was asked for a seat whose survey has not been sent. */
+export class SeatNotSubmittedError extends FirmPortalError {
+  constructor() {
+    super('This survey has not been sent yet', 'SEAT_NOT_SUBMITTED');
+  }
+}
+
 export class SeatConflictError extends FirmPortalError {
   constructor() {
     super('That address is already assigned to another survey for this firm', 'SEAT_CONFLICT');
@@ -423,6 +431,36 @@ export async function requestInvitation(
 }
 
 // ─── Seats ──────────────────────────────────────────────────────────────────
+
+/**
+ * A seat as a coordinator sees it (D-24). A coordinator can never read a
+ * respondent's answers, sent or in progress, so a seat reaches the firm portal
+ * without the two handles that open a response:
+ *
+ *  - never the respondent id — `GET /journeys/:respondentId/resume` returns an
+ *    unsent response's saved answers to whoever holds it;
+ *  - the seat's link only on the coordinator's OWN seat (assigned to their own
+ *    address). Anyone else's link goes only to that person's inbox: a
+ *    coordinator who held it could open it and read the answers saved so far.
+ */
+export type CoordinatorSeatView = Omit<SeatAssignment, 'respondentId' | 'linkToken'> & {
+  linkToken: string | null;
+};
+
+export function seatForCoordinator(
+  seat: SeatAssignment,
+  coordinatorEmail: string,
+): CoordinatorSeatView {
+  const own =
+    !!seat.assignedEmail &&
+    seat.assignedEmail.trim().toLowerCase() === coordinatorEmail.trim().toLowerCase();
+  const view: CoordinatorSeatView & { respondentId?: unknown } = {
+    ...seat,
+    linkToken: own ? seat.linkToken : null,
+  };
+  delete view.respondentId;
+  return view;
+}
 
 export async function getSeats(
   pool: Pool,
@@ -756,6 +794,11 @@ export async function startSeatEntry(
 export async function completeSeatEntry(pool: Pool, linkToken: string): Promise<void> {
   const seat = await getSeatByLinkToken(pool, linkToken);
   if (!seat) throw new SeatLinkNotFoundError();
+  // The link is public: it may only confirm what the submission already
+  // recorded, never mark an unsent survey complete for the firm to see.
+  const respondent = seat.respondentId ? await getRespondentById(pool, seat.respondentId) : null;
+  if (!respondent?.submittedAt) throw new SeatNotSubmittedError();
+  if (seat.state === 'complete') return;
   await setSeatState(pool, {
     editionId: seat.editionId,
     organizationId: seat.organizationId,
