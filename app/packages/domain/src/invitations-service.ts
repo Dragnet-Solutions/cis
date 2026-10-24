@@ -10,7 +10,9 @@ import {
   listOrganizationIdsWithOutreach,
   getFirmSeatStateCounts,
   countContactConsentByInstrument,
+  countUnfinishedReminderContacts,
   listConsentedContactsByInstrument,
+  listUnfinishedReminderContacts,
   listRegulatorContacts,
   upsertTemplate,
   getTemplate,
@@ -51,7 +53,7 @@ import {
   ensureFirmInvitationRecord,
   isFirmClaimed,
 } from './firm-invitation-service';
-import { firmPortalLink, siteOrigin, textParagraphs } from './notice-links';
+import { firmPortalLink, siteOrigin, surveyResumeLink, textParagraphs } from './notice-links';
 
 /**
  * UX-OPS-002 — Invitations. Writing to firms, regulators and consented
@@ -384,9 +386,14 @@ export async function listAudiences(pool: Pool, editionId: string): Promise<Audi
   const consent = await countContactConsentByInstrument(pool, editionId);
   const consentedFor = (codes: string[]): number =>
     codes.reduce((sum, code) => sum + (consent[code]?.consented ?? 0), 0);
+  const unfinished = await countUnfinishedReminderContacts(pool, editionId);
   const participantAudiences = PARTICIPANT_META.map((m) => ({
     ...m,
     count: consentedFor(PARTICIPANT_INSTRUMENTS[m.id] as string[]),
+    unfinishedCount: (PARTICIPANT_INSTRUMENTS[m.id] as string[]).reduce(
+      (sum, code) => sum + (unfinished[code] ?? 0),
+      0,
+    ),
   }));
 
   const regs = await listRegulatorContacts(pool);
@@ -551,6 +558,21 @@ interface BatchTarget {
   /** An unclaimed firm with no usable invitation: one is opened for the
    *  recipient's address when the email is sent, and `link` becomes its link. */
   needsInvitation?: boolean;
+  /** A reminder's {{survey_link}}: the respondent's own link back into their
+   *  unfinished survey (else the public survey entry). */
+  surveyLink?: string;
+}
+
+/**
+ * A participant SURVEY REMINDER ("Retail survey reminder", or any participant
+ * template named as a reminder). It goes only to respondents who have not
+ * finished — never to anyone who submitted — each with their own resume link
+ * (D-03). Every other participant template keeps its audience as it is.
+ */
+export function isParticipantReminder(
+  template: Pick<MessageTemplate, 'name' | 'audienceKind'>,
+): boolean {
+  return template.audienceKind === 'participant' && /\bremind/i.test(template.name);
 }
 
 type FirmLinkPlan = Pick<BatchTarget, 'link' | 'claimed' | 'needsInvitation'>;
@@ -737,7 +759,7 @@ async function renderBatchMessage(
     let fields: MergeFields;
     if (designed === 'P-01') {
       fields = {
-        survey_link: retailSurveyLink(ctx.portalUrl),
+        survey_link: t.surveyLink ?? retailSurveyLink(ctx.portalUrl),
         close_date: dates.close_date,
         edition: ctx.edition?.label,
       };
@@ -770,7 +792,7 @@ async function renderBatchMessage(
         renderTemplateText(template.body, {
           firm: t.firmName,
           link: portalLink,
-          surveyLink: retailSurveyLink(ctx.portalUrl),
+          surveyLink: t.surveyLink ?? retailSurveyLink(ctx.portalUrl),
           closeDate: dates.close_date,
         }),
       );
@@ -780,7 +802,7 @@ async function renderBatchMessage(
   const vars = {
     firm: t.firmName,
     link: t.link,
-    surveyLink: retailSurveyLink(ctx.portalUrl),
+    surveyLink: t.surveyLink ?? retailSurveyLink(ctx.portalUrl),
   };
   const bodyHasLink = /\{\{\s*(?:code|link)\s*\}\}/.test(template.body);
   return {
@@ -871,6 +893,27 @@ export async function sendBatch(
       });
     }
     audienceLabel = 'All three regulators';
+  } else if (input.audienceId in PARTICIPANT_INSTRUMENTS && isParticipantReminder(template)) {
+    // A survey reminder: only those who have not finished, each linked back
+    // into their own survey. Anyone who submitted is never reminded.
+    for (const c of await listUnfinishedReminderContacts(
+      pool,
+      input.editionId,
+      PARTICIPANT_INSTRUMENTS[input.audienceId] as string[],
+    )) {
+      targets.push({
+        recipientEmail: c.email,
+        recipientName: null,
+        firmName: null,
+        organizationId: null,
+        link: null,
+        claimed: false,
+        surveyLink: surveyResumeLink(portalUrl, c.recoveryToken),
+      });
+    }
+    audienceLabel = `${
+      PARTICIPANT_META.find((m) => m.id === input.audienceId)?.label ?? input.audienceId
+    } who have not finished`;
   } else if (input.audienceId in PARTICIPANT_INSTRUMENTS) {
     const contacts = await listConsentedContactsByInstrument(
       pool,

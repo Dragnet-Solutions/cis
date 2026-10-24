@@ -54,8 +54,10 @@ export interface SeatAssignment {
   state: SeatState;
   isSelf: boolean;
   stalledAt: string | null;
-  respondentId: string | null;
-  linkToken: string;
+  /** The seat's survey link — only on the signed-in coordinator's own seat.
+   *  Nobody else's link (or respondent) ever reaches the portal: a coordinator
+   *  never sees anyone's answers, sent or in progress (D-24). */
+  linkToken: string | null;
 }
 
 export interface Coordinator {

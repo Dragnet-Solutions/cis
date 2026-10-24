@@ -424,6 +424,36 @@ export async function requestInvitation(
 
 // ─── Seats ──────────────────────────────────────────────────────────────────
 
+/**
+ * A seat as a coordinator sees it (D-24). A coordinator can never read a
+ * respondent's answers, sent or in progress, so a seat reaches the firm portal
+ * without the two handles that open a response:
+ *
+ *  - never the respondent id — `GET /journeys/:respondentId/resume` returns an
+ *    unsent response's saved answers to whoever holds it;
+ *  - the seat's link only on the coordinator's OWN seat (assigned to their own
+ *    address). Anyone else's link goes only to that person's inbox: a
+ *    coordinator who held it could open it and read the answers saved so far.
+ */
+export type CoordinatorSeatView = Omit<SeatAssignment, 'respondentId' | 'linkToken'> & {
+  linkToken: string | null;
+};
+
+export function seatForCoordinator(
+  seat: SeatAssignment,
+  coordinatorEmail: string,
+): CoordinatorSeatView {
+  const own =
+    !!seat.assignedEmail &&
+    seat.assignedEmail.trim().toLowerCase() === coordinatorEmail.trim().toLowerCase();
+  const view: CoordinatorSeatView & { respondentId?: unknown } = {
+    ...seat,
+    linkToken: own ? seat.linkToken : null,
+  };
+  delete view.respondentId;
+  return view;
+}
+
 export async function getSeats(
   pool: Pool,
   editionId: string,

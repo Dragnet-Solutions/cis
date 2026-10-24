@@ -230,7 +230,7 @@ export function ResponsesPage({
                 </td>
                 <td style={{ padding: '8px 10px' }}>
                   {d.regulators
-                    ? `The regulators (${d.regulators.confirmed} of ${d.regulators.required} responded)`
+                    ? `The market institutions (${d.regulators.confirmed} of ${d.regulators.required} responded)`
                     : capitalise(d.dependsOn.map((s) => segmentName(s)).join(', '))}
                 </td>
                 <td style={{ padding: '8px 10px' }}>

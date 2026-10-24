@@ -10,6 +10,7 @@ import {
   recordFollowUpConsent,
   updateInvestorCategoriesServed,
   getSeats,
+  seatForCoordinator,
   assignSeat,
   describeSeatReplacement,
   confirmSeatReplacement,
@@ -207,8 +208,10 @@ export const firmCoordinatorPortalRoutes: FastifyPluginAsyncZod = async (app) =>
     async (request, reply) => {
       const editionId = await currentEditionId();
       if (!editionId) return reply.send({ seats: [] });
-      const seats = await getSeats(getPool(), editionId, request.coordinatorSession.organizationId);
-      return reply.send({ seats });
+      const session = request.coordinatorSession;
+      const seats = await getSeats(getPool(), editionId, session.organizationId);
+      // Never a respondent id, and only the coordinator's own seat link (D-24).
+      return reply.send({ seats: seats.map((s) => seatForCoordinator(s, session.email)) });
     },
   );
 
@@ -245,7 +248,7 @@ export const firmCoordinatorPortalRoutes: FastifyPluginAsyncZod = async (app) =>
         { portalUrl: publicOrigin() },
       );
       kickMailDispatcher();
-      return reply.send({ seat });
+      return reply.send({ seat: seatForCoordinator(seat, request.coordinatorSession.email) });
     },
   );
 
@@ -291,7 +294,7 @@ export const firmCoordinatorPortalRoutes: FastifyPluginAsyncZod = async (app) =>
         request.coordinatorSession.organizationId,
         request.params.seatCode,
       );
-      return reply.send({ seat });
+      return reply.send({ seat: seatForCoordinator(seat, request.coordinatorSession.email) });
     },
   );
 

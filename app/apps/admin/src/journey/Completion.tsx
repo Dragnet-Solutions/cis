@@ -71,18 +71,7 @@ export function Completion({
     }
   }
 
-  if (closedByScopeGate) {
-    return (
-      <div className="journey">
-        <p className="eyebrow">All done</p>
-        <h1 tabIndex={-1}>Thank you</h1>
-        <p className="lede">
-          Thank you for your time. Your organisation’s response is recorded, and nothing further is
-          needed.
-        </p>
-      </div>
-    );
-  }
+  if (closedByScopeGate) return <ScopeClosedThanks />;
 
   return (
     <div className="journey">
@@ -128,6 +117,22 @@ export function Completion({
       )}
 
       {error && <div className="err">{error}</div>}
+    </div>
+  );
+}
+
+/** The neutral thank-you a scope gate's closing answer ends on (D-21) — on
+ *  the answer itself and again on any later visit to the link. Never framed
+ *  as declining. */
+export function ScopeClosedThanks(): JSX.Element {
+  return (
+    <div className="journey">
+      <p className="eyebrow">All done</p>
+      <h1 tabIndex={-1}>Thank you</h1>
+      <p className="lede">
+        Thank you for your time. Your organisation’s response is recorded, and nothing further is
+        needed.
+      </p>
     </div>
   );
 }

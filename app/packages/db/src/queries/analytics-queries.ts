@@ -89,6 +89,56 @@ export async function listConsentedContactsByInstrument(
 }
 
 /**
+ * The UNFINISHED respondents a manual survey reminder may go to (D-03): not
+ * submitted, not withdrawn, not opted out of reminders, and with an email
+ * address they chose to be reached at. Each comes with their own recovery
+ * token, so the reminder links back into their own survey. Someone who has
+ * finished never appears.
+ */
+export async function listUnfinishedReminderContacts(
+  pool: Pool,
+  editionId: string,
+  instrumentCodes: string[],
+): Promise<Array<{ respondentId: string; email: string; recoveryToken: string }>> {
+  const result = await query<{ id: string; email: string; recovery_token: string }>(
+    pool,
+    `SELECT id, contact_email AS email, recovery_token
+       FROM respondents
+      WHERE edition_id = $1 AND submitted_at IS NULL AND withdrawn_at IS NULL
+        AND reminders_opted_out = FALSE
+        AND instrument_code = ANY($2)
+        AND contact_channel IN ('email', 'both')
+        AND contact_email IS NOT NULL AND recovery_token IS NOT NULL
+      ORDER BY created_at`,
+    [editionId, instrumentCodes],
+  );
+  return result.rows.map((r) => ({
+    respondentId: r.id,
+    email: r.email,
+    recoveryToken: r.recovery_token,
+  }));
+}
+
+/** How many unfinished respondents a manual reminder would reach, per instrument. */
+export async function countUnfinishedReminderContacts(
+  pool: Pool,
+  editionId: string,
+): Promise<Record<string, number>> {
+  const result = await query<{ instrument_code: string; n: string }>(
+    pool,
+    `SELECT instrument_code, COUNT(*)::text AS n
+       FROM respondents
+      WHERE edition_id = $1 AND submitted_at IS NULL AND withdrawn_at IS NULL
+        AND reminders_opted_out = FALSE
+        AND contact_channel IN ('email', 'both')
+        AND contact_email IS NOT NULL AND recovery_token IS NOT NULL
+      GROUP BY instrument_code`,
+    [editionId],
+  );
+  return Object.fromEntries(result.rows.map((r) => [r.instrument_code, parseInt(r.n, 10)]));
+}
+
+/**
  * Per-firm seat-state counts for an edition: how many of the three seats are
  * ASSIGNED (state beyond 'empty') and how many are COMPLETE. Feeds the
  * invitation audiences (noassign / partial / noreach / complete). Only firms

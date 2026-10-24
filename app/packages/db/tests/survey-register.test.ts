@@ -120,6 +120,12 @@ describe('SV-010 Register comparison gate', () => {
         expect(norm(live.gridDimensions), `grid dims for ${raw.question_id}`).toEqual(
           norm(raw.grid_dimensions),
         );
+        // D-25: the columns in the Register's order too (S3-Q4: performance,
+        // then risk, as the question asks) — toEqual ignores key order.
+        expect(
+          Object.keys(live.gridDimensions ?? {}),
+          `grid column order for ${raw.question_id}`,
+        ).toEqual(Object.keys(raw.grid_dimensions ?? {}));
         expect(norm(live.gridScale), `grid scale for ${raw.question_id}`).toEqual(
           norm(raw.grid_scale),
         );

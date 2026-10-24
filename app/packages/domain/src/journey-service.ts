@@ -23,6 +23,7 @@ import {
 import {
   applyScopeGate,
   buildJourneySequence,
+  closesScope,
   firmContextAt,
   isAnswered,
   requiresConsent,
@@ -309,6 +310,9 @@ export async function saveDraftAnswer(
   const respondent = await getRespondentById(pool, respondentId);
   if (!respondent) throw new DomainError('Respondent not found', 'RESPONDENT_NOT_FOUND');
   if (respondent.withdrawnAt) throw new ParticipationClosedError();
+  // Sent answers are final: a late autosave (a second tab, a retry) never
+  // changes a draft behind a submitted response.
+  if (respondent.submittedAt) throw new AlreadySubmittedError();
   await assertLinkValid(pool, respondentId);
   await assertCollectionOpen(pool, respondent.editionId);
 
@@ -351,6 +355,55 @@ export async function saveDraftAnswer(
   return draft;
 }
 
+/** What saving one answer did (`saveAnswer`). */
+export interface SavedAnswer {
+  draft: RespondentDraft;
+  /** The answer closed the survey at a scope gate (Q0 "Rare" / "Effectively none"). */
+  closedByScopeGate: boolean;
+  /** The response was sent with this answer: a closing gate answer finishes it. */
+  submitted: boolean;
+}
+
+/**
+ * The respondent's autosave (D-21). Saves the draft and, when the answer is a
+ * scope gate's closing option, finishes the response there and then: the
+ * survey ends on the answer itself, not on a later button. A response closed
+ * this way is submitted like any other — confirmed, thanked (I-04), never
+ * reminded — so no reload or lost request can leave it open and stuck behind
+ * a gate the server already enforces.
+ *
+ * Should the submit not go through (an unanswered item before the gate, a
+ * consent the instrument needs), the draft still stands and `submitted` is
+ * false, so the renderer offers the ordinary send.
+ */
+export async function saveAnswer(
+  pool: Pool,
+  respondentId: string,
+  data: { questionId: string; ratedFirmId: string | null; answer: AnswerValue; step?: number },
+  opts: { portalUrl?: string } = {},
+): Promise<SavedAnswer> {
+  const draft = await saveDraftAnswer(pool, respondentId, data);
+  const respondent = await getRespondentById(pool, respondentId);
+  const items = respondent ? await getInstrumentItems(pool, respondent.instrumentCode) : [];
+  const item = items.find((i) => i.id === data.questionId);
+  if (!item || !closesScope(item, data.answer)) {
+    return { draft, closedByScopeGate: false, submitted: false };
+  }
+  try {
+    await submitJourney(pool, respondentId, opts);
+    return { draft, closedByScopeGate: true, submitted: true };
+  } catch (err) {
+    // A concurrent submit (a second tab, the renderer's own retry) got there first.
+    if (err instanceof AlreadySubmittedError) {
+      return { draft, closedByScopeGate: true, submitted: true };
+    }
+    if (err instanceof ReviewGapError || err instanceof ConsentRequiredError) {
+      return { draft, closedByScopeGate: true, submitted: false };
+    }
+    throw err;
+  }
+}
+
 export interface ResumeState {
   respondent: Respondent;
   /** The instrument, resolved from the Survey Register (UX-INS-003
@@ -359,6 +412,9 @@ export interface ResumeState {
   items: SurveyItem[];
   drafts: RespondentDraft[];
   firmContext: { ratedFirmId: string | null; firmIndex: number; firmCount: number };
+  /** A scope gate's closing answer ends this survey (D-21): the renderer goes
+   *  to the thank-you rather than to any question after it. */
+  closedByScopeGate: boolean;
 }
 
 /** Restore a journey to its exact last-valid point, INCLUDING which rated firm
@@ -367,16 +423,24 @@ export async function getResume(pool: Pool, respondentId: string): Promise<Resum
   const respondent = await getRespondentById(pool, respondentId);
   if (!respondent) throw new DomainError('Respondent not found', 'RESPONDENT_NOT_FOUND');
   const items = await getInstrumentItems(pool, respondent.instrumentCode);
-  const drafts = await listDraftsForRespondent(pool, respondentId);
+  const saved = await listDraftsForRespondent(pool, respondentId);
   const sequence = buildJourneySequence(items, respondent.ratedFirmIds);
   const firmContext = firmContextAt(sequence, respondent.resumeStep);
+  const byKey = new Map(saved.map((d) => [`${d.questionId}::${d.ratedFirmId ?? ''}`, d.answer]));
+  const closedByScopeGate =
+    applyScopeGate(sequence, (s) => byKey.get(`${s.item.id}::${s.ratedFirmId ?? ''}`)).closedAt !==
+    null;
+  // Once sent, the answers are final and nothing needs them back: a submitted
+  // response's resume state carries none, so holding its id (or its link)
+  // never reads what was answered.
+  const drafts = respondent.submittedAt ? [] : saved;
   const def = (await listInstrumentDefinitions(pool)).find(
     (d) => d.code === respondent.instrumentCode,
   );
   const instrument = def
     ? { code: def.code, name: def.name, instrumentType: def.instrumentType }
     : null;
-  return { respondent, instrument, items, drafts, firmContext };
+  return { respondent, instrument, items, drafts, firmContext, closedByScopeGate };
 }
 
 /** Resume by recovery token (emailed link, or device-bound token for no-contact

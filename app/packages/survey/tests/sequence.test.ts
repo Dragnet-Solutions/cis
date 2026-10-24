@@ -5,7 +5,7 @@
  * order. One function drives every multi-firm instrument.
  */
 import { describe, it, expect } from 'vitest';
-import { buildJourneySequence, firmContextAt, type SurveyItem } from '../src';
+import { buildJourneySequence, firmContextAt, resumeStepOf, type SurveyItem } from '../src';
 
 function item(id: string, scope: 'shared' | 'firm_specific'): SurveyItem {
   return { id, kind: 'single', text: id, scope, isDrgOps: false, scored: true };
@@ -61,5 +61,34 @@ describe('buildJourneySequence', () => {
     expect(ctx.ratedFirmId).toBe('firm-C');
     expect(ctx.firmIndex).toBe(2);
     expect(ctx.firmCount).toBe(2);
+  });
+});
+
+// D-23: a reload (or another device) resumes from the saved answers — the
+// first question still to answer — never back at the start.
+describe('resumeStepOf', () => {
+  const single = (id: string, opts: Partial<SurveyItem> = {}): SurveyItem => ({
+    ...item(id, 'shared'),
+    options: ['A', 'B'],
+    ...opts,
+  });
+  const steps = buildJourneySequence(
+    [single('Q1'), single('Q2'), single('Q3', { answerOptional: true }), single('Q4')],
+    [],
+  );
+  const at = (saved: Record<string, string>) =>
+    resumeStepOf(steps, (s) => (s.item.id in saved ? { a: saved[s.item.id] } : undefined));
+
+  it('starts a fresh journey at the first question', () => {
+    expect(at({})).toBe(0);
+  });
+  it('picks up after the furthest saved answer', () => {
+    expect(at({ Q1: 'A', Q2: 'B' })).toBe(2);
+  });
+  it('never skips past a required question that still needs an answer', () => {
+    expect(at({ Q1: 'A', Q3: 'B' })).toBe(1);
+  });
+  it('stays on the last question once everything is answered', () => {
+    expect(at({ Q1: 'A', Q2: 'A', Q3: 'A', Q4: 'A' })).toBe(3);
   });
 });

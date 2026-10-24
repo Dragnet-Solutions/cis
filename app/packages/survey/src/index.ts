@@ -20,7 +20,7 @@ export {
   toggleSelect,
   toggleRank,
 } from './logic';
-export { buildJourneySequence, firmContextAt } from './sequence';
+export { buildJourneySequence, firmContextAt, resumeStepOf } from './sequence';
 export type { JourneyStep, FirmContext } from './sequence';
 export { closesScope, applyScopeGate } from './scope-gate';
 export type { ScopeGatedSteps } from './scope-gate';
