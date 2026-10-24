@@ -32,6 +32,8 @@ import { ApiError } from '../api/types';
 import { ErrorState, type ErrorStateKind } from '../shared/ErrorState';
 import { isValidEmail } from '../lib/email';
 import { useEmailField } from '../lib/useEmailField';
+import { STUDY_NAME } from '@cis/survey';
+import { BrandLockup } from '../components/BrandLockup';
 
 /**
  * Firm claim / portal / team / seats / outreach / results — UX-FRM-001 and
@@ -157,8 +159,11 @@ function ClaimOrSignIn({
     <div className="shell firmportal">
       <header className="top">
         <div className="lockup">
-          CIS × Dragnet Benchmark
-          <small>Stockbroking firm portal</small>
+          <BrandLockup size="sm" />
+          <span className="lockup-text">
+            {STUDY_NAME}
+            <small>Stockbroking firm portal</small>
+          </span>
         </div>
         <div className="steps" aria-hidden="true">
           {Array.from({ length: PROGRESS_PIP_COUNT }, (_, i) => (
@@ -988,8 +993,11 @@ function Portal({
     <div className="shell firmportal">
       <header className="top">
         <div className="lockup">
-          CIS × Dragnet Benchmark
-          <small>Stockbroking firm portal</small>
+          <BrandLockup size="sm" />
+          <span className="lockup-text">
+            {STUDY_NAME}
+            <small>Stockbroking firm portal</small>
+          </span>
         </div>
       </header>
       <main>

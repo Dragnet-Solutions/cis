@@ -2,6 +2,8 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { getPasswordSetInfo, setPasswordWithLink } from '../api/client';
 import { ApiError, type PasswordSetInfo } from '../api/types';
 import { passwordHint } from '../auth/passwordHint';
+import { STUDY_NAME } from '@cis/survey';
+import { BrandLockup } from '../components/BrandLockup';
 
 /**
  * Public page opened from the emailed set-password link
@@ -84,7 +86,10 @@ export function SetPasswordPage(): JSX.Element {
   return (
     <div className="login-page">
       <div className="login-wrap">
-        <p className="eyebrow">CIS × Dragnet Benchmark</p>
+        <div className="brand-row">
+          <BrandLockup />
+        </div>
+        <p className="eyebrow">{STUDY_NAME}</p>
         {state.kind === 'loading' && <p>Checking your link…</p>}
 
         {state.kind === 'invalid' && (

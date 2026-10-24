@@ -71,9 +71,6 @@
   font-weight: 700;
   letter-spacing: 0.04em;
 }
-.rpt-brand span {
-  color: var(--rpt-gold);
-}
 .rpt-cover .rpt-kind {
   font-size: 12px;
   letter-spacing: 0.14em;

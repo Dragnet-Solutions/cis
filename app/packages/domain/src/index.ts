@@ -693,6 +693,7 @@ export {
   TEMPLATE_SUBJECTS,
   BRAND_FIELDS,
   DEFAULT_SUPPORT_EMAIL,
+  EMAIL_LOGO,
   MissingMergeFieldError,
   type TemplateId,
   type MergeFields,

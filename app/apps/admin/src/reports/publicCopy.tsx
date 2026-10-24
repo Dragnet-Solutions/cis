@@ -1,3 +1,5 @@
+import { STUDY_NAME } from '@cis/survey';
+import { BrandLockup } from '../components/BrandLockup';
 /**
  * The public report pages' own words for the states before a report exists:
  * `/reports/industry` and its companion `/reports/institutional` each say which
@@ -26,7 +28,10 @@ export function PublicReportMissing({ kind }: { kind: PublicReportKind }): JSX.E
   const copy = PUBLIC_REPORT_COPY[kind];
   return (
     <main className="shell">
-      <p className="eyebrow">CIS × Dragnet</p>
+      <div className="brand-row">
+        <BrandLockup />
+      </div>
+      <p className="eyebrow">{STUDY_NAME}</p>
       <h1>{copy.notPublished}</h1>
       <p className="lede">
         {copy.when} <a href="/survey">Back to the study</a>

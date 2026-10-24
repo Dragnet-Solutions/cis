@@ -28,6 +28,7 @@ import {
   requiresConsent,
   type AnswerValue,
   type SurveyItem,
+  STUDY_NAME,
 } from '@cis/survey';
 import type { Respondent, RespondentDraft, Response } from '@cis/shared-types';
 import { DomainError } from './errors';
@@ -257,10 +258,10 @@ export async function registerContact(
         label: 'Your survey',
         refId: respondentId,
         to: updated.contactEmail.trim(),
-        subject: 'Your link back to the CIS × Dragnet survey',
+        subject: `Your link back to the ${STUDY_NAME} survey`,
         heading: 'Your link back to the survey',
         paragraphs: [
-          'Thank you for taking part in the CIS × Dragnet benchmark survey.',
+          `Thank you for taking part in the ${STUDY_NAME} survey.`,
           'Your answers save as you go. If you stop part-way, use the link below to come back to where you left off — on this device or another.',
           'The link is personal to you: anyone who has it can see and change your answers, so please do not forward it. Any earlier link we sent you no longer works.',
         ],

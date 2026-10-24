@@ -9,7 +9,8 @@
  * Sending uses the configured mail service (ZEPTOMAIL_API_TOKEN, else
  * SMTP_URL) and MAIL_FROM, read from the environment and app/.env. Nothing is
  * sent without --send-to; the outbox and the database are never touched.
- * Links in the previews use PORTAL_URL (the crest is <PORTAL_URL>/cis-logo.png).
+ * Links in the previews use PORTAL_URL (the logos are <PORTAL_URL>/cis-logo.png and
+ * <PORTAL_URL>/dragnet-logo.png).
  */
 import { copyFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -50,8 +51,8 @@ async function main(): Promise<void> {
     throw new Error(`--send-to must be an email address (got "${sendTo}")`);
   }
 
-  // The files show the crest from a copy beside them (the deployed one may not
-  // exist yet); the emails sent carry the real <PORTAL_URL>/cis-logo.png.
+  // The files show the logos from copies beside them (the deployed ones may not
+  // exist yet); the emails sent carry the real <PORTAL_URL>/… addresses.
   const render = (brand: EmailBrand): Array<{ name: string; email: RenderedEmail }> => {
     const emails: Array<{ name: string; email: RenderedEmail }> = [];
     for (const id of TEMPLATE_IDS) {
@@ -66,13 +67,16 @@ async function main(): Promise<void> {
     }
     return emails;
   };
-  const files = render({ ...emailBrand(), logoUrl: 'cis-logo.png' });
+  const files = render({
+    ...emailBrand(),
+    logoUrl: 'cis-logo.png',
+    partnerLogoUrl: 'dragnet-logo.png',
+  });
 
   mkdirSync(out, { recursive: true });
-  copyFileSync(
-    join(APP_ROOT, 'apps', 'admin', 'public', 'cis-logo.png'),
-    join(out, 'cis-logo.png'),
-  );
+  for (const logo of ['cis-logo.png', 'dragnet-logo.png']) {
+    copyFileSync(join(APP_ROOT, 'apps', 'admin', 'public', logo), join(out, logo));
+  }
   for (const { name, email } of files) {
     writeFileSync(join(out, `${name}.html`), email.html);
     writeFileSync(join(out, `${name}.txt`), `Subject: ${email.subject}\n\n${email.text}\n`);
@@ -88,7 +92,7 @@ async function main(): Promise<void> {
     `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Email previews</title>
 <style>body{font:15px/1.5 Arial,sans-serif;margin:32px;color:#1B1530}td{padding:4px 12px;border-bottom:1px solid #E6E2EE}a{color:#22006A}</style>
 </head><body><h1>Email previews (${files.length})</h1>
-<p>Crest: ${escape(emailBrand().logoUrl)} · Support: ${escape(emailBrand().supportEmail)}</p>
+<p>Logos: ${escape(emailBrand().logoUrl)}, ${escape(emailBrand().partnerLogoUrl)} · Support: ${escape(emailBrand().supportEmail)}</p>
 <table>${rows}</table></body></html>\n`,
   );
   console.warn(`Wrote ${files.length} previews to ${out}`);

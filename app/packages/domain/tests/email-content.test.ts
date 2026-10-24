@@ -46,7 +46,13 @@ describe('renderEmailHtml', () => {
         paragraphs: ['One', 'Two\nlines'],
         action: { label: 'Go', url: 'https://cis.example/go' },
       },
-      { brand: { logoUrl: 'https://cis.example/cis-logo.png', supportEmail: 'help@cis.example' } },
+      {
+        brand: {
+          logoUrl: 'https://cis.example/cis-logo.png',
+          partnerLogoUrl: 'https://cis.example/dragnet-logo.png',
+          supportEmail: 'help@cis.example',
+        },
+      },
     );
     expect(html.startsWith('<!DOCTYPE html>')).toBe(true);
     expect(html).toContain('<img src="https://cis.example/cis-logo.png"');
@@ -86,12 +92,18 @@ describe('textToHtml and renderEmailText', () => {
         action: { label: 'Open', url: 'https://cis.example/firm' },
         footer: 'Private.',
       },
-      { brand: { logoUrl: 'https://cis.example/cis-logo.png', supportEmail: 'help@cis.example' } },
+      {
+        brand: {
+          logoUrl: 'https://cis.example/cis-logo.png',
+          partnerLogoUrl: 'https://cis.example/dragnet-logo.png',
+          supportEmail: 'help@cis.example',
+        },
+      },
     );
     expect(text).toContain(
       'Dear Ada,\n\nYour report is ready.\n\nOpen:\nhttps://cis.example/firm\n\nPrivate.',
     );
-    expect(text).toContain('Kind regards,\nThe CIS × Dragnet Study Team');
+    expect(text).toContain('Kind regards,\nThe CIS - Dragnet Study Team');
     expect(text).toContain('Questions? Contact help@cis.example.');
     expect(text).not.toMatch(/<|Button not working/);
   });

@@ -18,6 +18,7 @@ import {
   gapOf,
   show,
 } from './parts';
+import { STUDY_NAME } from '@cis/survey';
 
 /**
  * The public Industry report, laid out to the approved sample
@@ -209,7 +210,7 @@ export function IndustryReport({
         <Cover
           watermark={c.edition.label.slice(-2)}
           right={<span className="rpt-kind">Flagship industry benchmark</span>}
-          eyebrow={`A CIS-Dragnet study · ${c.edition.label} edition`}
+          eyebrow={`${STUDY_NAME} · ${c.edition.label} edition`}
           title="State of Stockbroking Operations & Investor Experience in Nigeria"
           sub="The profession’s evidence-based benchmark of how firms operate and how investors experience them."
           meta={[
@@ -680,7 +681,7 @@ export function IndustryReport({
             <Brand />
             <div>
               State of Stockbroking Operations and Investor Experience in Nigeria: A{' '}
-              {c.edition.label} CIS-Dragnet Study
+              {c.edition.label} {STUDY_NAME}
             </div>
           </div>
           <p className="rpt-method">

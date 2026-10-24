@@ -30,6 +30,8 @@ import {
   editionOptionLabel,
   type Tab,
 } from './editionNav';
+import { STUDY_NAME } from '@cis/survey';
+import { BrandLockup } from './components/BrandLockup';
 
 /** A link into operations may name its page (`/?tab=national`), e.g. from an
  *  approval email; anything else opens the edition page. */
@@ -195,8 +197,11 @@ export function App(): JSX.Element {
     <div className="shell">
       <header className="top">
         <div className="lockup">
-          CIS × Dragnet Benchmark
-          <small>Study operations</small>
+          <BrandLockup size="sm" />
+          <span className="lockup-text">
+            {STUDY_NAME}
+            <small>Study operations</small>
+          </span>
         </div>
         {editions.length > 1 && editionId && (
           <label className="edition-switch">

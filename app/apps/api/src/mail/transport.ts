@@ -1,3 +1,6 @@
+import { DEFAULT_SUPPORT_EMAIL } from '@cis/domain';
+import { STUDY_NAME } from '@cis/survey';
+
 /**
  * How a notice leaves the system. The outbox (email_outbox) is the record; a
  * transport only sends. Delivery is driven by mailer.ts.
@@ -39,7 +42,7 @@ export interface Sender {
   name: string;
 }
 
-export const DEFAULT_SENDER_NAME = 'CIS × Dragnet';
+export const DEFAULT_SENDER_NAME = STUDY_NAME;
 const DEFAULT_SENDER_ADDRESS = 'no-reply@cis.example';
 
 /**
@@ -67,5 +70,23 @@ export function parseAddress(
 export function senderFromEnv(env: NodeJS.ProcessEnv = process.env): Sender {
   return (
     parseAddress(env['MAIL_FROM']) ?? { address: DEFAULT_SENDER_ADDRESS, name: DEFAULT_SENDER_NAME }
+  );
+}
+
+/**
+ * Where replies go, for every email: MAIL_REPLY_TO, else the support address
+ * (SUPPORT_EMAIL, else support@cisdragnetstudy.com) — never the no-reply
+ * sender. A bare address takes the sender's name.
+ */
+export function replyToFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  from: Sender = senderFromEnv(env),
+): Sender {
+  return (
+    parseAddress(env['MAIL_REPLY_TO'], from.name) ??
+    parseAddress(env['SUPPORT_EMAIL'], from.name) ?? {
+      address: DEFAULT_SUPPORT_EMAIL,
+      name: from.name,
+    }
   );
 }

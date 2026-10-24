@@ -17,6 +17,7 @@ import type { FirmCoordinator } from '@cis/shared-types';
 import { DomainError } from './errors';
 import { queueNotice } from './email-content';
 import { firmPortalLink } from './notice-links';
+import { STUDY_NAME } from '@cis/survey';
 
 /** Outbox kinds of the emails to a coordinator; ref_id is the coordinator. */
 export const COORDINATOR_WELCOME_EMAIL_KIND = 'firm-coordinator-welcome';
@@ -45,13 +46,13 @@ async function queueCoordinatorWelcome(
     refId: c.id,
     to: c.email.trim(),
     toName: c.name,
-    subject: `You have been added to ${firmName}'s team for the CIS × Dragnet benchmark`,
+    subject: `You have been added to ${firmName}'s team for the ${STUDY_NAME}`,
     heading: `Welcome to ${firmName}'s space`,
     paragraphs: [
       `Dear ${c.name},`,
       c.isLead
-        ? `You are now the lead coordinator for ${firmName} in the CIS × Dragnet benchmark. From the firm portal you assign your firm's surveys, invite your clients and add colleagues.`
-        : `You have been added as a coordinator for ${firmName} in the CIS × Dragnet benchmark. From the firm portal you can follow your firm's surveys and help its team.`,
+        ? `You are now the lead coordinator for ${firmName} in the ${STUDY_NAME}. From the firm portal you assign your firm's surveys, invite your clients and add colleagues.`
+        : `You have been added as a coordinator for ${firmName} in the ${STUDY_NAME}. From the firm portal you can follow your firm's surveys and help its team.`,
       'You sign in to the firm portal with this email address and a six-digit PIN.',
       c.isLead
         ? 'You do not have a PIN yet: the CIS team will set one for you and tell you separately.'
