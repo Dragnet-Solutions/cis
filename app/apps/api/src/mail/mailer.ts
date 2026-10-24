@@ -6,6 +6,7 @@ import {
   rescheduleEmail,
 } from '@cis/db';
 import type { getPool } from '@cis/db';
+import { embedEmailLogos } from '@cis/domain';
 import { selectTransport } from './select-transport';
 import { MailSendError, type MailTransport } from './transport';
 
@@ -118,12 +119,15 @@ export async function deliverDueEmails(
           continue;
         }
         try {
+          // The logos go inside the message, so they show without "download images".
+          const body = email.bodyHtml ? embedEmailLogos(email.bodyHtml) : null;
           const { messageId } = await transport.send({
             to: email.toAddress,
             toName: email.toName,
             subject: email.subject,
             text: email.bodyText,
-            html: email.bodyHtml,
+            html: body?.html ?? null,
+            ...(body?.inlineImages.length ? { inlineImages: body.inlineImages } : {}),
             reference: email.id,
           });
           await markEmailSent(pool, email.id, {

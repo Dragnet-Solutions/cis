@@ -93,6 +93,13 @@ export function createZeptomailTransport(env: NodeJS.ProcessEnv = process.env): 
         track_opens: false,
       };
       if (msg.html) body['htmlbody'] = msg.html;
+      if (msg.inlineImages?.length) {
+        body['inline_images'] = msg.inlineImages.map((img) => ({
+          cid: img.cid,
+          mime_type: img.contentType,
+          content: img.content,
+        }));
+      }
       if (msg.reference) body['client_reference'] = msg.reference;
       body['reply_to'] = [{ address: replyTo.address, name: replyTo.name }];
 

@@ -98,6 +98,21 @@ describe('ZeptoMail transport — the request', () => {
     expect(zeptomailAuthorization(`  ${TOKEN} `)).toBe(`Zoho-enczapikey ${TOKEN}`);
   });
 
+  it('sends the logos as inline images', async () => {
+    const fetchMock = stubFetch(200, { data: [], request_id: 'r3' });
+    await createZeptomailTransport(env({})).send({
+      to: 'b@firm.example',
+      subject: 'S',
+      text: 'T',
+      html: '<img src="cid:cis-logo">',
+      inlineImages: [{ cid: 'cis-logo', contentType: 'image/png', content: 'AAAA' }],
+    });
+    const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
+    expect(body.inline_images).toEqual([
+      { cid: 'cis-logo', mime_type: 'image/png', content: 'AAAA' },
+    ]);
+  });
+
   it('omits the optional fields when absent, and adds reply_to from MAIL_REPLY_TO', async () => {
     const fetchMock = stubFetch(200, { data: [], request_id: 'r2' });
     await createZeptomailTransport(

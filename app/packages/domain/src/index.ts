@@ -694,11 +694,13 @@ export {
   BRAND_FIELDS,
   DEFAULT_SUPPORT_EMAIL,
   EMAIL_LOGO,
+  embedEmailLogos,
   MissingMergeFieldError,
   type TemplateId,
   type MergeFields,
   type RenderedEmail,
   type EmailBrand,
+  type InlineImage,
 } from './email-templates';
 export { SAMPLE_FIELDS, SAMPLE_BASE_NOTICES } from './email-templates/samples';
 export {

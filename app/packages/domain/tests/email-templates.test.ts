@@ -6,6 +6,7 @@
  * files is checked to be current.
  */
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import {
@@ -18,6 +19,7 @@ import {
   optionalFields,
   emailBrand,
   EMAIL_LOGO,
+  embedEmailLogos,
   DEFAULT_SUPPORT_EMAIL,
   type TemplateId,
 } from '../src/email-templates';
@@ -300,5 +302,40 @@ describe('optional parts (restored for platform parity)', () => {
     );
     expect(base).toContain('CIS-Dragnet 2027 Benchmark Study');
     expect(base).not.toContain('2026');
+  });
+});
+
+describe('logos travel inside the email', () => {
+  const ASSETS = join(__dirname, '..', 'src', 'email-templates', 'assets');
+  const PUBLIC = join(__dirname, '..', '..', '..', 'apps', 'admin', 'public');
+
+  it('every template carries both logos inline, not as links', () => {
+    for (const id of TEMPLATE_IDS) {
+      const { html } = renderTemplate(id, SAMPLE_FIELDS[id], BRAND);
+      const out = embedEmailLogos(html);
+      expect(out.html, id).toContain('src="cid:cis-logo"');
+      expect(out.html, id).toContain('src="cid:dragnet-logo"');
+      expect(out.html, id).not.toMatch(/src="[^"]*-logo\.png"/);
+      expect(out.inlineImages.map((i) => i.cid).sort(), id).toEqual(['cis-logo', 'dragnet-logo']);
+    }
+  });
+
+  it('carries the same image files the site serves', () => {
+    const { inlineImages } = embedEmailLogos(
+      '<img src="https://x.example/cis-logo.png"><img src="dragnet-logo.png">',
+    );
+    for (const img of inlineImages) {
+      const file = readFileSync(join(ASSETS, `${img.cid}.png`));
+      expect(Buffer.from(img.content, 'base64').equals(file)).toBe(true);
+      expect(readFileSync(join(PUBLIC, `${img.cid}.png`)).equals(file), img.cid).toBe(true);
+    }
+  });
+
+  it('leaves HTML without the logos alone', () => {
+    expect(embedEmailLogos('<p>Hi</p>')).toEqual({ html: '<p>Hi</p>', inlineImages: [] });
+  });
+
+  it('sizes the Dragnet logo from its 597×144 file', () => {
+    expect(EMAIL_LOGO.partnerWidth).toBe(Math.round((EMAIL_LOGO.height * 597) / 144));
   });
 });

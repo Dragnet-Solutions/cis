@@ -1,4 +1,4 @@
-import { DEFAULT_SUPPORT_EMAIL } from '@cis/domain';
+import { DEFAULT_SUPPORT_EMAIL, type InlineImage } from '@cis/domain';
 import { STUDY_NAME } from '@cis/survey';
 
 /**
@@ -12,6 +12,8 @@ export interface MailMessage {
   subject: string;
   text: string;
   html?: string | null;
+  /** Images the HTML references as `cid:<cid>` — the header logos. */
+  inlineImages?: readonly InlineImage[];
   /** Our own reference for the message (the outbox id), echoed by the provider. */
   reference?: string;
 }

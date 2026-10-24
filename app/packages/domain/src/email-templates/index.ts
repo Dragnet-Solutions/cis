@@ -1,5 +1,5 @@
 import { STUDY_NAME } from '@cis/survey';
-import { TEMPLATE_HTML } from './templates.generated';
+import { EMAIL_LOGO_PNG, TEMPLATE_HTML } from './templates.generated';
 import { htmlToText } from './text';
 
 export { htmlToText };
@@ -102,18 +102,46 @@ const DEV_ORIGIN = 'http://localhost:5174';
  * The header shows the CIS crest and the Dragnet logo side by side at one
  * height. Outlook ignores CSS sizes, so each image carries explicit width and
  * height attributes, worked out from the image's own proportions — this is
- * the one place they are set. Both files are 440×144 px today (the Dragnet one
- * a placeholder). When the real Dragnet logo arrives, replace
- * apps/admin/public/dragnet-logo.png; if its proportions differ, set
- * EMAIL_LOGO.partnerWidth to round(height × its width ÷ its height).
+ * the one place they are set. cis-logo.png is 440×144 px, dragnet-logo.png
+ * 597×144 px. If a logo file is replaced (apps/admin/public/ and
+ * email-templates/assets/ hold the same files), set its width here to
+ * round(height × its width ÷ its height).
  */
 export const EMAIL_LOGO = {
   height: 48,
   /** round(48 × 440 / 144) */
   cisWidth: 147,
-  /** round(48 × 440 / 144) */
-  partnerWidth: 147,
+  /** round(48 × 597 / 144) */
+  partnerWidth: 199,
 } as const;
+
+/** An image carried inside the message and referenced as `cid:<cid>`. */
+export interface InlineImage {
+  cid: string;
+  contentType: 'image/png';
+  /** base64 */
+  content: string;
+}
+
+/**
+ * Makes the header logos travel inside the email. A stored notice links them
+ * from the public site (…/cis-logo.png, …/dragnet-logo.png), which most mail
+ * apps — Outlook above all — block until the reader asks for images. At send
+ * time each link becomes `cid:<name>` and the image goes with the message as
+ * an inline part, so the logos show straight away. HTML without the logos is
+ * returned unchanged.
+ */
+export function embedEmailLogos(html: string): { html: string; inlineImages: InlineImage[] } {
+  const inlineImages: InlineImage[] = [];
+  let out = html;
+  for (const [name, content] of Object.entries(EMAIL_LOGO_PNG)) {
+    const link = new RegExp(`src="(?:[^"]*/)?${name}\\.png"`, 'g');
+    if (!link.test(out)) continue;
+    out = out.replace(link, `src="cid:${name}"`);
+    inlineImages.push({ cid: name, contentType: 'image/png', content });
+  }
+  return { html: out, inlineImages };
+}
 
 export interface EmailBrand {
   /** `<public site origin>/cis-logo.png` — the CIS crest, served by the admin app. */

@@ -23,6 +23,17 @@ export function createSmtpTransport(env: NodeJS.ProcessEnv = process.env): MailT
           subject: msg.subject,
           text: msg.text,
           ...(msg.html ? { html: msg.html } : {}),
+          ...(msg.inlineImages?.length
+            ? {
+                attachments: msg.inlineImages.map((img) => ({
+                  filename: `${img.cid}.png`,
+                  content: Buffer.from(img.content, 'base64'),
+                  contentType: img.contentType,
+                  cid: img.cid,
+                  contentDisposition: 'inline' as const,
+                })),
+              }
+            : {}),
         });
         return info.messageId ? { messageId: String(info.messageId) } : {};
       } catch (err) {

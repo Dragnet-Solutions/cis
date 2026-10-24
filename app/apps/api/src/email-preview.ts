@@ -19,6 +19,7 @@ import {
   SAMPLE_FIELDS,
   TEMPLATE_IDS,
   emailBrand,
+  embedEmailLogos,
   htmlToText,
   renderEmailHtml,
   renderTemplate,
@@ -107,11 +108,14 @@ async function main(): Promise<void> {
   }
   console.warn(`Sending ${emails.length} emails to ${sendTo} through ${transportKind()}…`);
   for (const { name, email } of emails) {
+    // As the mailer does: the logos travel inside the message.
+    const body = embedEmailLogos(email.html);
     await transport.send({
       to: sendTo,
       subject: `[Preview ${name}] ${email.subject}`,
       text: email.text,
-      html: email.html,
+      html: body.html,
+      inlineImages: body.inlineImages,
       reference: `preview-${name}`,
     });
     console.warn(`  sent ${name}`);
