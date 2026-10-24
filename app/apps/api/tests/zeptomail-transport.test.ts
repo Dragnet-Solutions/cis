@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { createZeptomailTransport, zeptomailAuthorization } from '../src/mail/zeptomail';
-import { MailSendError, parseAddress } from '../src/mail/transport';
+import { MailSendError, parseAddress, replyToFromEnv } from '../src/mail/transport';
 import { selectTransport } from '../src/mail/select-transport';
 
 const TOKEN = 'wSsVR61-test-token-value-0123456789';
@@ -77,6 +77,8 @@ describe('ZeptoMail transport — the request', () => {
       client_reference: 'outbox-123',
       track_clicks: false,
       track_opens: false,
+      // No MAIL_REPLY_TO or SUPPORT_EMAIL: replies still go to the support address.
+      reply_to: [{ address: 'support@cisdragnetstudy.com', name: 'CIS Study' }],
     });
   });
 
@@ -105,11 +107,43 @@ describe('ZeptoMail transport — the request', () => {
       }),
     ).send({ to: 'b@firm.example', subject: 'S', text: 'T' });
     const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
-    expect(body.from).toEqual({ address: 'no-reply@mail.example.org', name: 'CIS × Dragnet' });
+    expect(body.from).toEqual({
+      address: 'no-reply@mail.example.org',
+      name: 'CIS - Dragnet Study',
+    });
     expect(body.to).toEqual([{ email_address: { address: 'b@firm.example' } }]);
     expect(body).not.toHaveProperty('htmlbody');
     expect(body).not.toHaveProperty('client_reference');
     expect(body.reply_to).toEqual([{ address: 'help@mail.example.org', name: 'Help' }]);
+  });
+
+  it('without MAIL_REPLY_TO, replies go to SUPPORT_EMAIL', async () => {
+    const fetchMock = stubFetch(200, { data: [], request_id: 'r3' });
+    await createZeptomailTransport(env({ SUPPORT_EMAIL: ' help@cis.example ' })).send(msg);
+    const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
+    expect(body.reply_to).toEqual([{ address: 'help@cis.example', name: 'CIS Study' }]);
+  });
+});
+
+describe('Reply-To, for every transport', () => {
+  it('is MAIL_REPLY_TO, else SUPPORT_EMAIL, else support@cisdragnetstudy.com', () => {
+    const from = { address: 'noreply@idhub.ng', name: 'CIS - Dragnet Study' };
+    expect(
+      replyToFromEnv({ MAIL_REPLY_TO: 'a@x.example', SUPPORT_EMAIL: 'b@x.example' }, from),
+    ).toEqual({ address: 'a@x.example', name: 'CIS - Dragnet Study' });
+    expect(replyToFromEnv({ SUPPORT_EMAIL: 'b@x.example' }, from)).toEqual({
+      address: 'b@x.example',
+      name: 'CIS - Dragnet Study',
+    });
+    expect(replyToFromEnv({}, from)).toEqual({
+      address: 'support@cisdragnetstudy.com',
+      name: 'CIS - Dragnet Study',
+    });
+    // The sender name defaults to the study's name.
+    expect(replyToFromEnv({ MAIL_FROM: 'noreply@idhub.ng' })).toEqual({
+      address: 'support@cisdragnetstudy.com',
+      name: 'CIS - Dragnet Study',
+    });
   });
 });
 
@@ -190,12 +224,12 @@ describe('selectTransport and sender parsing', () => {
   });
 
   it('parses "Name <addr>", quoted names and bare addresses', () => {
-    expect(parseAddress('CIS × Dragnet <a@b.org>')).toEqual({
+    expect(parseAddress('CIS - Dragnet Study <a@b.org>')).toEqual({
       address: 'a@b.org',
-      name: 'CIS × Dragnet',
+      name: 'CIS - Dragnet Study',
     });
     expect(parseAddress('"The Team" <a@b.org>')).toEqual({ address: 'a@b.org', name: 'The Team' });
-    expect(parseAddress('a@b.org')).toEqual({ address: 'a@b.org', name: 'CIS × Dragnet' });
+    expect(parseAddress('a@b.org')).toEqual({ address: 'a@b.org', name: 'CIS - Dragnet Study' });
     expect(parseAddress('')).toBeNull();
   });
 });

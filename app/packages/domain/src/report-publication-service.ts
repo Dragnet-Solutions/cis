@@ -200,7 +200,7 @@ const DELIVERY_BATCH = 200;
 export interface ReportDeliveryOptions {
   /** The public site's address (PORTAL_URL); links are built from its origin. */
   portalUrl?: string | null;
-  /** Where questions go (SUPPORT_EMAIL); defaults to support@idhub.ng. */
+  /** Where questions go (SUPPORT_EMAIL); defaults to support@cisdragnetstudy.com. */
   supportEmail?: string | null;
   /** The operator who published, for the audit entry. */
   actor?: { userId: string | null; ipAddress?: string | null; userAgent?: string | null };

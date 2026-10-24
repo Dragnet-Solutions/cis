@@ -9,6 +9,8 @@ import { PreviousEditions } from './PreviousEditions';
 import { journeyApi, type ParticipatingFirm } from './journeyClient';
 import { ApiError } from '../api/types';
 import { ErrorState, type ErrorStateKind } from '../shared/ErrorState';
+import { STUDY_NAME } from '@cis/survey';
+import { BrandLockup } from '../components/BrandLockup';
 
 type Screen =
   | { name: 'landing' }
@@ -231,6 +233,15 @@ export function RespondentApp(): JSX.Element {
   if (!ready) {
     return (
       <div className="shell respondent">
+        <header className="top">
+          <div className="lockup">
+            <BrandLockup size="sm" />
+            <span className="lockup-text">
+              {STUDY_NAME}
+              <small>Benchmark survey</small>
+            </span>
+          </div>
+        </header>
         <main>
           <p className="lede">Loading…</p>
         </main>
@@ -240,6 +251,15 @@ export function RespondentApp(): JSX.Element {
 
   return (
     <div className="shell respondent">
+      <header className="top">
+        <div className="lockup">
+          <BrandLockup size="sm" />
+          <span className="lockup-text">
+            {STUDY_NAME}
+            <small>Benchmark survey</small>
+          </span>
+        </div>
+      </header>
       <main>
         {error && <div className="err">{error}</div>}
         {!editionId && <div className="err">No open edition is available right now.</div>}

@@ -15,6 +15,7 @@ import type { Edition, Respondent } from '@cis/shared-types';
 import { queueNotice, queueTemplate } from './email-content';
 import { fmtDateTime, seatSurveyName } from './email-fields';
 import { siteOrigin } from './notice-links';
+import { STUDY_NAME } from '@cis/survey';
 
 /**
  * D-02 — every submission is confirmed by email when an address is known, and
@@ -44,8 +45,6 @@ export const FIRM_SEAT_PROGRESS_EMAIL_KIND = 'firm-seat-progress';
 export const reportOptOutLink = (portalUrl: string | null | undefined, recoveryToken: string) =>
   `${siteOrigin(portalUrl)}/survey?noReport=${encodeURIComponent(recoveryToken)}`;
 
-const STUDY = 'CIS × Dragnet';
-
 function emailOk(v: string | null | undefined): v is string {
   return typeof v === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
 }
@@ -63,7 +62,7 @@ function longDate(d: Date): string {
 }
 
 const editionName = (edition: Edition | null) =>
-  edition ? `${STUDY} ${edition.label} benchmark` : `${STUDY} benchmark`;
+  edition ? `${STUDY_NAME} ${edition.label}` : STUDY_NAME;
 
 /**
  * When the report can be expected, from the edition's own data only. A
@@ -138,9 +137,9 @@ async function queueInvestor(ctx: ConfirmationContext): Promise<number> {
   const delivery = respondent.reportDelivery;
   const reportLine =
     delivery === 'email' || delivery === 'both'
-      ? `What happens next: you asked for the final report by email, so we will send the ${STUDY} Industry report to this address when it is published.`
+      ? `What happens next: you asked for the final report by email, so we will send the ${STUDY_NAME} Industry report to this address when it is published.`
       : delivery === 'text'
-        ? `What happens next: you asked for the final report by text message, so we will send the ${STUDY} Industry report to your mobile number when it is published.`
+        ? `What happens next: you asked for the final report by text message, so we will send the ${STUDY_NAME} Industry report to your mobile number when it is published.`
         : 'What happens next: you chose not to receive the final report, so we will not send it to you.';
   const wantsReport = delivery === 'email' || delivery === 'both' || delivery === 'text';
 

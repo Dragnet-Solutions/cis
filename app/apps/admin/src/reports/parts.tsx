@@ -7,14 +7,17 @@ import type {
   ReportRating,
 } from '../api/types';
 import './report.css';
+import { BrandLockup } from '../components/BrandLockup';
 
 /** Below this many responses a figure is withheld, never shown (the study floor). */
 export const FLOOR = 10;
 
+/** The CIS | Dragnet logo pair, on a white plate over the report's dark cover
+ *  and closing panels — so the printed PDF carries it too. */
 export function Brand(): JSX.Element {
   return (
     <div className="rpt-brand">
-      CIS<span>–</span>DRAGNET
+      <BrandLockup size="lg" plate />
     </div>
   );
 }

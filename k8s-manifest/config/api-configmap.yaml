@@ -46,11 +46,15 @@ data:
   # fallback; with neither, outbox mail is only recorded (logged), not sent.
   # Use the regional host the ZeptoMail account lives on (api.zeptomail.eu, .in, …).
   ZEPTOMAIL_API_URL: "https://api.zeptomail.com/v1.1/email"
-  # The sender's domain must be verified in the ZeptoMail Mail Agent.
-  MAIL_FROM: "CIS × Dragnet <noreply@idhub.ng>"
-  MAIL_REPLY_TO: "noreply@idhub.ng"
+  # The sender's domain must be verified in the ZeptoMail Mail Agent. The display
+  # name is the study's name; the address stays on idhub.ng until DevOps/IT move
+  # sending to cisdragnetstudy.com (see README) — only this value changes then.
+  MAIL_FROM: "CIS - Dragnet Study <noreply@idhub.ng>"
+  # Replies to every email go to the support address (unset, it defaults to
+  # SUPPORT_EMAIL; set explicitly so the two are read together).
+  MAIL_REPLY_TO: "support@cisdragnetstudy.com"
   # Shown in every email's footer ("Questions? Contact …") and in the reports.
-  SUPPORT_EMAIL: "support@idhub.ng"
+  SUPPORT_EMAIL: "support@cisdragnetstudy.com"
 
   # ── Background jobs (in-process timers; no CronJob) ──────────────────────
   # Defaults shown; uncomment to change. Several pods are safe (see README).
