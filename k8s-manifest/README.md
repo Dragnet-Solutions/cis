@@ -1,6 +1,6 @@
 # K8s Manifest
 
-Raw (non-Kustomize) manifests for CIS × Dragnet, organized the same way every other app in the
+Raw (non-Kustomize) manifests for the CIS - Dragnet Study, organized the same way every other app in the
 org's shared AKS `dev` namespace is: one directory per component, ArgoCD `sync-wave` annotations
 for ordering, secrets from Azure Key Vault via External Secrets — never a plain committed `Secret`.
 
@@ -73,6 +73,17 @@ the nginx template.
   branch ArgoCD actually syncs from — see `../argocd/application.yaml`). Editing an `image:` line
   directly in this tree only matters as the un-pinned default on `dev`; the running cluster always
   tracks whatever SHA the pipeline last pinned on `k8s-release`.
+
+## Sender, replies and support address
+- **Sender**: `MAIL_FROM` is `CIS - Dragnet Study <noreply@idhub.ng>`. The address is still on
+  idhub.ng; moving it to `noreply@cisdragnetstudy.com` is a DevOps/IT task (verify the
+  cisdragnetstudy.com domain in the ZeptoMail Mail Agent — SPF/DKIM — then change `MAIL_FROM`
+  only). No code change is needed.
+- **Replies**: every email's Reply-To is `MAIL_REPLY_TO`, set to `support@cisdragnetstudy.com`.
+  If it is removed, replies still go to `SUPPORT_EMAIL` (then the built-in default,
+  `support@cisdragnetstudy.com`) — never to the no-reply sender.
+- **Support**: `SUPPORT_EMAIL` (`support@cisdragnetstudy.com`) is the address shown in every
+  email footer and in the reports; that mailbox must exist and be monitored.
 
 ## ZeptoMail webhooks
 ZeptoMail reports bounces, opens and clicks back to the API; it never reports a delivery, so the
