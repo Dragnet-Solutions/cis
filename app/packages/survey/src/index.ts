@@ -25,3 +25,4 @@ export type { JourneyStep, FirmContext } from './sequence';
 export { closesScope, applyScopeGate } from './scope-gate';
 export { STUDY_NAME } from './brand';
 export type { ScopeGatedSteps } from './scope-gate';
+export { clientSurveyName, clientMessage, containsInternalCode } from './client-names';

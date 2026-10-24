@@ -11,19 +11,23 @@ import type { Response } from '@cis/shared-types';
 import { DomainError } from './errors';
 import { emitCompletedForRespondent } from './funnel-service';
 
-/** A survey requiring consent was submitted without an accepted consent gate. */
+/** A survey requiring consent was submitted without an accepted consent gate.
+ *  The respondent reads the message, so it never names the survey's code
+ *  (D-18); `instrumentCode` keeps it for the server. */
 export class ConsentRequiredError extends DomainError {
-  constructor(instrumentCode: string) {
-    super(
-      `Consent has not been accepted for ${instrumentCode}; the survey cannot be submitted`,
-      'CONSENT_REQUIRED',
-    );
+  constructor(public readonly instrumentCode: string) {
+    super('Consent has not been accepted, so the survey cannot be submitted.', 'CONSENT_REQUIRED');
   }
 }
 
-/** An answer was supplied for a question in the wrong scope bucket. */
+/** An answer was supplied for a question in the wrong scope bucket. The
+ *  message may reach a respondent, so it carries no survey code or question
+ *  ID; `details` holds those for the server. */
 export class ResponseScopeError extends DomainError {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    public readonly details: { questionId?: string; instrumentCode?: string } = {},
+  ) {
     super(message, 'RESPONSE_SCOPE');
   }
 }
@@ -89,14 +93,18 @@ export async function submitResponses(
   // Validate scope buckets before writing anything.
   for (const qid of Object.keys(input.sharedAnswers)) {
     if (!shared.has(qid)) {
-      throw new ResponseScopeError(`${qid} is not a shared item of ${respondent.instrumentCode}`);
+      throw new ResponseScopeError('An answer was given for a question this survey does not ask.', {
+        questionId: qid,
+        instrumentCode: respondent.instrumentCode,
+      });
     }
   }
   for (const [firmId, answers] of Object.entries(input.firmAnswers)) {
     for (const qid of Object.keys(answers)) {
       if (!firm.has(qid)) {
         throw new ResponseScopeError(
-          `${qid} is not a firm-specific item of ${respondent.instrumentCode} (firm ${firmId})`,
+          `An answer about firm ${firmId} was given for a question that is not asked about each firm.`,
+          { questionId: qid, instrumentCode: respondent.instrumentCode },
         );
       }
     }

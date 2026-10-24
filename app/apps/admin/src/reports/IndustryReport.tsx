@@ -372,8 +372,8 @@ export function IndustryReport({
                   </div>
                 )}
                 <p className="rpt-note">
-                  Base: {fx.base} firms (operations lead, S3-Q1). Each firm could cite up to three
-                  processes.
+                  Base: {fx.base} firms (the operations lead’s survey). Each firm could cite up to
+                  three processes.
                 </p>
               </>
             ) : (
@@ -411,9 +411,8 @@ export function IndustryReport({
                   </tbody>
                 </table>
                 <p className="rpt-note">
-                  Base: {fr.base} retail investors (S4-Q9, top three frustrations about each firm
-                  they rated). An investor citing the same frustration for several firms counts
-                  once.
+                  Base: {fr.base} retail investors (top three frustrations about each firm they
+                  rated). An investor citing the same frustration for several firms counts once.
                 </p>
               </>
             ) : (
@@ -491,10 +490,11 @@ export function IndustryReport({
                 </div>
               )}
               <p className="rpt-note">
-                Participation impact: {pi ? `${pi.base} retail investors` : 'withheld'} (S4-Q5–Q7,
-                yes for any firm they rated). Institutional levers:{' '}
+                Participation impact: {pi ? `${pi.base} retail investors` : 'withheld'} (reduced
+                investing, delayed or abandoned a transaction, or moved assets: yes for any firm
+                they rated). Institutional levers:{' '}
                 {c.confidenceLevers ? `${c.confidenceLevers.base} local institutions` : 'withheld'}{' '}
-                (S5a-Q9).
+                (what would most increase their confidence).
               </p>
             </>,
           )}
@@ -534,9 +534,10 @@ export function IndustryReport({
               <p className="rpt-note">
                 {lvf.localN} local and {lvf.foreignN} foreign institutional{' '}
                 {lvf.localN + lvf.foreignN === 1 ? 'respondent' : 'respondents'}. Gap is foreign
-                minus local. Local: S5a-Q1 responsiveness and reporting, S5a-Q5; foreign: S5b-Q2–Q4.
-                A rating from fewer than ten respondents is withheld; each institution counts once,
-                however many firms it rated.
+                minus local. Local: responsiveness and reporting quality ratings, and confidence in
+                records; foreign: operational support, reporting and confidence in records. A rating
+                from fewer than ten respondents is withheld; each institution counts once, however
+                many firms it rated.
               </p>
             </>,
           )}
@@ -588,8 +589,8 @@ export function IndustryReport({
                   </span>
                 </div>
                 <p className="rpt-note">
-                  Base: {c.comparators.base} retail investors (S4-Q8). “Unable to compare” is
-                  excluded from each comparison.
+                  Base: {c.comparators.base} retail investors (compared with their bank and with
+                  digital apps). “Unable to compare” is excluded from each comparison.
                 </p>
               </>
             ) : (
@@ -627,8 +628,8 @@ export function IndustryReport({
               )}
               <p className="rpt-note">
                 Firms’ view: how confident leadership is that the firm consistently meets investor
-                expectations (S1-Q11, {self.firmSelfBelief.n} firms). Investors’ experience: every
-                ease, responsiveness and transparency rating, each investor counted once (
+                expectations ({self.firmSelfBelief.n} firms). Investors’ experience: every ease,
+                responsiveness and transparency rating, each investor counted once (
                 {self.investorExperience.n} investors). Both sides are shown only from ten
                 respondents up. The instrument does not ask firms to rate themselves dimension by
                 dimension, so the gap is reported overall.

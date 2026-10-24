@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
 import { getEditionById, listEditions } from '@cis/db';
 import type { Edition } from '@cis/shared-types';
+import { clientSurveyName } from '@cis/survey';
 
 /**
  * Merge-field values shared by several emails, formatted the way people read
@@ -38,9 +39,10 @@ export function fmtDateTime(d: Date): string {
 export const requestRef = (id: string): string =>
   `REQ-${id.replace(/-/g, '').slice(0, 8).toUpperCase()}`;
 
-/** "S2 Compliance survey": how a firm seat's survey is named in emails. */
+/** "Compliance survey": how a firm seat's survey is named in emails — the
+ *  role only, never the seat's code (D-18). */
 export const seatSurveyName = (seat: { seatCode: string; roleLabel: string }): string =>
-  `${seat.seatCode} ${seat.roleLabel} survey`;
+  clientSurveyName(seat.seatCode, `${seat.roleLabel} survey`);
 
 /** The edition an email is about: the given one, else the open one, else the latest. */
 export async function editionForEmail(

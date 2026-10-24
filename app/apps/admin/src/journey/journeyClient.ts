@@ -1,4 +1,4 @@
-import type { SurveyItem } from '@cis/survey';
+import { clientMessage, type SurveyItem } from '@cis/survey';
 import { ApiError } from '../api/types';
 
 /**
@@ -17,9 +17,11 @@ async function request<T>(path: string, method = 'GET', body?: unknown): Promise
   const text = await res.text();
   const data: unknown = text ? JSON.parse(text) : null;
   if (!res.ok) {
+    // Shown to respondents and firms as it is: never with a survey code or a
+    // question ID in it (D-18).
     const message =
       data && typeof data === 'object' && 'message' in data
-        ? String((data as { message: unknown }).message)
+        ? clientMessage(String((data as { message: unknown }).message))
         : `Request failed (${res.status})`;
     throw new ApiError(res.status, message);
   }
