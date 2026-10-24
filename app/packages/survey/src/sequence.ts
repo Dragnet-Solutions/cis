@@ -1,4 +1,4 @@
-import { perFirmItems, sharedItems } from './logic';
+import { isAnswered, perFirmItems, sharedItems } from './logic';
 import type { SurveyItem } from './types';
 
 /**
@@ -61,4 +61,25 @@ export function firmContextAt(steps: JourneyStep[], stepIndex: number): FirmCont
   const step = steps[stepIndex];
   if (!step) return { ratedFirmId: null, firmIndex: 0, firmCount };
   return { ratedFirmId: step.ratedFirmId, firmIndex: step.firmIndex, firmCount };
+}
+
+/**
+ * Where a journey picks up again (D-23): the step after the furthest one with
+ * a saved answer, or the first required step still unanswered if that comes
+ * sooner. Derived from the saved answers themselves, so a reload, another
+ * device or an emailed link all land in the same place — never back at the
+ * start, and never past a question that still needs an answer.
+ */
+export function resumeStepOf<T extends { item: SurveyItem }>(
+  steps: T[],
+  valueOf: (step: T) => unknown,
+): number {
+  if (steps.length === 0) return 0;
+  let lastSaved = -1;
+  steps.forEach((s, i) => {
+    if (valueOf(s) !== undefined) lastSaved = i;
+  });
+  const next = Math.min(lastSaved + 1, steps.length - 1);
+  const gap = steps.findIndex((s) => !isAnswered(s.item, valueOf(s)));
+  return gap === -1 ? next : Math.min(gap, next);
 }

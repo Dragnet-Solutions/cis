@@ -281,17 +281,23 @@ describe('Institutional Perspectives depends on the regulators, not investor seg
       (d) => d.outputId === 'INSTITUTIONAL_PERSPECTIVES',
     )!;
 
-  it('counts confirmed regulators against the three required', async () => {
+  // D-22: all six market institutions (SEC, NGX, CSCS, LCFE, NASD, FMDQ), not
+  // only the three regulators — and worded as market institutions.
+  it('counts confirmed market institutions against all six', async () => {
     const asOf = await openWindow(); // no S5a/S5b at all — those segments are at risk
     let ip = await row(asOf);
     expect(ip.dependsOn).toEqual(['regulators']);
-    expect(ip.regulators).toEqual({ confirmed: 0, required: 3 });
-    expect(ip.displayState).toBe('on_track'); // all three can still respond
+    expect(ip.regulators).toEqual({ confirmed: 0, required: 6 });
+    expect(ip.note).toBe('0 of 6 market institutions have responded so far.');
+    expect(ip.note).not.toMatch(/regulator/i);
+    expect(ip.displayState).toBe('on_track'); // every one can still respond
 
     await confirm('Securities and Exchange', 'confirmed');
     await confirm('Nigerian Exchange', 'confirmed');
+    await confirm('FMDQ', 'confirmed');
     ip = await row(asOf);
-    expect(ip.regulators).toEqual({ confirmed: 2, required: 3 });
+    expect(ip.regulators).toEqual({ confirmed: 3, required: 6 });
+    expect(ip.displayState).toBe('on_track');
 
     await confirm('Central Securities', 'declined');
     ip = await row(asOf);

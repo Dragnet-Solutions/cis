@@ -11,6 +11,7 @@ import {
   type MessageTemplate,
   type UploadCheckKind,
 } from '../api/types';
+import { audienceReach, isSurveyReminder } from './invitationAudience';
 
 /**
  * UX-OPS-002 — Study Operations: Invitations, live-wired to the real evaluator
@@ -456,6 +457,8 @@ function NewMessageWizard({
   const template = templates.find((t) => t.id === templateId) ?? null;
   const category = audiences.find((a) => a.key === cat) ?? null;
   const audience = category?.audiences.find((a) => a.id === audienceId) ?? null;
+  // A survey reminder goes only to those who have not finished (D-03).
+  const reminder = isSurveyReminder(template);
 
   const canContinue =
     (step === 1 && templateId) ||
@@ -519,6 +522,15 @@ function NewMessageWizard({
       <>
         <h2>Sent.</h2>
         <div className="note">
+          {reminder && (
+            <p>
+              <b>
+                Reminder sent to {result.sent} {result.sent === 1 ? 'person' : 'people'} who have
+                not finished.
+              </b>{' '}
+              Nobody who has already submitted was sent it.
+            </p>
+          )}
           <p>
             {result.sent} of {result.attempted} handed to the mail service.
             {result.skippedDuplicates > 0 &&
@@ -634,7 +646,13 @@ function NewMessageWizard({
                     }}
                   />
                   <span>
-                    <b>{a.label}</b> {a.count !== null && <span className="tag ok">{a.count}</span>}
+                    <b>{a.label}</b>{' '}
+                    {audienceReach(a, reminder) !== null && (
+                      <span className="tag ok">{audienceReach(a, reminder)}</span>
+                    )}
+                    {reminder && a.unfinishedCount !== undefined && (
+                      <span className="tag soft">not finished</span>
+                    )}
                     <br />
                     <span className="tag soft">{a.sub}</span>
                   </span>
@@ -707,10 +725,16 @@ function NewMessageWizard({
               <b>Audience:</b> {audience?.label}
               {audienceId === 'upload'
                 ? ` (${uploadCheck?.validRows.length ?? 0} will send)`
-                : audience?.count !== null && audience
-                  ? ` (${audience.count})`
+                : audience && audienceReach(audience, reminder) !== null
+                  ? ` (${audienceReach(audience, reminder)}${reminder ? ' who have not finished' : ''})`
                   : ''}
             </p>
+            {reminder && (
+              <p>
+                A survey reminder goes only to people who have not finished, each with their own
+                link back into their survey. Anyone who has submitted is left out.
+              </p>
+            )}
             <p style={{ marginBottom: 0 }}>
               A firm that already received <b>this template</b> in an earlier batch is skipped
               automatically — deduplication is per template, not per batch, so a firm can still

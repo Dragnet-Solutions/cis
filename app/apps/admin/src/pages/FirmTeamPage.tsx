@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AdminClient } from '../api/client';
 import {
   ApiError,
@@ -10,7 +10,10 @@ import {
 import {
   INVITATION_FILTERS,
   INVITE_STATE,
+  QUEUED_POLL_LIMIT,
+  QUEUED_POLL_MS,
   deliveryLabel,
+  hasQueuedDelivery,
   filterInvitations,
   summarizeInvitations,
   summaryLine,
@@ -196,6 +199,7 @@ function FirmInvitationsCard({
   hasLead,
   version,
   onChanged,
+  onQueued,
 }: {
   client: AdminClient;
   orgId: string;
@@ -207,6 +211,8 @@ function FirmInvitationsCard({
   version: number;
   /** Called after this card invites, resends or revokes. */
   onChanged: () => void;
+  /** Called while an email shown here is still queued: re-read both tables. */
+  onQueued: () => void;
 }): JSX.Element {
   const [invitations, setInvitations] = useState<FirmInvitation[]>([]);
   const [claimedOnServer, setClaimed] = useState(false);
@@ -240,6 +246,13 @@ function FirmInvitationsCard({
   useEffect(() => {
     if (version > 0) void load();
   }, [version, load]);
+
+  // An email still queued: ask the page to re-read both tables shortly.
+  useEffect(() => {
+    if (!hasQueuedDelivery(invitations)) return;
+    const t = setTimeout(onQueued, QUEUED_POLL_MS);
+    return () => clearTimeout(t);
+  }, [invitations, onQueued]);
 
   async function act(fn: () => Promise<string>): Promise<void> {
     setBusy(true);
@@ -427,6 +440,7 @@ function EditionInvitationsCard({
   editionId,
   version,
   onChanged,
+  onQueued,
 }: {
   client: AdminClient;
   editionId: string;
@@ -434,6 +448,8 @@ function EditionInvitationsCard({
   version: number;
   /** Called after a resend or revoke here. */
   onChanged: () => void;
+  /** Called while an email shown here is still queued: re-read both tables. */
+  onQueued: () => void;
 }): JSX.Element {
   const [invitations, setInvitations] = useState<FirmInvitation[]>([]);
   const [filter, setFilter] = useState<InvitationFilter>('all');
@@ -454,6 +470,13 @@ function EditionInvitationsCard({
   useEffect(() => {
     void load();
   }, [load, version]);
+
+  // An email still queued: ask the page to re-read both tables shortly.
+  useEffect(() => {
+    if (!hasQueuedDelivery(invitations)) return;
+    const t = setTimeout(onQueued, QUEUED_POLL_MS);
+    return () => clearTimeout(t);
+  }, [invitations, onQueued]);
 
   async function act(fn: () => Promise<string>): Promise<void> {
     setBusy(true);
@@ -868,9 +891,21 @@ export function FirmTeamPage({
   const [notice, setNotice] = useState<string | null>(null);
   const [form, setForm] = useState({ name: '', email: '', role: '' });
   const coordEmail = useEmailField('ftp-email', form.email);
-  // Keep the per-firm invitation box and the edition-wide list in step.
-  const [firmInvitesVersion, setFirmInvitesVersion] = useState(0);
-  const [editionInvitesVersion, setEditionInvitesVersion] = useState(0);
+  // Keep the per-firm invitation box and the edition-wide list in step: one
+  // version, so whatever changes an invitation (an action in either table, or
+  // a queued email the mail service has since accepted) re-reads both, and
+  // the same invitation never shows two different states (D-25).
+  const [invitesVersion, setInvitesVersion] = useState(0);
+  const queuedPolls = useRef(0);
+  const invitationsChanged = useCallback(() => {
+    queuedPolls.current = 0;
+    setInvitesVersion((v) => v + 1);
+  }, []);
+  const invitationsQueued = useCallback(() => {
+    if (queuedPolls.current >= QUEUED_POLL_LIMIT) return;
+    queuedPolls.current += 1;
+    setInvitesVersion((v) => v + 1);
+  }, []);
 
   const loadFirms = useCallback(async () => {
     try {
@@ -1102,16 +1137,18 @@ export function FirmTeamPage({
           editionId={editionId}
           firmName={firms.find((f) => f.id === orgId)?.displayName ?? 'This firm'}
           hasLead={!!lead}
-          version={firmInvitesVersion}
-          onChanged={() => setEditionInvitesVersion((v) => v + 1)}
+          version={invitesVersion}
+          onChanged={invitationsChanged}
+          onQueued={invitationsQueued}
         />
       )}
       {editionId && (
         <EditionInvitationsCard
           client={client}
           editionId={editionId}
-          version={editionInvitesVersion}
-          onChanged={() => setFirmInvitesVersion((v) => v + 1)}
+          version={invitesVersion}
+          onChanged={invitationsChanged}
+          onQueued={invitationsQueued}
         />
       )}
       {orgId && <InvestorCategoriesCard client={client} orgId={orgId} />}

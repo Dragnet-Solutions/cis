@@ -26,9 +26,28 @@ interface RawQuestionRow {
   select_then_greatest: boolean;
   grid_rows: string[] | null;
   grid_dimensions: Record<string, string[]> | null;
+  /** The dimension names in Register order: JSONB does not keep key order. */
+  grid_dimension_order?: string[] | null;
   grid_scale: { min: number; max: number } | null;
   scope_gate: { closeOn: string[]; decision?: string } | null;
   created_at: Date;
+}
+
+/**
+ * A grid's dimensions in the Register's order (D-25). JSONB stores object keys
+ * shortest first, so S3-Q4 came back Risk-then-Performance although the
+ * question asks for performance first; `grid_dimension_order` puts them back.
+ * Any dimension the order does not name keeps its stored place after them.
+ */
+function orderedDimensions(
+  dims: Record<string, string[]> | null,
+  order: string[] | null | undefined,
+): Record<string, string[]> | null {
+  if (!dims || !order || order.length === 0) return dims;
+  const out: Record<string, string[]> = {};
+  for (const name of order) if (name in dims) out[name] = dims[name]!;
+  for (const [name, options] of Object.entries(dims)) if (!(name in out)) out[name] = options;
+  return out;
 }
 
 function mapQuestion(row: RawQuestionRow): InstrumentQuestion {
@@ -54,7 +73,7 @@ function mapQuestion(row: RawQuestionRow): InstrumentQuestion {
     conditionalDetailOn: row.conditional_detail_on,
     selectThenGreatest: row.select_then_greatest,
     gridRows: row.grid_rows,
-    gridDimensions: row.grid_dimensions,
+    gridDimensions: orderedDimensions(row.grid_dimensions, row.grid_dimension_order),
     gridScale: row.grid_scale,
     scopeGate: row.scope_gate ?? null,
     createdAt: row.created_at,
@@ -138,8 +157,9 @@ export async function createInstrumentQuestion(
         display_order, scored, is_drg_ops, is_placeholder, options,
         scale_min, scale_max, scale_anchors, rank_exactly_n, select_up_to_n,
         has_optional_comment, answer_optional, conditional_detail_on,
-        select_then_greatest, grid_rows, grid_dimensions, grid_scale, scope_gate)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+        select_then_greatest, grid_rows, grid_dimensions, grid_scale, scope_gate,
+        grid_dimension_order)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
      RETURNING *`,
     [
       data.instrumentDefinitionId,
@@ -165,6 +185,8 @@ export async function createInstrumentQuestion(
       jsonb(data.gridDimensions),
       jsonb(data.gridScale),
       jsonb(data.scopeGate),
+      // The Register's column order, which the JSONB above cannot keep.
+      data.gridDimensions ? Object.keys(data.gridDimensions) : null,
     ],
   );
   const row = result.rows[0];

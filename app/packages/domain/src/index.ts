@@ -39,6 +39,7 @@ export {
   registerContact,
   setRatedFirms,
   saveDraftAnswer,
+  saveAnswer,
   getResume,
   getResumeByToken,
   submitJourney,
@@ -55,7 +56,12 @@ export {
   getPublicConsentContent,
   SURVEY_RESUME_EMAIL_KIND,
 } from './journey-service';
-export type { ContactInput, ResumeState, PublicConsentContent } from './journey-service';
+export type {
+  ContactInput,
+  ResumeState,
+  PublicConsentContent,
+  SavedAnswer,
+} from './journey-service';
 
 export {
   queueSubmissionConfirmation,
@@ -93,6 +99,7 @@ export {
   recordFollowUpConsent,
   requestInvitation,
   getSeats,
+  seatForCoordinator,
   assignSeat,
   SEAT_ASSIGNED_EMAIL_KIND,
   FIRM_SPACE_CLAIMED_EMAIL_KIND,
@@ -127,6 +134,7 @@ export type {
   SeatNotify,
   SeatEntryContext,
   OutreachLinkContext,
+  CoordinatorSeatView,
 } from './firm-portal-service';
 
 export {
@@ -334,6 +342,7 @@ export {
   INVITATION_REQUEST_APPROVED_EMAIL_KIND,
   INVITATION_REQUEST_DECLINED_EMAIL_KIND,
   designedBatchTemplate,
+  isParticipantReminder,
   InvitationsError,
 } from './invitations-service';
 export type {

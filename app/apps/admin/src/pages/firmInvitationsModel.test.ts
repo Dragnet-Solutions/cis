@@ -3,6 +3,7 @@ import type { FirmInvitation } from '../api/types';
 import {
   deliveryLabel,
   filterInvitations,
+  hasQueuedDelivery,
   summarizeInvitations,
   summaryLine,
 } from './firmInvitationsModel';
@@ -79,5 +80,18 @@ describe('firm invitations model', () => {
     expect(deliveryLabel({ status: 'logged', error: null, at: '' }).text).toBe(
       'Not sent — no mail service',
     );
+  });
+});
+
+// D-25: while an email is queued the page re-reads both invitation tables
+// together, so one never says "Queued" while the other says "Accepted".
+describe('hasQueuedDelivery', () => {
+  const queued = { status: 'queued' as const, error: null, at: '2026-10-01T00:00:00Z' };
+  it('is true while any email waits on the mail service', () => {
+    expect(hasQueuedDelivery([inv('a', 'pending', sent), inv('b', 'pending', queued)])).toBe(true);
+  });
+  it('is false once every email is accepted, logged or failed (or none was sent)', () => {
+    expect(hasQueuedDelivery([inv('a', 'pending', sent), inv('b', 'pending', failed)])).toBe(false);
+    expect(hasQueuedDelivery([inv('c', 'accepted')])).toBe(false);
   });
 });
