@@ -1,3 +1,4 @@
+import { clientMessage } from '@cis/survey';
 import { ApiError, type FirmReportContent } from '../api/types';
 
 /**
@@ -29,9 +30,11 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const data: unknown = text ? JSON.parse(text) : null;
 
   if (!res.ok) {
+    // Shown to respondents and firms as it is: never with a survey code or a
+    // question ID in it (D-18).
     const message =
       data && typeof data === 'object' && 'message' in data
-        ? String((data as { message: unknown }).message)
+        ? clientMessage(String((data as { message: unknown }).message))
         : `Request failed (${res.status})`;
     throw new ApiError(res.status, message);
   }
@@ -208,7 +211,9 @@ export const firmPublic = {
       throw new InvitationLinkError(
         res.status,
         typeof body.code === 'string' ? body.code : null,
-        typeof body.message === 'string' ? body.message : `Request failed (${res.status})`,
+        typeof body.message === 'string'
+          ? clientMessage(body.message)
+          : `Request failed (${res.status})`,
       );
     }
     return (data as { invitation: InvitationDetails }).invitation;

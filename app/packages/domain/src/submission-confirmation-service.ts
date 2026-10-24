@@ -254,8 +254,7 @@ async function queueFirmSeat(ctx: ConfirmationContext, seat: Seat): Promise<numb
       // Only the coordinator's copy says which surveys are still to come.
       fields: {
         ...fields,
-        still_to_come:
-          progress.outstandingSeats.map((x) => `${x.roleLabel} (${x.seatCode})`).join(', ') || null,
+        still_to_come: progress.outstandingSeats.map(seatSurveyName).join(', ') || null,
       },
     });
     queued += 1;

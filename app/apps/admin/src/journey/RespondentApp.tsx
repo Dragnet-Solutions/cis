@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { clientSurveyName } from '@cis/survey';
 import { PublicLanding } from './PublicLanding';
 import { RetailEntry } from './RetailEntry';
 import { FirmSeatEntry } from './FirmSeatEntry';
@@ -189,7 +190,9 @@ export function RespondentApp(): JSX.Element {
                 name: 'institution-start',
                 respondentId: state.respondent.id,
                 code: state.respondent.instrumentCode,
-                institution: state.respondent.institutionName ?? state.instrument.name,
+                institution:
+                  state.respondent.institutionName ??
+                  clientSurveyName(state.instrument.code, state.instrument.name),
                 questionCount: state.items.length,
                 started: state.drafts.length > 0,
               });

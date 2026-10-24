@@ -43,7 +43,7 @@ const RAW_SAMPLES: Readonly<Record<TemplateId, MergeFields>> = {
     respondent_name: 'Tunde Bakare',
     coordinator_name: 'Adaeze Okonkwo',
     firm: 'Meristem Stockbrokers Limited',
-    survey_name: 'S2 Compliance survey',
+    survey_name: 'Compliance survey',
     survey_link: `${PORTAL}/survey?firmSeat=Zr2mE8qN4tY1uI0oP9aS7dF6gH5jK3lX`,
     close_date: '15 December 2026',
   },
@@ -62,10 +62,10 @@ const RAW_SAMPLES: Readonly<Record<TemplateId, MergeFields>> = {
   'F-08': {
     respondent_name: 'Tunde Bakare',
     firm: 'Meristem Stockbrokers Limited',
-    survey_name: 'S2 Compliance survey',
+    survey_name: 'Compliance survey',
     submitted_at: '22 October 2026, 14:05 (Lagos time)',
     surveys_done: 2,
-    still_to_come: 'Operations (S3)',
+    still_to_come: 'Operations survey',
   },
   'F-09': {
     contact_name: 'Adaeze Okonkwo',

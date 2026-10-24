@@ -79,10 +79,12 @@ async function assertLinkValid(pool: Pool, respondentId: string): Promise<void> 
   if (await isRespondentLinkInvalidated(pool, respondentId)) throw new LinkInvalidatedError();
 }
 
-/** An answer to an item after a scope gate that has closed the instrument. */
+/** An answer to an item after a scope gate that has closed the instrument.
+ *  The respondent reads the message, so it never names the question's ID
+ *  (D-18); `questionId` keeps it for the server. */
 export class ScopeClosedError extends DomainError {
-  constructor(questionId: string) {
-    super(`${questionId} is not part of this survey: an earlier answer closed it.`, 'SCOPE_CLOSED');
+  constructor(public readonly questionId: string) {
+    super('This question is not part of this survey: an earlier answer closed it.', 'SCOPE_CLOSED');
   }
 }
 
@@ -314,14 +316,23 @@ export async function saveDraftAnswer(
 
   const items = await getInstrumentItems(pool, respondent.instrumentCode);
   const item = items.find((i) => i.id === data.questionId);
-  if (!item) throw new ResponseScopeError(`${data.questionId} is not part of this instrument`);
+  // The respondent reads these messages: the question's ID stays out of them
+  // (D-18) and travels on the error instead.
+  const scope = { questionId: data.questionId };
+  if (!item) throw new ResponseScopeError('This question is not part of this survey.', scope);
 
   if (item.scope === 'firm_specific') {
     if (!data.ratedFirmId || !respondent.ratedFirmIds.includes(data.ratedFirmId)) {
-      throw new ResponseScopeError(`${data.questionId} needs a selected rated firm`);
+      throw new ResponseScopeError(
+        'This question is about a firm you chose to rate: choose the firm first.',
+        scope,
+      );
     }
   } else if (data.ratedFirmId !== null) {
-    throw new ResponseScopeError(`${data.questionId} is a shared item and takes no rated firm`);
+    throw new ResponseScopeError(
+      'This question is about your experience overall, not about one firm.',
+      scope,
+    );
   }
 
   // A scope gate already answered with a closing option ends the instrument:

@@ -439,7 +439,7 @@ const DIMENSIONS: Array<{
   {
     key: 'ease',
     label: 'Ease of dealing',
-    sources: 'S4-Q1; S5a-Q1 service quality',
+    sources: 'retail investors and local institutions’ service quality rating',
     read: (r) =>
       r.questionId === 'S4-Q1'
         ? r.answer
@@ -450,7 +450,7 @@ const DIMENSIONS: Array<{
   {
     key: 'responsiveness',
     label: 'Responsiveness',
-    sources: 'S4-Q2; S5a-Q1 responsiveness',
+    sources: 'retail investors and local institutions’ responsiveness rating',
     read: (r) =>
       r.questionId === 'S4-Q2'
         ? r.answer
@@ -461,7 +461,8 @@ const DIMENSIONS: Array<{
   {
     key: 'transparency',
     label: 'Transparency & reporting',
-    sources: 'S4-Q3; S5a-Q1 reporting quality; S5b-Q3',
+    sources:
+      'retail investors, local institutions’ reporting quality rating and foreign institutions',
     read: (r) =>
       r.questionId === 'S4-Q3' || r.questionId === 'S5b-Q3'
         ? r.answer
@@ -472,7 +473,7 @@ const DIMENSIONS: Array<{
   {
     key: 'trust',
     label: 'Trust in records',
-    sources: 'S4-Q4; S5a-Q5; S5b-Q4',
+    sources: 'retail investors, local institutions and foreign institutions',
     read: (r) =>
       r.questionId === 'S4-Q4' || r.questionId === 'S5a-Q5' || r.questionId === 'S5b-Q4'
         ? r.answer

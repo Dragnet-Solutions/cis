@@ -290,9 +290,9 @@ export function FirmReport({
           <Prose narrative={c.narrative} section="F3" />
           <p className="rpt-note">
             Your firm believes: your leadership’s confidence that the firm consistently meets
-            investor expectations (S1-Q11). It is one person’s answer — the managing director’s seat
-            — so it is never shown as a figure: a single answer is not a reading, and seat answers
-            stay confidential to the person who gave them. Your investors report: every ease,
+            investor expectations. It is one person’s answer — the managing director’s seat — so it
+            is never shown as a figure: a single answer is not a reading, and seat answers stay
+            confidential to the person who gave them. Your investors report: every ease,
             responsiveness and transparency rating of your firm, with each investor counted once; it
             is shown from ten investors up. The industry gap pools every firm and is shown from ten
             firms up.

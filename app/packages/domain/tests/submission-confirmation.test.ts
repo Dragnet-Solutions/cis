@@ -256,13 +256,14 @@ describe('Firm seats — S1, S2, S3', () => {
     const coord = rows.find((r) => r.kind === FIRM_SEAT_PROGRESS_EMAIL_KIND)!;
     expect(mine).toMatchObject({ ref_id: first, to_address: 's1@harbour.cis-mailtest.ng' });
     // F-08, to the seat holder with the coordinator copied.
-    expect(mine.subject).toBe('Received: S1 MD or Chief Executive survey for Harbour Securities');
+    // D-18: the survey is named by its role, never its code.
+    expect(mine.subject).toBe('Received: MD or Chief Executive survey for Harbour Securities');
     expect(mine.body_text).toContain('Dear S1 Holder,');
     expect(coord).toMatchObject({ ref_id: first, to_address: 'tolu.lead@harbour.cis-mailtest.ng' });
     expect(coord.subject).toBe(mine.subject);
     expect(coord.body_text).toContain('Firm progress: 1 of 3 surveys complete');
     // Only the coordinator's copy lists what is still to come.
-    expect(coord.body_text).toContain('Still to come: Compliance (S2), Operations (S3).');
+    expect(coord.body_text).toContain('Still to come: Compliance survey, Operations survey.');
     expect(mine.body_text).not.toContain('Still to come');
     await expectNoAnswers(first, mine);
     await expectNoAnswers(first, coord);
@@ -275,7 +276,7 @@ describe('Firm seats — S1, S2, S3', () => {
     const coord2 = rows.find(
       (r) => r.kind === FIRM_SEAT_PROGRESS_EMAIL_KIND && r.ref_id === second,
     )!;
-    expect(coord2.subject).toBe('Received: S2 Compliance survey for Harbour Securities');
+    expect(coord2.subject).toBe('Received: Compliance survey for Harbour Securities');
     expect(coord2.body_text).toContain('2 of 3 surveys complete');
 
     // A repeated submit queues nothing extra.

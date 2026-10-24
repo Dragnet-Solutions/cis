@@ -24,3 +24,4 @@ export { buildJourneySequence, firmContextAt } from './sequence';
 export type { JourneyStep, FirmContext } from './sequence';
 export { closesScope, applyScopeGate } from './scope-gate';
 export type { ScopeGatedSteps } from './scope-gate';
+export { clientSurveyName, clientMessage, containsInternalCode } from './client-names';
