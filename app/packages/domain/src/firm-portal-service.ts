@@ -10,6 +10,7 @@ import {
   ensureSeats,
   getSeat,
   getSeatByLinkToken,
+  getRespondentById,
   assignSeat as dbAssignSeat,
   clearSeat,
   setSeatState,
@@ -128,6 +129,13 @@ export class InvitationRequiredError extends FirmPortalError {
 }
 
 /** The same address cannot hold two seats in one firm/edition. */
+/** "Complete" was asked for a seat whose survey has not been sent. */
+export class SeatNotSubmittedError extends FirmPortalError {
+  constructor() {
+    super('This survey has not been sent yet', 'SEAT_NOT_SUBMITTED');
+  }
+}
+
 export class SeatConflictError extends FirmPortalError {
   constructor() {
     super('That address is already assigned to another survey for this firm', 'SEAT_CONFLICT');
@@ -786,6 +794,11 @@ export async function startSeatEntry(
 export async function completeSeatEntry(pool: Pool, linkToken: string): Promise<void> {
   const seat = await getSeatByLinkToken(pool, linkToken);
   if (!seat) throw new SeatLinkNotFoundError();
+  // The link is public: it may only confirm what the submission already
+  // recorded, never mark an unsent survey complete for the firm to see.
+  const respondent = seat.respondentId ? await getRespondentById(pool, seat.respondentId) : null;
+  if (!respondent?.submittedAt) throw new SeatNotSubmittedError();
+  if (seat.state === 'complete') return;
   await setSeatState(pool, {
     editionId: seat.editionId,
     organizationId: seat.organizationId,

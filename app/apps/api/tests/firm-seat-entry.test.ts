@@ -3,7 +3,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import { initializePool, getPool, createOrganization } from '@cis/db';
+import { initializePool, getPool, createOrganization, markRespondentSubmitted } from '@cis/db';
 import { getSeats, assignSeat, confirmSeatReplacement, seedReferenceData } from '@cis/domain';
 import { buildServer } from '../src/server';
 import {
@@ -72,6 +72,15 @@ describe('The seat entry point, over HTTP', () => {
     });
     expect(midCtxRes.json<{ state: string }>().state).toBe('started');
 
+    // The public link cannot mark an unsent survey complete.
+    const early = await app.inject({
+      method: 'POST',
+      url: `/firm-seats/${seat.linkToken}/complete`,
+    });
+    expect(early.statusCode).toBe(409);
+    expect(early.json<{ error: string }>().error).toBe('SeatNotSubmittedError');
+
+    await markRespondentSubmitted(getPool(), respondentId);
     const completeRes = await app.inject({
       method: 'POST',
       url: `/firm-seats/${seat.linkToken}/complete`,
@@ -110,6 +119,7 @@ describe('The seat entry point, over HTTP', () => {
       first.json<{ respondentId: string }>().respondentId,
     );
 
+    await markRespondentSubmitted(getPool(), first.json<{ respondentId: string }>().respondentId);
     await app.inject({ method: 'POST', url: `/firm-seats/${seat.linkToken}/complete` });
     const afterComplete = await app.inject({
       method: 'POST',

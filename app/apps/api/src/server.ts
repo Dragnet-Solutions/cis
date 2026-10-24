@@ -172,6 +172,7 @@ function resolveStatusCode(error: Error & { statusCode?: number }): number {
     case 'FirmTeamError':
     case 'AlreadyClaimedError':
     case 'SeatConflictError':
+    case 'SeatNotSubmittedError':
     case 'NationalReportError':
     case 'FirmReportError':
     case 'ScoringSignoffError':

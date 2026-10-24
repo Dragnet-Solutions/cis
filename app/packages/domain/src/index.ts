@@ -119,6 +119,7 @@ export {
   PrivacyConsentRequiredError,
   AlreadyClaimedError,
   SeatConflictError,
+  SeatNotSubmittedError,
   getSeatEntryContext,
   startSeatEntry,
   completeSeatEntry,
