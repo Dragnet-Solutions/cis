@@ -5,6 +5,9 @@ server {
     listen 8080;
     server_name _;
     server_tokens off;
+    # nginx sits behind the TLS-terminating ingress on plain :8080; any redirect
+    # it generates must be relative, never http://<host>:8080/...
+    absolute_redirect off;
 
     root /usr/share/nginx/html;
     index index.html;
@@ -51,6 +54,18 @@ server {
 
     # Set-password links carry a single-use token in the URL: keep it out of
     # the access log (both the page and the API lookup).
+    # The exact match is required: without it, a request for the prefix minus
+    # its trailing slash (the POST that submits the password) gets nginx's
+    # automatic 301 to /api/auth/password-set/ instead of reaching the API.
+    location = /api/auth/password-set {
+        access_log off;
+        proxy_pass ${API_UPSTREAM}/auth/password-set;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
     location /api/auth/password-set/ {
         access_log off;
         proxy_pass ${API_UPSTREAM}/auth/password-set/;
