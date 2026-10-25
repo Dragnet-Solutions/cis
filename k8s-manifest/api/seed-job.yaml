@@ -4,8 +4,11 @@
 # passwords from Key Vault. Runs on every ArgoCD sync and is safe to:
 #   - the seed (apps/api/src/seed.ts → seedReferenceData) skips itself once the
 #     2026 edition exists;
-#   - the password step re-applies the Key Vault values, so rotating a password
-#     is: change it in Key Vault, wait for ESO refresh, sync.
+#   - the password step only replaces an empty password or the seed default, so
+#     it never overwrites one set through a set-password link; an operator
+#     whose email was changed or who was removed is logged and skipped, not
+#     treated as a failure. Rotating a password is a set-password link
+#     (People & access), not a Key Vault change.
 # The seed hard-codes `ChangeMe!2026` and the app has no change-password
 # feature — the second step is what keeps that default from ever being live.
 apiVersion: batch/v1
@@ -82,7 +85,7 @@ spec:
             - -e
             - |
               const { initializePool, getPool, closePool } = require('/app/apps/api/node_modules/@cis/db');
-              const { hashPassword } = require('/app/apps/api/node_modules/@cis/auth');
+              const { hashPassword, verifyPassword } = require('/app/apps/api/node_modules/@cis/auth');
               (async () => {
                 initializePool();
                 const operators = [
@@ -93,12 +96,26 @@ spec:
                   if (!password || password.length < 12 || password === 'ChangeMe!2026') {
                     throw new Error(`Password for ${email} is missing, under 12 characters, or the default.`);
                   }
-                  const res = await getPool().query(
-                    'UPDATE users SET password_hash = $1 WHERE email = $2',
-                    [await hashPassword(password), email],
+                  const { rows } = await getPool().query(
+                    'SELECT id, password_hash FROM users WHERE email = $1',
+                    [email],
                   );
-                  console.log(`${email}: ${res.rowCount === 1 ? 'password set' : 'USER NOT FOUND'}`);
-                  if (res.rowCount !== 1) process.exitCode = 1;
+                  if (rows.length === 0) {
+                    console.log(`${email}: WARNING user not found (email changed or account removed), skipped`);
+                    continue;
+                  }
+                  const [user] = rows;
+                  // Only replace an empty password or the seed default; never one
+                  // the operator chose through a set-password link.
+                  if (user.password_hash && !(await verifyPassword('ChangeMe!2026', user.password_hash))) {
+                    console.log(`${email}: already has its own password, left unchanged`);
+                    continue;
+                  }
+                  await getPool().query('UPDATE users SET password_hash = $1 WHERE id = $2', [
+                    await hashPassword(password),
+                    user.id,
+                  ]);
+                  console.log(`${email}: password set`);
                 }
                 await closePool();
               })().catch((err) => { console.error(err); process.exit(1); });
