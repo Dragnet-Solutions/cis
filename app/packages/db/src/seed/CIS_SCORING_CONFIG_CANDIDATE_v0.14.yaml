@@ -210,7 +210,7 @@ indices:
     industry_operator: mean_firms_meeting_industry_sei_eligibility
     industry_eligibility:
       minimum_firm_investor_observations:
-        value: PENDING_VALIDATOR
+        value: 10
         status: PROVISIONAL_CONFIGURABLE_YEAR1_ASSUMPTION
         engineering_may_invent_value: false
       require_valid_firm_expectation: true
