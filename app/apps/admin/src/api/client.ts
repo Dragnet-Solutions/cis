@@ -70,7 +70,8 @@ async function baseRequest<T>(path: string, opts: RequestOptions = {}): Promise<
   if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
   if (opts.token) headers['Authorization'] = `Bearer ${opts.token}`;
 
-  const init: RequestInit = { method: opts.method ?? 'GET', headers };
+  // Always ask the server: never answer a read from the browser's HTTP cache.
+  const init: RequestInit = { method: opts.method ?? 'GET', headers, cache: 'no-store' };
   if (opts.body !== undefined) init.body = JSON.stringify(opts.body);
 
   const res = await fetch(`${BASE}${path}`, init);
@@ -92,6 +93,7 @@ async function baseRequest<T>(path: string, opts: RequestOptions = {}): Promise<
 export async function requestBlob(path: string, token: string | null): Promise<Blob> {
   const res = await fetch(`${BASE}${path}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
+    cache: 'no-store',
   });
   if (!res.ok) {
     const text = await res.text();

@@ -22,7 +22,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
   if (opts.token) headers['Authorization'] = `Bearer ${opts.token}`;
 
-  const init: RequestInit = { method: opts.method ?? 'GET', headers };
+  const init: RequestInit = { method: opts.method ?? 'GET', headers, cache: 'no-store' };
   if (opts.body !== undefined) init.body = JSON.stringify(opts.body);
 
   const res = await fetch(`${BASE}${path}`, init);
