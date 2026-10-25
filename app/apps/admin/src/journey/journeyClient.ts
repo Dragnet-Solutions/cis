@@ -32,7 +32,7 @@ export function isAlreadySubmitted(err: unknown): boolean {
 async function request<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
   const headers: Record<string, string> = {};
   if (body !== undefined) headers['Content-Type'] = 'application/json';
-  const init: RequestInit = { method, headers };
+  const init: RequestInit = { method, headers, cache: 'no-store' };
   if (body !== undefined) init.body = JSON.stringify(body);
   const res = await fetch(`${BASE}${path}`, init);
   const text = await res.text();

@@ -80,6 +80,14 @@ export async function buildServer() {
     });
   });
 
+  // Every response is live data: no browser, proxy or CDN may keep a copy, or a
+  // list read just after a change (a firm just created) can come back stale.
+  // A route that sets its own Cache-Control keeps it.
+  app.addHook('onSend', async (_request, reply, payload) => {
+    if (!reply.hasHeader('cache-control')) void reply.header('Cache-Control', 'no-store');
+    return payload;
+  });
+
   await registerSecurity(app);
   await registerAuth(app);
 

@@ -221,4 +221,26 @@ describe('Firm directory import over HTTP', () => {
     const after = (await listOrganizations(getPool())).filter((o) => o.orgType === 'firm');
     expect(after).toHaveLength(3);
   });
+
+  it('the firm list right after an import is never a cached copy', async () => {
+    await setUp();
+    const token = await login(MAKER);
+    const before = await app.inject({
+      method: 'GET',
+      url: '/firms',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(before.headers['cache-control']).toBe('no-store');
+
+    await post('/firms/import', token, { csv: 'name\nJust Created\n', dryRun: false });
+    const list = await app.inject({
+      method: 'GET',
+      url: '/firms',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(list.headers['cache-control']).toBe('no-store');
+    expect(
+      list.json<{ firms: Array<{ displayName: string }> }>().firms.map((f) => f.displayName),
+    ).toContain('Just Created');
+  });
 });
