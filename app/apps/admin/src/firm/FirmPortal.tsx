@@ -7,6 +7,8 @@ import {
   SEGMENTS,
   SEGMENT_ORDER,
   readPortalEntry,
+  entryReplacesStoredSession,
+  PORTAL_SESSION_ENDED_NOTE,
   invitationProblemTitle,
   type PortalView,
   type SeatState,
@@ -27,7 +29,7 @@ import {
 } from './portalClient';
 import { FirmReport } from '../reports/FirmReport';
 import { portalFirmSource } from '../reports/source';
-import { usePortalSession, type PortalSession } from './usePortalSession';
+import { usePortalSession, clearStoredPortalSession, type PortalSession } from './usePortalSession';
 import { ApiError } from '../api/types';
 import { ErrorState, type ErrorStateKind } from '../shared/ErrorState';
 import { isValidEmail } from '../lib/email';
@@ -63,19 +65,38 @@ const ROLE_TO_SEAT: Record<string, SeatCode> = {
 };
 
 export function FirmPortal(): JSX.Element {
+  // Read the link before the stored session: an invitation link clears any
+  // sign-in this browser kept, so it always opens the invitation (QA item 13).
+  const [entry] = useState(() => {
+    const e = readPortalEntry(window.location.search);
+    if (entryReplacesStoredSession(e)) clearStoredPortalSession();
+    return e;
+  });
   const { session, signIn, signOut } = usePortalSession();
-  const [entry] = useState(() => readPortalEntry(window.location.search));
+  const [sessionEnded, setSessionEnded] = useState(false);
 
   if (!session) {
     return (
       <ClaimOrSignIn
         claimOrgId={entry.claimOrgId}
         inviteToken={entry.inviteToken}
-        onSignedIn={signIn}
+        sessionNote={sessionEnded ? PORTAL_SESSION_ENDED_NOTE : null}
+        onSignedIn={(next) => {
+          setSessionEnded(false);
+          signIn(next);
+        }}
       />
     );
   }
-  return <Portal session={session} onSignOut={signOut} />;
+  return (
+    <Portal
+      session={session}
+      onSessionEnded={() => {
+        setSessionEnded(true);
+        signOut();
+      }}
+    />
+  );
 }
 
 // ─── Unauthenticated: claim or sign in ─────────────────────────────────────
@@ -83,11 +104,14 @@ export function FirmPortal(): JSX.Element {
 function ClaimOrSignIn({
   claimOrgId,
   inviteToken,
+  sessionNote,
   onSignedIn,
 }: {
   claimOrgId: string | null;
   /** From an emailed invitation link (?invite=); looked up before the claim view opens. */
   inviteToken: string | null;
+  /** Why the person is back at sign-in, when a kept sign-in was refused. */
+  sessionNote: string | null;
   onSignedIn: (session: PortalSession) => void;
 }): JSX.Element {
   const [view, setView] = useState<PortalView>(inviteToken ? 'claim' : 'email');
@@ -192,7 +216,7 @@ function ClaimOrSignIn({
           <>
             {view === 'email' && (
               <EmailView
-                initialNote={alreadyClaimedNote}
+                initialNote={alreadyClaimedNote ?? sessionNote}
                 onNext={(v, a) => {
                   setEmail(a);
                   setAlreadyClaimedNote(null);
@@ -903,10 +927,11 @@ type PortalScreen = 'landing' | 'assign' | 'outreach' | 'whylink' | 'team' | 're
 
 function Portal({
   session,
-  onSignOut,
+  onSessionEnded,
 }: {
   session: PortalSession;
-  onSignOut: () => void;
+  /** The kept sign-in was refused: back to sign-in, saying so. */
+  onSessionEnded: () => void;
 }): JSX.Element {
   const [screen, setScreen] = useState<PortalScreen>('landing');
   const [me, setMe] = useState<PortalMe | null>(null);
@@ -935,7 +960,9 @@ function Portal({
       );
     } catch (e) {
       if (e instanceof ApiError && e.statusCode === 401) {
-        setErrorKind('expired_link');
+        // A kept sign-in that is no longer accepted: this is not a survey
+        // continuation link, so say what actually happened and offer sign-in.
+        onSessionEnded();
       } else {
         setErrorKind('service_unavailable');
       }
@@ -953,16 +980,6 @@ function Portal({
     window.scrollTo(0, 0);
   };
 
-  if (errorKind === 'expired_link') {
-    return (
-      <ErrorState
-        kind="expired_link"
-        onBack={() => {
-          onSignOut();
-        }}
-      />
-    );
-  }
   if (errorKind) return <ErrorState kind={errorKind} />;
   if (!me || !seats) {
     return (

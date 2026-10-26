@@ -23,7 +23,12 @@ import {
   getInstrumentItems,
   listSeats,
 } from '@cis/db';
-import { createLeadCoordinator, setCoordinatorPin, seedReferenceData } from '@cis/domain';
+import {
+  createLeadCoordinator,
+  addCoordinator,
+  setCoordinatorPin,
+  seedReferenceData,
+} from '@cis/domain';
 import { buildJourneySequence } from '@cis/survey';
 import { validAnswerFor } from '../../../packages/domain/tests/helpers/answers';
 import { buildServer } from '../src/server';
@@ -194,5 +199,107 @@ describe('A coordinator never sees a respondent’s answers (D-24)', () => {
     expect(resume.json<{ drafts: unknown[] }>().drafts).toEqual([]);
 
     expect(await everythingTheCoordinatorCanRead()).not.toContain(respondentId);
+  });
+});
+
+// QA item 9: the coordinator's own seat shows its link. A reassignment must
+// never let that link (or any link the coordinator sees) reach answers someone
+// else saved — every reassignment mints a new link and starts a new response.
+describe('A seat link a coordinator sees never resumes someone else’s answers (QA item 9)', () => {
+  async function seatsAs(t: string) {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/portal/seats',
+      headers: { authorization: `Bearer ${t}` },
+    });
+    return res.json<{ seats: Array<{ seatCode: string; linkToken: string | null }> }>().seats;
+  }
+  const assign = (t: string, code: string, payload: Record<string, unknown>) =>
+    app.inject({
+      method: 'POST',
+      url: `/portal/seats/${code}/assign`,
+      headers: { authorization: `Bearer ${t}` },
+      payload,
+    });
+  const drafts = async (respondentId: string) =>
+    (await app.inject({ method: 'GET', url: `/journeys/${respondentId}/resume` })).json<{
+      drafts: unknown[];
+    }>().drafts;
+
+  it('someone else started it, then it is reassigned to the coordinator: a new link, a new empty response', async () => {
+    await assign(token, 'S2', { assignedName: 'Bisi', assignedEmail: 'bisi@privacy-firm.example' });
+    const before = (await listSeats(getPool(), editionId, orgId)).find((s) => s.seatCode === 'S2')!;
+    const { respondentId: bisis } = await seatHolderAnswersSome(before.linkToken, 3);
+    expect((await drafts(bisis)).length).toBeGreaterThan(0);
+
+    const reassigned = await assign(token, 'S2', {
+      assignedName: 'Lead One',
+      assignedEmail: LEAD_EMAIL.toUpperCase(),
+      isSelf: true,
+    });
+    expect(reassigned.statusCode).toBe(200);
+    const mine = (await seatsAs(token)).find((s) => s.seatCode === 'S2')!.linkToken;
+    // Own seat (matched ignoring case): the coordinator sees the link…
+    expect(mine).not.toBeNull();
+    // …but it is a new one, and the old one no longer opens anything.
+    expect(mine).not.toBe(before.linkToken);
+    const old = await app.inject({ method: 'POST', url: `/firm-seats/${before.linkToken}/start` });
+    expect(old.statusCode).toBeGreaterThanOrEqual(400);
+    // Starting it begins a fresh response: none of Bisi's answers come with it.
+    const start = await app.inject({ method: 'POST', url: `/firm-seats/${mine}/start` });
+    const { respondentId: fresh } = start.json<{ respondentId: string }>();
+    expect(fresh).not.toBe(bisis);
+    expect(await drafts(fresh)).toEqual([]);
+  });
+
+  it('the coordinator started their own seat, then reassigned it: they lose the link, and see no other', async () => {
+    await assign(token, 'S2', {
+      assignedName: 'Lead One',
+      assignedEmail: LEAD_EMAIL,
+      isSelf: true,
+    });
+    const own = (await seatsAs(token)).find((s) => s.seatCode === 'S2')!.linkToken!;
+    await seatHolderAnswersSome(own, 2);
+
+    await assign(token, 'S2', { assignedName: 'Dayo', assignedEmail: 'dayo@privacy-firm.example' });
+    const s2 = (await listSeats(getPool(), editionId, orgId)).find((s) => s.seatCode === 'S2')!;
+    expect((await seatsAs(token)).find((s) => s.seatCode === 'S2')!.linkToken).toBeNull();
+    expect(s2.linkToken).not.toBe(own);
+    // The link the coordinator kept from before is dead.
+    const ctx = await app.inject({ method: 'GET', url: `/firm-seats/${own}/context` });
+    expect(ctx.statusCode).toBe(404);
+    // Dayo's link starts Dayo's own empty response.
+    const start = await app.inject({ method: 'POST', url: `/firm-seats/${s2.linkToken}/start` });
+    expect(await drafts(start.json<{ respondentId: string }>().respondentId)).toEqual([]);
+  });
+
+  it('a co-coordinator sees the link of their own seat only, never the lead’s', async () => {
+    const co = await addCoordinator(getPool(), {
+      organizationId: orgId,
+      name: 'Co Two',
+      email: 'co@privacy-firm.example',
+    });
+    await setCoordinatorPin(getPool(), co.id, { newPin: '5678' });
+    const coToken = (
+      await app.inject({
+        method: 'POST',
+        url: '/portal/auth/login',
+        payload: { email: 'co@privacy-firm.example', pin: '5678' },
+      })
+    ).json<{ token: string }>().token;
+
+    await assign(token, 'S1', {
+      assignedName: 'Lead One',
+      assignedEmail: LEAD_EMAIL,
+      isSelf: true,
+    });
+    await assign(token, 'S3', { assignedName: 'Co Two', assignedEmail: 'CO@privacy-firm.example' });
+
+    const coView = await seatsAs(coToken);
+    expect(coView.find((s) => s.seatCode === 'S1')!.linkToken).toBeNull();
+    expect(coView.find((s) => s.seatCode === 'S3')!.linkToken).not.toBeNull();
+    const leadView = await seatsAs(token);
+    expect(leadView.find((s) => s.seatCode === 'S3')!.linkToken).toBeNull();
+    expect(leadView.find((s) => s.seatCode === 'S1')!.linkToken).not.toBeNull();
   });
 });
