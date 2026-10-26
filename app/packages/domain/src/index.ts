@@ -37,6 +37,7 @@ export type { SubmitResponsesInput } from './response-service';
 export {
   startJourney,
   registerContact,
+  changeReportDelivery,
   setRatedFirms,
   saveDraftAnswer,
   saveAnswer,

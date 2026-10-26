@@ -56,6 +56,27 @@ export function isTabEnabled(tab: Tab, phase: EditionPhase): boolean {
   return TAB_PHASES[tab].includes(phase);
 }
 
+/**
+ * Why a tab is greyed out, shown on hover. A greyed tab means "no work to do in
+ * this phase" (UX-OPS-001), not "the data is hidden": its records stay in the
+ * study, operators with the right can still read them, and the audit trail
+ * keeps every change (QA exception #6). The wording says so, so the screen and
+ * the API do not seem to disagree.
+ */
+export function tabDisabledReason(tab: Tab, phase: EditionPhase): string | null {
+  if (isTabEnabled(tab, phase)) return null;
+  const allowed = TAB_PHASES[tab];
+  if (phase === 'closed') {
+    return 'Nothing to do here once collection has closed. Its records are kept and appear in the audit trail and reports.';
+  }
+  if (phase === 'before_launch' && allowed.every((p) => p !== 'before_launch')) {
+    return 'Opens once the survey is collecting.';
+  }
+  return allowed.includes('closed')
+    ? 'Opens once collection has closed and the results are locked.'
+    : 'Not used in this phase of the edition.';
+}
+
 /** Surveys outside "before launch" only adds questionnaires not yet frozen. */
 export function surveysRestricted(phase: EditionPhase): boolean {
   return phase !== 'before_launch';
@@ -74,6 +95,26 @@ export function pickCurrentEdition<T extends { status: string }>(editions: T[]):
     editions[0] ??
     null
   );
+}
+
+const isTab = (v: string | null | undefined): v is Tab => !!v && v in TAB_PHASES;
+
+/**
+ * The page a URL names: `?tab=mail`, or a bare path such as `/mail` typed or
+ * bookmarked by hand. Anything else opens the edition page. A reload therefore
+ * comes back to the page it was on, not the edition overview.
+ */
+export function tabFromLocation(pathname: string, search: string): Tab {
+  const asked = new URLSearchParams(search).get('tab');
+  if (isTab(asked)) return asked;
+  const segment = pathname.replace(/^\/+|\/+$/g, '');
+  return isTab(segment) ? segment : 'edition';
+}
+
+/** The address a page is kept at (`/?tab=mail`). A query, never a path: the
+ *  firm portal owns every path beginning `/firm`, `firmteam` included. */
+export function tabUrl(tab: Tab): string {
+  return `/?tab=${tab}`;
 }
 
 const STATUS_WORDS: Record<string, string> = {
