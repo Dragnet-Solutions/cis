@@ -63,11 +63,18 @@ export const firmTeamRoutes: FastifyPluginAsyncZod = async (app) => {
     {
       preHandler: [app.authenticate],
       schema: {
-        body: z.object({
-          csv: z.string().min(1).max(1_000_000),
-          dryRun: z.boolean(),
-          editionId: z.string().uuid().optional(),
-        }),
+        body: z
+          .object({
+            csv: z.string().min(1).max(1_000_000),
+            dryRun: z.boolean(),
+            editionId: z.string().uuid().optional(),
+          })
+          // QA E01: a firm created outside any edition is invisible to its clients.
+          .refine((b) => b.dryRun || b.editionId !== undefined, {
+            message:
+              'editionId is required: an import must name the edition the firms take part in',
+            path: ['editionId'],
+          }),
       },
     },
     async (request, reply) => {

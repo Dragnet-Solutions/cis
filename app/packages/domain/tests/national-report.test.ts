@@ -172,6 +172,19 @@ describe('Section-level sufficiency — different rules that look alike', () => 
       'publishable',
     );
   });
+  it('§10 needs every market institution taking part, not a fixed three (QA #9)', () => {
+    const spec = NATIONAL_SECTIONS.find((s) => s.id === 'PUB_10_INSTITUTIONAL_PERSPECTIVES')!;
+    const six = { ...fullContext(), regulatorsRequired: 6 };
+    const partial = evaluateSection(spec, { ...six, regulatorsEngaged: 3 });
+    expect(partial.disposition).toBe('suppressed');
+    expect(partial.reason).toContain('3 of 6 engaged');
+    expect(evaluateSection(spec, { ...six, regulatorsEngaged: 6 }).disposition).toBe('publishable');
+    // No market institution registered at all is never "all of them".
+    expect(
+      evaluateSection(spec, { ...fullContext(), regulatorsRequired: 0, regulatorsEngaged: 0 })
+        .disposition,
+    ).toBe('suppressed');
+  });
 });
 
 describe('Sentence-level review', () => {

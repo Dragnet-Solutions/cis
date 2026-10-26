@@ -104,14 +104,14 @@ describe('Duplicates are skipped, never added twice', () => {
       'Delta Partners,', // repeats line 4
       'Delta Two,delta-partners', // slug repeats line 4
     ].join('\n');
-    const result = await importFirmDirectory(pool, operator, csv, { dryRun: false });
+    const result = await importFirmDirectory(pool, operator, csv, { dryRun: false, editionId });
     expect(result.added).toBe(1);
     expect(result.toAdd.map((r) => r.name)).toEqual(['Delta Partners']);
     expect(result.duplicates.map((d) => d.line)).toEqual([2, 3, 5, 6]);
     expect((await firmNames()).sort()).toEqual(['Alpha Securities', 'Delta Partners', 'Gamma Old']);
 
     // Importing the same file again adds nothing.
-    const again = await importFirmDirectory(pool, operator, csv, { dryRun: false });
+    const again = await importFirmDirectory(pool, operator, csv, { dryRun: false, editionId });
     expect(again.added).toBe(0);
     expect(await firmNames()).toHaveLength(3);
   });
@@ -123,7 +123,7 @@ describe('Import', () => {
       pool,
       operator,
       'name\nAlpha Securities\nBeta Brokerage\n',
-      { dryRun: false },
+      { dryRun: false, editionId },
     );
     expect(result.added).toBe(2);
     expect((await firmNames()).sort()).toEqual(['Alpha Securities', 'Beta Brokerage']);
@@ -137,7 +137,10 @@ describe('Import', () => {
 
   it('imports nothing when any line cannot be read', async () => {
     await expect(
-      importFirmDirectory(pool, operator, 'name,slug\nAlpha,\nBeta,BAD SLUG\n', { dryRun: false }),
+      importFirmDirectory(pool, operator, 'name,slug\nAlpha,\nBeta,BAD SLUG\n', {
+        dryRun: false,
+        editionId,
+      }),
     ).rejects.toMatchObject({ code: 'IMPORT_INVALID' });
     expect(await firmNames()).toEqual([]);
   });
@@ -180,15 +183,21 @@ describe('Importing enrols the firms in the edition (D34)', () => {
     ]);
   });
 
-  it('does not enrol into an edition that has stopped collecting', async () => {
+  it('refuses an edition that has stopped collecting, adding nothing (QA #2)', async () => {
     await updateEditionStatus(pool, editionId, 'locked');
-    const result = await importFirmDirectory(pool, operator, 'name\nLate Firm\n', {
-      dryRun: false,
-      editionId,
-    });
-    expect(result.added).toBe(1);
-    expect(result.enrolled).toBe(0);
-    expect(result.enrolmentNote).toMatch(/no longer collecting/);
+    for (const dryRun of [true, false]) {
+      await expect(
+        importFirmDirectory(pool, operator, 'name\nLate Firm\n', { dryRun, editionId }),
+      ).rejects.toMatchObject({ name: 'CollectionClosedError' });
+    }
+    expect(await firmNames()).toEqual([]);
     expect(await enrolled()).toEqual([]);
+  });
+
+  it('refuses a real import that names no edition, adding nothing (QA E01)', async () => {
+    await expect(
+      importFirmDirectory(pool, operator, 'name\nOrphan Firm\n', { dryRun: false }),
+    ).rejects.toMatchObject({ code: 'IMPORT_EDITION_REQUIRED' });
+    expect(await firmNames()).toEqual([]);
   });
 });
