@@ -14,7 +14,7 @@ import {
   markRespondentWithdrawn,
   createOrganization,
   createCoordinator,
-  emitFunnelEvent,
+  markRespondentSubmitted,
   createNationalReport,
   approveNationalReport,
   createCalculationRun,
@@ -35,6 +35,7 @@ import {
   saveDraftAnswer,
   submitJourney,
   ParticipationClosedError,
+  emitCompletedForRespondent,
   type SendingService,
 } from '../src';
 import { getTestPool, runMigrations, truncateAllTables, closeTestPool } from '../../db/tests/setup';
@@ -132,35 +133,28 @@ describe('Gate — firm digest content boundary and delivery', () => {
        VALUES ($1, 'Claimant', 'claimant@digestfirm.example', TRUE)`,
       [org.id],
     );
-    await emitFunnelEvent(pool, {
-      eventType: 'completed',
-      editionId,
-      segment: 'retail',
-      firmId: org.id,
-      channel: 'email',
-      source: 'invitation',
-    });
-    await emitFunnelEvent(pool, {
-      eventType: 'completed',
-      editionId,
-      segment: 'retail',
-      firmId: org.id,
-      channel: 'email',
-      source: 'invitation',
-    });
-    await emitFunnelEvent(pool, {
-      eventType: 'completed',
-      editionId,
-      segment: 'foreign_institution',
-      firmId: org.id,
-      channel: 'email',
-      source: 'invitation',
-    });
+    // Real investor responses that came in through this firm's link, submitted
+    // the way the survey submits them (QA E12: the funnel carries no firm for
+    // investor completions, so these used to count as zero).
+    const submitted = async (instrumentCode: string, recruitingFirmId: string | null) => {
+      const r = await createRespondent(pool, { editionId, instrumentCode, recruitingFirmId });
+      await markRespondentSubmitted(pool, r.id);
+      await emitCompletedForRespondent(pool, { ...r, submittedAt: new Date() });
+    };
+    await submitted('S4', org.id);
+    await submitted('S4', org.id);
+    await submitted('S5a', org.id);
+    await submitted('S5b', org.id);
+    // Not counted: still in progress, another firm's, a firm seat.
+    await createRespondent(pool, { editionId, instrumentCode: 'S4', recruitingFirmId: org.id });
+    await submitted('S4', null);
+    await submitted('S1', org.id);
 
     const digest = await assembleFirmDigest(pool, editionId, org.id);
     expect(digest.investorContribution.retail).toBe(2);
+    expect(digest.investorContribution.localInstitutional).toBe(1);
     expect(digest.investorContribution.foreignInstitutional).toBe(1);
-    expect(digest.investorContribution.total).toBe(3);
+    expect(digest.investorContribution.total).toBe(4);
     expect(digest.seatCompletion.total).toBe(3); // S1/S2/S3
     expect(digest.attention.state).toBe('noassign'); // claimed=false path: no seats assigned yet
     // Structural guarantee: nothing answer-shaped anywhere in the digest —

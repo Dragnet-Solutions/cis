@@ -68,6 +68,8 @@ export const mailRoutes: FastifyPluginAsyncZod = async (app) => {
         at: f.at,
       })),
       recentLogged: health.recentLogged,
+      loggedByReason: health.loggedByReason,
+      recentHeld: health.recentHeld.map((h) => ({ ...h, to: maskAddress(h.to) })),
     });
   });
 

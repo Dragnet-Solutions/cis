@@ -4,6 +4,7 @@ import { registerSecurity } from './plugins/security';
 import { registerAuth } from './plugins/auth-plugin';
 import { parseTrustProxy } from './plugins/trust-proxy';
 import { serializeRequest } from './plugins/redact-url';
+import { isPoolBusyError } from '@cis/db';
 import { healthRoutes } from './routes/health';
 import { authRoutes } from './routes/auth';
 import { editionRoutes } from './routes/editions';
@@ -68,6 +69,17 @@ export async function buildServer() {
   // before any `app.register(...routes)` call below, or every route falls
   // back to Fastify's built-in default error response instead of this one.
   app.setErrorHandler<Error>((error, request, reply) => {
+    if (isPoolBusyError(error)) {
+      // Every database connection stayed busy for the whole wait: a burst, not
+      // a fault in this request. Nothing was written; it is safe to retry.
+      request.log.warn({ err: error }, 'database connection pool busy');
+      void reply.status(503).header('Retry-After', '5').send({
+        error: 'ServiceBusy',
+        message: 'The server is busy right now — please try again in a moment.',
+        statusCode: 503,
+      });
+      return;
+    }
     const statusCode = resolveStatusCode(error);
     const message = statusCode < 500 ? error.message : 'Internal server error';
     if (statusCode >= 500) {

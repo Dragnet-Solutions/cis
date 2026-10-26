@@ -37,6 +37,7 @@ export type { SubmitResponsesInput } from './response-service';
 export {
   startJourney,
   registerContact,
+  changeReportDelivery,
   setRatedFirms,
   saveDraftAnswer,
   saveAnswer,
@@ -553,7 +554,7 @@ export {
   AUDIT_EXPORT_CAP,
 } from './audit-view-service';
 export type { AuditQuery, AuditPage } from './audit-view-service';
-export { createNextEdition, nextEditionLabel } from './edition-next-service';
+export { createNextEdition, followingEdition, nextEditionLabel } from './edition-next-service';
 export type { NextEditionResult } from './edition-next-service';
 
 // ── Phase 15: Managed wording (UX-ADM-CNT-001) ───────────────────────────────

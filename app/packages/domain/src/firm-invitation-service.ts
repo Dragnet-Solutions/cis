@@ -365,7 +365,10 @@ export async function sendInvitationAgain(
   const org = await assertInvitableFirm(pool, inv.organizationId);
   await assertNotClaimed(pool, org.id);
 
-  const updated = await withTransaction(pool, async (client) => {
+  // The reply is read inside the transaction: once the email is queued, the
+  // caller must hear that it was, not "server busy" from a separate read after
+  // the commit (and then send it again).
+  return withTransaction(pool, async (client) => {
     const c = client as unknown as Pool;
     const next = await markFirmInvitationSent(c, inv.id, newExpiry());
     await queueInvitationEmail(c, next, org.displayName, ctx.portalUrl);
@@ -380,9 +383,8 @@ export async function sendInvitationAgain(
       ipAddress: ctx.ipAddress ?? null,
       userAgent: ctx.userAgent ?? null,
     });
-    return next;
+    return toView(c, { ...next, firmName: org.displayName });
   });
-  return toView(pool, { ...updated, firmName: org.displayName });
 }
 
 /** Revoke a pending invitation: its link stops working straight away. */

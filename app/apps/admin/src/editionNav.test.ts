@@ -8,8 +8,44 @@ import {
   surveysRestricted,
   pickCurrentEdition,
   editionOptionLabel,
+  tabFromLocation,
+  tabUrl,
+  tabDisabledReason,
   type Tab,
 } from './editionNav';
+
+describe('a greyed tab says why (QA exception #6)', () => {
+  it('after the lock, a collection tab says its records are kept, not hidden', () => {
+    expect(tabDisabledReason('unfinished', 'closed')).toMatch(/records are kept/);
+    expect(tabDisabledReason('regulators', 'closed')).toMatch(/audit trail/);
+  });
+  it('before results, a reporting tab says when it opens', () => {
+    expect(tabDisabledReason('scoring', 'collection_open')).toMatch(/results are locked/);
+    expect(tabDisabledReason('responses', 'before_launch')).toMatch(/collecting/);
+  });
+  it('an enabled tab has no reason', () => {
+    expect(tabDisabledReason('mail', 'closed')).toBeNull();
+  });
+});
+
+describe('a reload keeps the page (QA exception #5)', () => {
+  it('reads the page from ?tab= or a bare path, and only a known page', () => {
+    expect(tabFromLocation('/', '?tab=mail')).toBe('mail');
+    expect(tabFromLocation('/mail', '')).toBe('mail');
+    expect(tabFromLocation('/audit/', '')).toBe('audit');
+    expect(tabFromLocation('/', '?tab=nonsense')).toBe('edition');
+    expect(tabFromLocation('/', '')).toBe('edition');
+  });
+
+  it('every page round-trips through its own address', () => {
+    for (const tab of Object.keys(TAB_PHASES) as Tab[]) {
+      const url = new URL(tabUrl(tab), 'https://admin.example');
+      expect(tabFromLocation(url.pathname, url.search)).toBe(tab);
+      // Never a /firm… path, which the firm portal owns.
+      expect(url.pathname).toBe('/');
+    }
+  });
+});
 
 describe('phase gating', () => {
   it('Surveys stays reachable while collecting (restricted), not once closed', () => {

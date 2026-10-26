@@ -139,7 +139,7 @@ describe('D-15 — create the next edition', () => {
       url: `/editions/${editionId}/next`,
       headers: auth(t),
     });
-    expect(hint.json()).toEqual({ suggestedLabel: '2027', draftExists: null });
+    expect(hint.json()).toEqual({ suggestedLabel: '2027', draftExists: null, nextExists: null });
 
     const res = await app.inject({
       method: 'POST',

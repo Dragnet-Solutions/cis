@@ -1,4 +1,5 @@
 import {
+  HELD_TEST_ADDRESS_REASON,
   claimDueEmails,
   markEmailFailed,
   markEmailLogged,
@@ -66,7 +67,8 @@ export function backoffMs(attempts: number): number {
  */
 const RESERVED_DOMAINS = ['example.com', 'example.net', 'example.org'];
 const RESERVED_TLDS = ['example', 'test', 'invalid'];
-export const RESERVED_DOMAIN_REASON = 'reserved test domain';
+/** Recorded on the notice; the Mail page reads it back to explain the hold. */
+export const RESERVED_DOMAIN_REASON = HELD_TEST_ADDRESS_REASON;
 
 export function isReservedTestAddress(address: string): boolean {
   const at = address.lastIndexOf('@');

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { journeyApi } from './journeyClient';
 import { ApiError } from '../api/types';
+import { deliveryContactError } from './deliveryContact';
 
 /**
  * Post-submission screen. UX-RET-008: the report-delivery preference can be
@@ -41,6 +42,8 @@ export function Completion({
   onReferralStarted: (newRespondentId: string) => void;
 }): JSX.Element {
   const [delivery, setDelivery] = useState('email');
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [referBusy, setReferBusy] = useState(false);
@@ -48,8 +51,17 @@ export function Completion({
   async function saveDelivery(): Promise<void> {
     setError(null);
     setSavedMsg(null);
+    const missing = deliveryContactError(delivery, email, phone);
+    if (missing) {
+      setError(missing);
+      return;
+    }
     try {
-      await journeyApi.reportDelivery(respondentId, { reportDelivery: delivery });
+      await journeyApi.reportDelivery(respondentId, {
+        reportDelivery: delivery,
+        email: delivery === 'email' ? email.trim() : null,
+        phone: delivery === 'text' ? phone.trim() : null,
+      });
       setSavedMsg('Your report-delivery preference has been updated.');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not update your preference');
@@ -95,6 +107,30 @@ export function Completion({
             </button>
           ))}
         </div>
+        {delivery === 'email' && (
+          <div className="field">
+            <label htmlFor="cmp-email">Email address for the report</label>
+            <input
+              id="cmp-email"
+              type="email"
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </div>
+        )}
+        {delivery === 'text' && (
+          <div className="field">
+            <label htmlFor="cmp-phone">Mobile number for the report</label>
+            <input
+              id="cmp-phone"
+              type="tel"
+              autoComplete="tel"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+            />
+          </div>
+        )}
         <div className="actions">
           <button type="button" className="btn-2" onClick={() => void saveDelivery()}>
             Update preference

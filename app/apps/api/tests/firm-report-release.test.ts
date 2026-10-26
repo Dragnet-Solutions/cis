@@ -187,18 +187,18 @@ describe('Firm report release — maker-checker over HTTP', () => {
 
 describe('Firm directory import over HTTP', () => {
   it('previews, imports, and refuses someone without the setup right', async () => {
-    await setUp();
+    const { editionId } = await setUp();
     const token = await login(MAKER);
     const csv = 'name\nImported Alpha\nImported Beta\nHTTP Release Firm\n';
 
-    const preview = await post('/firms/import', token, { csv, dryRun: true });
+    const preview = await post('/firms/import', token, { csv, dryRun: true, editionId });
     expect(preview.statusCode).toBe(200);
     const plan = preview.json<{ toAdd: unknown[]; duplicates: unknown[]; added: number }>();
     expect(plan.toAdd).toHaveLength(2);
     expect(plan.duplicates).toHaveLength(1);
     expect(plan.added).toBe(0);
 
-    const done = await post('/firms/import', token, { csv, dryRun: false });
+    const done = await post('/firms/import', token, { csv, dryRun: false, editionId });
     expect(done.statusCode).toBe(201);
     expect(done.json<{ added: number }>().added).toBe(2);
     const firms = (await listOrganizations(getPool())).filter((o) => o.orgType === 'firm');
@@ -216,14 +216,18 @@ describe('Firm directory import over HTTP', () => {
       organization: 'CIS',
     });
     const viewer = await login('viewer@cis.example');
-    const refused = await post('/firms/import', viewer, { csv: 'name\nSneaky\n', dryRun: false });
+    const refused = await post('/firms/import', viewer, {
+      csv: 'name\nSneaky\n',
+      dryRun: false,
+      editionId,
+    });
     expect(refused.statusCode).toBe(403);
     const after = (await listOrganizations(getPool())).filter((o) => o.orgType === 'firm');
     expect(after).toHaveLength(3);
   });
 
   it('the firm list right after an import is never a cached copy', async () => {
-    await setUp();
+    const { editionId } = await setUp();
     const token = await login(MAKER);
     const before = await app.inject({
       method: 'GET',
@@ -232,7 +236,7 @@ describe('Firm directory import over HTTP', () => {
     });
     expect(before.headers['cache-control']).toBe('no-store');
 
-    await post('/firms/import', token, { csv: 'name\nJust Created\n', dryRun: false });
+    await post('/firms/import', token, { csv: 'name\nJust Created\n', dryRun: false, editionId });
     const list = await app.inject({
       method: 'GET',
       url: '/firms',

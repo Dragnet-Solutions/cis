@@ -21,6 +21,7 @@ import {
   EDITION_LOCK_ACTION,
   createNextEdition,
   nextEditionLabel,
+  followingEdition,
 } from '@cis/domain';
 import type { CriticalAction } from '@cis/shared-types';
 
@@ -228,7 +229,11 @@ export const editionRoutes: FastifyPluginAsyncZod = async (app) => {
       schema: {
         params: z.object({ id: z.string().uuid() }),
         response: {
-          200: z.object({ suggestedLabel: z.string(), draftExists: z.string().nullable() }),
+          200: z.object({
+            suggestedLabel: z.string(),
+            draftExists: z.string().nullable(),
+            nextExists: z.string().nullable(),
+          }),
         },
       },
     },
@@ -236,10 +241,14 @@ export const editionRoutes: FastifyPluginAsyncZod = async (app) => {
       const pool = getPool();
       const edition = await getEditionById(pool, request.params.id);
       if (!edition) return not(reply, 404, 'Not Found', 'Edition not found');
-      const draft = (await listEditions(pool)).find((e) => e.status === 'draft');
+      const editions = await listEditions(pool);
+      const draft = editions.find((e) => e.status === 'draft');
+      // An edition that already follows this one, whatever its status (QA E03).
+      const next = followingEdition(editions, edition);
       return reply.send({
         suggestedLabel: nextEditionLabel(edition.label),
         draftExists: draft ? draft.label : null,
+        nextExists: next ? next.label : null,
       });
     },
   );
