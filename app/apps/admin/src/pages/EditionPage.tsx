@@ -109,6 +109,7 @@ export function EditionPage({
   const [nextHint, setNextHint] = useState<{
     suggestedLabel: string;
     draftExists: string | null;
+    nextExists: string | null;
   } | null>(null);
   const [nextLabel, setNextLabel] = useState('');
   const [nextConfirm, setNextConfirm] = useState(false);
@@ -456,6 +457,11 @@ export function EditionPage({
               <p>
                 This is the draft edition. Another can be started from here once this one has
                 opened.
+              </p>
+            ) : nextHint.nextExists ? (
+              <p>
+                The {nextHint.nextExists} edition already follows this one. Switch to it in the
+                header; a further edition is started from there.
               </p>
             ) : nextHint.draftExists ? (
               <p>

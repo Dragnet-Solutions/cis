@@ -24,21 +24,24 @@ import { DragnetPage } from './pages/DragnetPage';
 import { MailPage } from './pages/MailPage';
 import { AuditPage } from './pages/AuditPage';
 import {
-  TAB_PHASES,
+  tabDisabledReason,
   pickCurrentEdition,
   surveysRestricted,
   editionOptionLabel,
+  tabFromLocation,
+  tabUrl,
   type Tab,
 } from './editionNav';
 import { STUDY_NAME } from '@cis/survey';
 import { BrandLockup } from './components/BrandLockup';
 
 /** A link into operations may name its page (`/?tab=national`), e.g. from an
- *  approval email; anything else opens the edition page. */
+ *  approval email, and a reload keeps the page it was on. */
 function initialTab(): Tab {
-  const asked = new URLSearchParams(window.location.search).get('tab');
-  return asked && asked in TAB_PHASES ? (asked as Tab) : 'edition';
+  return tabFromLocation(window.location.pathname, window.location.search);
 }
+
+const currentAddress = (): string => `${window.location.pathname}${window.location.search}`;
 
 /** One nav-bar tab: disabled (not hidden) when not relevant in the current
  *  edition phase, per UX-OPS-001's phase-awareness rule. */
@@ -55,14 +58,14 @@ function NavTab({
   setTab: (t: Tab) => void;
   children: ReactNode;
 }): JSX.Element {
-  const relevant = TAB_PHASES[tabKey].includes(phase);
+  const reason = tabDisabledReason(tabKey, phase);
   return (
     <button
       type="button"
-      disabled={!relevant}
+      disabled={reason !== null}
       onClick={() => setTab(tabKey)}
       style={tab === tabKey ? { color: 'var(--dragnet-black)' } : undefined}
-      title={relevant ? undefined : 'Not relevant in this edition phase'}
+      title={reason ?? undefined}
     >
       {children}
     </button>
@@ -88,7 +91,20 @@ export function App(): JSX.Element {
   const [editions, setEditions] = useState<EditionSummary[]>([]);
   const chosenRef = useRef<string | null>(null);
   const [phase, setPhase] = useState<EditionPhase>('before_launch');
-  const [tab, setTab] = useState<Tab>(initialTab);
+  const [tab, setTabState] = useState<Tab>(initialTab);
+  // The address bar follows the page, so a reload or a copied link opens the
+  // same page again, and Back/Forward move between pages.
+  const setTab = useCallback((next: Tab) => {
+    setTabState(next);
+    if (currentAddress() !== tabUrl(next)) window.history.pushState(null, '', tabUrl(next));
+  }, []);
+  useEffect(() => {
+    const here = tabUrl(initialTab());
+    if (currentAddress() !== here) window.history.replaceState(null, '', here);
+    const onPop = () => setTabState(initialTab());
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [serviceDown, setServiceDown] = useState(false);
 

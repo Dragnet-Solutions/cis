@@ -150,6 +150,16 @@ export function readPortalEntry(search: string): {
   return { claimOrgId: clean(params.get('claim')), inviteToken: clean(params.get('invite')) };
 }
 
+/** An emailed invitation link opens the invitation, never a sign-in this
+ *  browser kept from before (QA item 13): that session belongs to whoever used
+ *  the browser last, perhaps another firm, and must not take over the link. */
+export function entryReplacesStoredSession(entry: { inviteToken: string | null }): boolean {
+  return entry.inviteToken !== null;
+}
+
+/** Shown on the sign-in screen when a kept sign-in is no longer accepted. */
+export const PORTAL_SESSION_ENDED_NOTE = 'Your sign-in has ended. Please sign in again.';
+
 /** A friendly heading for an invitation link that cannot be used, by its code. */
 export function invitationProblemTitle(code: string | null): string {
   switch (code) {

@@ -17,6 +17,17 @@ function read(): PortalSession | null {
   }
 }
 
+/** Forget any stored sign-in. An emailed invitation link calls this before the
+ *  portal opens: whatever session this browser kept (another firm, an earlier
+ *  test) is not the person following the link (QA item 13). */
+export function clearStoredPortalSession(): void {
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 /** A coordinator's own session — stored separately from the operator admin
  *  session (see apps/admin/src/auth/useSession.ts), never sharing a storage
  *  key or a token, matching the distinct claim spaces the API enforces. */
@@ -37,11 +48,7 @@ export function usePortalSession(): {
   }, []);
 
   const signOut = useCallback(() => {
-    try {
-      localStorage.removeItem(STORAGE_KEY);
-    } catch {
-      // ignore
-    }
+    clearStoredPortalSession();
     setSession(null);
   }, []);
 

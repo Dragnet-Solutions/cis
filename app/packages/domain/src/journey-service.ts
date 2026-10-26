@@ -19,6 +19,7 @@ import {
   listEmailsFor,
   isRespondentLinkInvalidated,
   listInstrumentDefinitions,
+  setReportDelivery,
 } from '@cis/db';
 import {
   applyScopeGate,
@@ -215,6 +216,40 @@ export interface ContactInput {
  * field is only ever stored once consent is accepted. Returns the respondent
  * with a recovery token minted.
  */
+/**
+ * Change how a respondent gets the final report (UX-RET-008) — answers
+ * untouched. A report by email needs a usable address and one by text a usable
+ * number: given here, or already on file from the contact step. "none" needs
+ * nothing (QA E14: a delivery choice with no way to deliver was accepted).
+ */
+export async function changeReportDelivery(
+  pool: Pool,
+  respondentId: string,
+  input: { reportDelivery: string; email?: string | null; phone?: string | null },
+): Promise<Respondent> {
+  const respondent = await getRespondentById(pool, respondentId);
+  if (!respondent) throw new DomainError('Respondent not found', 'RESPONDENT_NOT_FOUND');
+  const channel = input.reportDelivery;
+  if (!['email', 'text', 'both', 'none'].includes(channel)) {
+    throw new ResponseScopeError('Choose email, text message or no report');
+  }
+  const email = input.email?.trim() || null;
+  const phone = input.phone?.trim() || null;
+  if (email !== null && !emailOk(email)) {
+    throw new ResponseScopeError('Enter a valid email address');
+  }
+  if (phone !== null && !phoneOk(phone)) {
+    throw new ResponseScopeError('Enter a valid mobile number');
+  }
+  if ((channel === 'email' || channel === 'both') && !(email ?? respondent.contactEmail)) {
+    throw new ResponseScopeError('Enter the email address the report should go to');
+  }
+  if ((channel === 'text' || channel === 'both') && !(phone ?? respondent.contactPhone)) {
+    throw new ResponseScopeError('Enter the mobile number the report should go to');
+  }
+  return setReportDelivery(pool, respondentId, { reportDelivery: channel, email, phone });
+}
+
 export async function registerContact(
   pool: Pool,
   respondentId: string,

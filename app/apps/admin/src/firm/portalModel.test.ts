@@ -17,8 +17,24 @@ import {
   replacementCost,
   readPortalEntry,
   invitationProblemTitle,
+  entryReplacesStoredSession,
+  PORTAL_SESSION_ENDED_NOTE,
   type PortalView,
 } from './portalModel';
+
+describe('QA item 13 — a kept sign-in never takes over an invitation link', () => {
+  it('an invitation link replaces whatever sign-in the browser kept', () => {
+    expect(entryReplacesStoredSession(readPortalEntry('?invite=abc'))).toBe(true);
+  });
+  it('a plain visit, or an old claim link, keeps the sign-in', () => {
+    expect(entryReplacesStoredSession(readPortalEntry(''))).toBe(false);
+    expect(entryReplacesStoredSession(readPortalEntry('?claim=org-1'))).toBe(false);
+  });
+  it('a refused sign-in is described as such, not as an expired continuation link', () => {
+    expect(PORTAL_SESSION_ENDED_NOTE).toMatch(/sign-in has ended/);
+    expect(PORTAL_SESSION_ENDED_NOTE).not.toMatch(/continuation/i);
+  });
+});
 
 describe('§2c — no access_model view', () => {
   it('access_model is not a real view', () => {

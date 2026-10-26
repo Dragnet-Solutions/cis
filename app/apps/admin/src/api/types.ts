@@ -536,6 +536,9 @@ export interface MailStatus {
   oldestQueuedAt: string | null;
   recentFailures: Array<{ kind: string; to: string; error: string | null; at: string }>;
   recentLogged: number;
+  /** Why "recorded, not sent" notices were held back (last 7 days). */
+  loggedByReason: { testAddress: number; noMailService: number };
+  recentHeld: Array<{ kind: string; to: string; reason: string; at: string }>;
 }
 
 export interface MailTestResult {

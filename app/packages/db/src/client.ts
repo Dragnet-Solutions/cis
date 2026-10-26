@@ -2,6 +2,25 @@ import { Pool, PoolClient, PoolConfig, QueryResult, QueryResultRow } from 'pg';
 
 let _pool: Pool | null = null;
 
+const envInt = (name: string, fallback: number): number => {
+  const n = Number(process.env[name]);
+  return Number.isInteger(n) && n > 0 ? n : fallback;
+};
+
+/**
+ * True when a query could not get a database connection in time: every pooled
+ * connection was busy for the whole wait (a burst of requests), or the
+ * database did not answer the connect. The API reports it as "busy, try
+ * again" (503), not as an internal error.
+ */
+export function isPoolBusyError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : '';
+  return (
+    message === 'timeout exceeded when trying to connect' ||
+    message.startsWith('Connection terminated due to connection timeout')
+  );
+}
+
 export function initializePool(config?: PoolConfig): Pool {
   if (_pool) return _pool;
   const connectionString = process.env['DATABASE_URL'];
@@ -10,9 +29,12 @@ export function initializePool(config?: PoolConfig): Pool {
   }
   _pool = new Pool({
     connectionString,
-    max: 20,
+    max: envInt('DB_POOL_MAX', 20),
     idleTimeoutMillis: 30_000,
-    connectionTimeoutMillis: 5_000,
+    // How long a request waits for a free connection. A burst (81 invitations
+    // resent at once against the remote database) queues well past 5 s, so a
+    // short wait turned an ordinary queue into failures (E02).
+    connectionTimeoutMillis: envInt('DB_POOL_WAIT_MS', 30_000),
     ...config,
   });
   _pool.on('error', (err) => {

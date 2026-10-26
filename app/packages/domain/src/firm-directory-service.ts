@@ -9,6 +9,7 @@ import {
 import { requirePermission, type RbacContext } from '@cis/auth';
 import { writeAudit } from '@cis/audit';
 import { FirmTeamError } from './firm-team-service';
+import { assertCollectionOpen } from './journey-service';
 import { EDITION_MANAGE_PERMISSION, type ActorContext } from './edition-service';
 
 /**
@@ -221,14 +222,24 @@ export async function importFirmDirectory(
   requirePermission(rbac, EDITION_MANAGE_PERMISSION);
   const plan = await planFirmImport(pool, csv);
 
-  // Importing a firm also enrols it in the edition being set up, so it appears
-  // in the surveys — but only while that edition can still take participants.
+  // Importing a firm enrols it in the edition being set up, so it appears in
+  // the surveys. A firm in the directory but in no edition is invisible to its
+  // own clients (QA E01), so a real import must name the edition, and once that
+  // edition's collection has ended the import is refused outright, as the
+  // journeys are (QA #2) — never "added, but not enrolled".
+  if (!options.dryRun && !options.editionId) {
+    throw new FirmTeamError(
+      'Choose the edition the firms take part in: an import must name its edition, or the firms would not appear in its surveys.',
+      'IMPORT_EDITION_REQUIRED',
+    );
+  }
   const edition = options.editionId ? await getEditionById(pool, options.editionId) : null;
-  const enrolling = !!edition && (edition.status === 'draft' || edition.status === 'open');
-  const enrolmentNote =
-    options.editionId && !enrolling
-      ? 'The edition is no longer collecting, so the firms were not enrolled in it.'
-      : null;
+  if (options.editionId && !edition) {
+    throw new FirmTeamError('That edition was not found', 'EDITION_NOT_FOUND');
+  }
+  if (edition) await assertCollectionOpen(pool, edition.id);
+  const enrolling = !!edition;
+  const enrolmentNote = null;
   if (options.dryRun) {
     return {
       ...plan,

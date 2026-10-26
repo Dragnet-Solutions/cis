@@ -65,6 +65,8 @@ export function NationalReportPage({
   });
   const [counted, setCounted] = useState<Record<string, { counted: number; floor: number }>>({});
   const [regulatorsEngaged, setRegulatorsEngaged] = useState(0);
+  // Every market institution taking part, counted once (D-22) — not a fixed three.
+  const [regulatorsTotal, setRegulatorsTotal] = useState<number | null>(null);
   const [approveReason, setApproveReason] = useState('');
   // The approval request waiting for a second person, and whether the viewer
   // opened the draft themselves — the approver must have.
@@ -155,6 +157,7 @@ export function NationalReportPage({
           r.regulators.filter((x) => x.status === 'confirmed').map((x) => x.institutionId),
         );
         setRegulatorsEngaged(engaged.size);
+        setRegulatorsTotal(new Set(r.regulators.map((x) => x.institutionId)).size);
       })
       .catch(() => {
         /* non-fatal — the generation form still works with a manually entered count */
@@ -258,12 +261,15 @@ export function NationalReportPage({
               </div>
             ))}
             <div className="field" style={{ maxWidth: 200 }}>
-              <label htmlFor="regEngaged">Regulators engaged (of 3)</label>
+              <label htmlFor="regEngaged">
+                Market institutions engaged
+                {regulatorsTotal !== null ? ` (of ${regulatorsTotal})` : ''}
+              </label>
               <input
                 id="regEngaged"
                 type="number"
                 min={0}
-                max={3}
+                {...(regulatorsTotal !== null ? { max: regulatorsTotal } : {})}
                 value={regulatorsEngaged}
                 onChange={(e) => setRegulatorsEngaged(parseInt(e.target.value, 10) || 0)}
               />

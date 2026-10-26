@@ -49,6 +49,7 @@ import {
   getNationalReview,
   decideFinding,
   NATIONAL_SECTIONS,
+  listRegulators,
   type SufficiencyContext,
   type ReleaseOptions,
   type ReleaseResult,
@@ -80,7 +81,7 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
           scoringRunId: z.string().uuid(),
           context: z.object({
             segments: z.record(z.string(), segment),
-            regulatorsEngaged: z.number().int().min(0).max(3),
+            regulatorsEngaged: z.number().int().min(0).max(100),
           }),
         }),
       },
@@ -90,10 +91,19 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
       // taken from the request: a section is not "publishable" if it shows nothing.
       const pool = getPool();
       const withheld = withheldSections(await buildIndustryReportContent(pool, request.params.id));
+      // How many market institutions the module needs is read from the edition
+      // (every one taking part, counted once — D-22), never from the request.
+      const regulatorsRequired = new Set(
+        (await listRegulators(pool, request.params.id)).map((r) => r.institutionId),
+      ).size;
       const { report, sections } = await generateNationalReport(pool, {
         editionId: request.params.id,
         scoringRunId: request.body.scoringRunId,
-        context: { ...(request.body.context as SufficiencyContext), withheld },
+        context: {
+          ...(request.body.context as SufficiencyContext),
+          regulatorsRequired,
+          withheld,
+        },
       });
       return reply.status(201).send({ reportId: report.id, sections });
     },
