@@ -45,7 +45,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: landing
-          image: dragnet.azurecr.io/cis-landing:latest
+          image: dragnet.azurecr.io/cis-landing:e70917905ce3e95428daf83bad509cb0d55ba2ef
           imagePullPolicy: Always
           ports:
             - name: http
