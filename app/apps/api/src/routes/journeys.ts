@@ -12,6 +12,7 @@ import {
 import {
   startJourney,
   registerContact,
+  changeReportDelivery,
   setRatedFirms,
   saveAnswer,
   getResume,
@@ -26,7 +27,7 @@ import {
 } from '@cis/domain';
 import { kickMailDispatcher } from '../mail/dispatcher';
 import { publicOrigin } from '../public-url';
-import { getRespondentByRecoveryToken, isRevokedRecoveryToken, setReportDelivery } from '@cis/db';
+import { getRespondentByRecoveryToken, isRevokedRecoveryToken } from '@cis/db';
 import type { AnswerValue } from '@cis/survey';
 
 const not = (reply: FastifyReply, code: number, error: string, message: string) =>
@@ -314,7 +315,7 @@ export const journeyRoutes: FastifyPluginAsyncZod = async (app) => {
       },
     },
     async (request, reply) => {
-      const r = await setReportDelivery(getPool(), request.params.respondentId, {
+      const r = await changeReportDelivery(getPool(), request.params.respondentId, {
         reportDelivery: request.body.reportDelivery,
         email: request.body.email ?? null,
         phone: request.body.phone ?? null,

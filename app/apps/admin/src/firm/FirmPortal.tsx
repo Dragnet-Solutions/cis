@@ -1399,8 +1399,9 @@ function SeatRow({
       ) : seat.state !== 'empty' ? (
         <div className="ardone">
           <div>
-            <span className="name">{seat.assignedName}</span>
-            <br />
+            {/* The space keeps name and email apart when the text is copied or
+                read aloud; the line break alone adds no text (QA E04). */}
+            <span className="name">{seat.assignedName}</span> <br />
             <span className="mail">{seat.assignedEmail}</span>
             <span className="statemsg">
               {seat.state === 'complete'
