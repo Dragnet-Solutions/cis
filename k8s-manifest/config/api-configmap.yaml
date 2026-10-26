@@ -31,6 +31,8 @@ data:
   RATE_LIMIT_AUTH_WINDOW_MS: "900000"
   # "Forgot password?" requests per address per window (also capped per account).
   RATE_LIMIT_RESET_MAX: "5"
+  # Dev only: respondent robot's public IP. Remove after the run.
+  RATE_LIMIT_ALLOWLIST: "105.113.78.141"
 
   # ── Report PDFs & links ──────────────────────────────────────────────────
   # REPORT_RENDER_URL: where the API's headless Chromium opens the print pages.
