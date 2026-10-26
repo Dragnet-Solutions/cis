@@ -1,0 +1,7 @@
+# The CIS-Dragnet Benchmark Study. All search engines and AI assistants are welcome.
+User-agent: *
+Allow: /
+Disallow: /survey
+Disallow: /firm
+
+Sitemap: https://cisdragnetstudy.com/sitemap.xml

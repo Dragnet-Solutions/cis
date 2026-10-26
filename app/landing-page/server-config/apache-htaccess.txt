@@ -1,0 +1,37 @@
+# The CIS-Dragnet Benchmark Study landing page: Apache version.
+# Use this ONLY if the server is Apache instead of nginx.
+# Rename this file to .htaccess and place it next to index.html.
+# Nothing needs editing for the marketing launch.
+
+RewriteEngine On
+RewriteCond %{HTTPS} off [OR]
+RewriteCond %{HTTP_HOST} ^www\. [NC]
+RewriteRule ^ https://cisdragnetstudy.com%{REQUEST_URI} [L,R=301]
+
+# PLATFORM LINKS: switched off for the marketing launch.
+# When the platform goes live, remove the "#" from the two lines below and put in the real addresses.
+# Redirect 302 /survey https://PLATFORM-SURVEY-ADDRESS
+# Redirect 302 /firm https://PLATFORM-FIRM-ADDRESS
+
+ErrorDocument 404 /404.html
+Options -Indexes
+
+<IfModule mod_headers.c>
+  Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+  Header always set Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self'; font-src 'self'; script-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'; upgrade-insecure-requests"
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-Frame-Options "DENY"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+  Header always set Permissions-Policy "camera=(), microphone=(), geolocation=()"
+</IfModule>
+
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType text/html "access plus 10 minutes"
+  ExpiresByType text/css "access plus 30 days"
+  ExpiresByType font/woff2 "access plus 30 days"
+  ExpiresByType image/png "access plus 30 days"
+  ExpiresByType image/webp "access plus 30 days"
+</IfModule>
+AddType application/manifest+json .webmanifest
+AddType font/woff2 .woff2
