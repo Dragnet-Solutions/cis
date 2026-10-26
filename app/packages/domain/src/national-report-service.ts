@@ -152,8 +152,14 @@ export function assertSectionId(id: string): asserts id is NationalReportSection
 export interface SufficiencyContext {
   /** Distinct-count vs floor per investor segment. */
   segments: Record<string, { meets: boolean; thin: boolean }>;
-  /** How many of the three regulators (SEC/NGX/CSCS) have engaged (0–3). */
+  /** How many market institutions have engaged (confirmed). */
   regulatorsEngaged: number;
+  /**
+   * How many market institutions take part in the edition — SEC, NGX, CSCS,
+   * LCFE, NASD and FMDQ today (D-22), counted by distinct institution. The
+   * route reads it from the edition; absent, the original three.
+   */
+  regulatorsRequired?: number;
   /**
    * Sections the report itself will withhold — no reportable figure (every
    * figure below the 10-response floor) or pending methodology approval — with
@@ -167,7 +173,8 @@ export interface SufficiencyContext {
  * Evaluate one section's sufficiency by ITS OWN rule. §2 caveats a thin segment
  * (still published, marked); §7 suppresses outright below floor (a comparison
  * against a below-floor segment reads as a finding about the segment, not the
- * sample); §10 requires all three regulators (two is not the module).
+ * sample); §10 requires every market institution taking part (part of the set
+ * is not the module).
  */
 export function evaluateSection(
   spec: SectionSpec,
@@ -212,14 +219,16 @@ function evaluateSectionRule(
           };
     }
     case 'requires_all_regulators': {
-      return ctx.regulatorsEngaged >= 3
+      const required = ctx.regulatorsRequired ?? 3;
+      return required > 0 && ctx.regulatorsEngaged >= required
         ? { disposition: 'publishable', reason: null }
         : {
             disposition: 'suppressed',
             reason:
-              `Institutional Perspectives needs all three regulators; ` +
-              `${ctx.regulatorsEngaged} of 3 engaged. Two of three is not the module — omitting ` +
-              `clearing and settlement would misrepresent it rather than shorten it.`,
+              `Institutional Perspectives needs every market institution taking part; ` +
+              `${ctx.regulatorsEngaged} of ${required} engaged. Part of the set is not the ` +
+              `module — omitting one (CSCS's clearing and settlement view, say) would ` +
+              `misrepresent it rather than shorten it.`,
           };
     }
     default:

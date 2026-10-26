@@ -730,12 +730,10 @@ function FirmDirectoryImport({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
-  const [notEnrolled, setNotEnrolled] = useState<string | null>(null);
 
   async function choose(file: File | undefined): Promise<void> {
     setPreview(null);
     setDone(null);
-    setNotEnrolled(null);
     setError(null);
     if (!file) return;
     setFileName(file.name);
@@ -766,13 +764,6 @@ function FirmDirectoryImport({
             : ''
         }`,
       );
-      // A firm only in the directory is missing from the surveys, invitations,
-      // seats and reports, which all list the edition's firms: say so plainly.
-      setNotEnrolled(
-        result.added > 0 && !(result.enrolled !== null && result.enrolled > 0)
-          ? `${result.enrolmentNote ?? 'No edition was selected, so the firms were not enrolled in one.'} They are in the directory but will not appear in the surveys, invitations or reports until they are enrolled — import the same file again once the edition is open.`
-          : null,
-      );
       setPreview(null);
       setCsv(null);
       await onImported();
@@ -798,10 +789,18 @@ function FirmDirectoryImport({
           id="ftp-import"
           type="file"
           accept=".csv,text/csv"
-          disabled={busy}
+          disabled={busy || !editionId}
           onChange={(e) => void choose(e.target.files?.[0])}
         />
       </div>
+      {/* An imported firm is enrolled in the edition, or its clients cannot pick it
+          (QA E01): with no edition chosen there is nothing to enrol it in. */}
+      {!editionId && (
+        <div className="warnbox">
+          Choose the edition in the header first. Imported firms are enrolled in that edition so
+          they appear in its surveys.
+        </div>
+      )}
 
       {preview && (
         <div className="note">
@@ -872,7 +871,6 @@ function FirmDirectoryImport({
         </div>
       )}
       {done && <p className="qstate ok">{done}</p>}
-      {notEnrolled && <div className="warnbox">{notEnrolled}</div>}
       {error && <div className="err">{error}</div>}
     </fieldset>
   );

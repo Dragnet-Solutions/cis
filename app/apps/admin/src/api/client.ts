@@ -136,7 +136,12 @@ export function login(email: string, password: string): Promise<LoginResponse> {
 export interface AdminClient {
   listEditions(): Promise<EditionSummary[]>;
   /** D-15: the suggested label for the next edition, and any draft in the way. */
-  getNextEditionHint(id: string): Promise<{ suggestedLabel: string; draftExists: string | null }>;
+  getNextEditionHint(id: string): Promise<{
+    suggestedLabel: string;
+    draftExists: string | null;
+    /** An edition that already follows this one, whatever its status. */
+    nextExists: string | null;
+  }>;
   /** D-15: create the next edition as a draft copy of this one's configuration. */
   createNextEdition(id: string, label: string): Promise<NextEditionCreated>;
   /** D-07: one page of the audit trail (query string from auditQueryString). */

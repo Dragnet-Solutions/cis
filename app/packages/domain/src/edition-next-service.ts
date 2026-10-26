@@ -75,6 +75,20 @@ export function nextEditionLabel(label: string): string {
   return m ? `${m[1]}${Number(m[2]) + 1}${m[3]}` : `${label.trim()} (next)`;
 }
 
+/**
+ * The edition that already follows `source`, if any: one created from it, or
+ * one already carrying the label its next edition would get. Any status — an
+ * open or locked next edition counts as much as a draft (QA E03).
+ */
+export function followingEdition(editions: readonly Edition[], source: Edition): Edition | null {
+  const suggested = nextEditionLabel(source.label).toLowerCase();
+  return (
+    editions.find((e) => e.id !== source.id && e.priorEditionId === source.id) ??
+    editions.find((e) => e.id !== source.id && e.label.toLowerCase() === suggested) ??
+    null
+  );
+}
+
 function plusOneYear(d: Date | null): Date | null {
   if (!d) return null;
   const next = new Date(d.getTime());
@@ -108,6 +122,14 @@ export async function createNextEdition(
   }
   if (editions.some((e) => e.label.toLowerCase() === label.toLowerCase())) {
     throw new EditionStateError(`An edition called ${label} already exists`);
+  }
+  // Whatever its status — an open or locked next edition counts as much as a
+  // draft (QA E03).
+  const following = editions.find((e) => e.id !== source.id && e.priorEditionId === source.id);
+  if (following) {
+    throw new EditionStateError(
+      `The ${following.label} edition already follows ${source.label}. Start the next one from ${following.label} instead.`,
+    );
   }
 
   const result = await withTransaction(pool, async (client: PoolClient) => {

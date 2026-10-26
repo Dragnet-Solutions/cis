@@ -21,6 +21,7 @@ import {
   getOutreachLinkByToken,
   incrementOutreach,
   getEditionById,
+  getEditionStatus,
   listEditions,
   listOrganizations,
   insertInvitationRequest,
@@ -38,7 +39,7 @@ import { writeAudit } from '@cis/audit';
 import { DomainError } from './errors';
 import { assertUsableInvitation, FirmInvitationError } from './firm-invitation-service';
 import { createLeadCoordinator, setCoordinatorPin } from './firm-team-service';
-import { assertCollectionOpen, startJourney } from './journey-service';
+import { acceptsResponses, assertCollectionOpen, startJourney } from './journey-service';
 import { queueTemplate } from './email-content';
 import { editionForEmail, requestRef, seatSurveyName, studyDates } from './email-fields';
 import { firmPortalLink, firmSeatLink } from './notice-links';
@@ -501,6 +502,9 @@ export async function assignSeat(
   if (!emailOk(data.assignedEmail)) {
     throw new FirmPortalError('A valid email address is required', 'EMAIL_REQUIRED');
   }
+  // Once collection has ended the dataset is fixed: nobody new is given a survey
+  // (QA #2), exactly as no journey may start.
+  await assertCollectionOpen(pool, data.editionId);
   const email = data.assignedEmail.trim();
   const before = (await ensureSeats(pool, data.editionId, data.organizationId)).find(
     (s) => s.seatCode === data.seatCode,
@@ -609,6 +613,7 @@ export async function confirmSeatReplacement(
   organizationId: string,
   seatCode: string,
 ): Promise<SeatAssignment> {
+  await assertCollectionOpen(pool, editionId);
   return clearSeat(pool, editionId, organizationId, seatCode);
 }
 
@@ -639,6 +644,9 @@ export async function canInviteClients(
 ): Promise<{ allowed: boolean; reason: string | null; assignedCount: number }> {
   const seats = await ensureSeats(pool, editionId, organizationId);
   const assigned = seats.filter((s) => s.state !== 'empty').length;
+  if (!acceptsResponses(await getEditionStatus(pool, editionId))) {
+    return { allowed: false, reason: 'The study has closed.', assignedCount: assigned };
+  }
   if (assigned < seats.length) {
     return {
       allowed: false,

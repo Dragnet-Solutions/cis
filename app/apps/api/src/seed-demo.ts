@@ -415,7 +415,7 @@ async function main(): Promise<void> {
           local_institution: segment('local_institution'),
           foreign_institution: segment('foreign_institution'),
         },
-        regulatorsEngaged: Math.min(engaged, 3),
+        regulatorsEngaged: engaged,
       },
     },
   );
