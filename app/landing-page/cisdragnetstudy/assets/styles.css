@@ -1,4 +1,4 @@
-/* CIS - Dragnet Study · cisdragnetstudy.com */
+/* The CIS-Dragnet Benchmark Study · cisdragnetstudy.com */
 @font-face{font-family:'Archivo';font-style:normal;font-weight:400;font-display:swap;src:url(fonts/archivo-latin-400-normal.woff2) format('woff2')}
 @font-face{font-family:'Archivo';font-style:normal;font-weight:500;font-display:swap;src:url(fonts/archivo-latin-500-normal.woff2) format('woff2')}
 @font-face{font-family:'Archivo';font-style:normal;font-weight:600;font-display:swap;src:url(fonts/archivo-latin-600-normal.woff2) format('woff2')}
@@ -55,6 +55,7 @@ a:hover{color:var(--red-darker)}
 .hero .subtitle{margin:0 0 16px;font-size:24px;line-height:1.35;font-weight:500;max-width:680px}
 .hero .lede{margin:0 0 40px;max-width:620px;color:var(--muted-dark)}
 .actions{display:flex;flex-wrap:wrap;gap:12px}
+.hero .opens{margin:0;font-size:18px;font-weight:600;padding-left:16px;border-left:4px solid var(--red)}
 .hero .note{margin:20px 0 0;font-size:14px;color:var(--muted-dark)}
 .dates{flex:1 1 280px;min-width:0;margin:0;border-left:1px solid var(--line-dark)}
 .dates div{padding:22px 0 22px 28px;border-top:1px solid var(--line-dark)}
@@ -62,6 +63,7 @@ a:hover{color:var(--red-darker)}
 .dates div:last-child{padding-bottom:0}
 .dates dt{font-family:var(--mono);font-size:12px;letter-spacing:.08em;color:var(--muted-dark)}
 .dates dd{margin:4px 0 0;font-size:34px;font-weight:600;line-height:1.1}
+.dates dd.small{font-size:18px;font-weight:500;line-height:1.35}
 
 /* Sections */
 .section{padding-top:88px;padding-bottom:88px}
@@ -141,3 +143,4 @@ a:hover{color:var(--red-darker)}
   .site-header .nav,.actions,.skip{display:none}
   .hero,.site-footer{background:#fff;color:#000}
 }
+.nw{white-space:nowrap}

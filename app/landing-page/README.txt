@@ -1,4 +1,5 @@
-CIS - Dragnet Study: landing page
+The CIS-Dragnet Benchmark Study: landing page
+State of Stockbroking Operations and Investor Experience in Nigeria: A 2026 CIS-Dragnet Study
 Address: https://cisdragnetstudy.com
 =====================================================================
 
@@ -48,23 +49,18 @@ Apache (only if the server is Apache):
   Needs mod_rewrite, mod_headers and mod_expires switched on.
 
 
-STEP 4. The two button links  (IMPORTANT)
------------------------------------------
-The page buttons go to:
-  /survey   "Take the investor survey" and "Start the survey"
-  /firm     "Firm sign-in" and "Firm coordinator sign-in"
+STEP 4. Platform links are switched off  (IMPORTANT)
+----------------------------------------------------
+This version is a marketing information page only. It does not link
+to the survey platform. The survey and sign-in buttons are hidden in
+the HTML (inside comments), and the /survey and /firm forwarding lines
+in the server config are switched off with "#".
 
-The server sends these on to the survey platform. The platform
-addresses are NOT final yet, so the config has placeholders:
-  https://PLATFORM-SURVEY-ADDRESS
-  https://PLATFORM-FIRM-ADDRESS
-
-When the Product Owner gives you the real addresses, change ONLY those
-two lines (marked "CHANGE ME") in the server config, then reload the
-server. You do not need to edit any HTML.
-
-Until then, clicking those buttons will fail. Do not announce the
-site publicly before the two addresses are set.
+Do NOT switch them back on until the Product Owner says the platform
+is live and gives you the real addresses. Then:
+  1. In the server config, remove the "#" from the two lines under
+     "PLATFORM LINKS" and put in the real addresses.
+  2. The Product Owner will give you updated HTML with the buttons restored.
 
 
 STEP 5. Check it works
@@ -75,20 +71,13 @@ STEP 5. Check it works
   [ ] Both logos and the fonts show (headings are heavy and black)
   [ ] "How your information is handled" in the footer opens the privacy page
   [ ] https://cisdragnetstudy.com/anything-wrong shows the "Page not found" page
-  [ ] https://cisdragnetstudy.com/survey and /firm go to the platform
+  [ ] https://cisdragnetstudy.com/survey and /firm show "Page not found" (expected for now)
   [ ] https://cisdragnetstudy.com/robots.txt, /sitemap.xml and /llms.txt open
   [ ] Security headers: check at https://securityheaders.com (should be A or A+)
 
 After it is live, the Product Owner may submit
 https://cisdragnetstudy.com/sitemap.xml in Google Search Console and
 Bing Webmaster Tools.
-
-
-BEFORE PUBLIC LAUNCH: content still to confirm (not DevOps)
------------------------------------------------------------
-privacy.html has three items highlighted in yellow marked
-[TO BE CONFIRMED]. CIS and Dragnet must supply that wording; it is
-then a simple text edit in privacy.html.
 
 
 Help: support@cisdragnetstudy.com

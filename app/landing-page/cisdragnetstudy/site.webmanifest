@@ -1,6 +1,7 @@
 {
-  "name": "CIS - Dragnet Study",
-  "short_name": "CIS - Dragnet",
+  "name": "The CIS-Dragnet Benchmark Study",
+  "short_name": "CIS-Dragnet",
+  "description": "State of Stockbroking Operations and Investor Experience in Nigeria: A 2026 CIS-Dragnet Study",
   "start_url": "/",
   "display": "browser",
   "background_color": "#FFFFFF",

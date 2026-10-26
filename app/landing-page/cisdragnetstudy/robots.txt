@@ -1,4 +1,4 @@
-# CIS - Dragnet Study. All search engines and AI assistants are welcome.
+# The CIS-Dragnet Benchmark Study. All search engines and AI assistants are welcome.
 User-agent: *
 Allow: /
 Disallow: /survey
