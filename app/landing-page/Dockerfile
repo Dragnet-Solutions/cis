@@ -1,12 +1,12 @@
 # syntax=docker/dockerfile:1.7
 
-ARG ALPINE_IMAGE=alpine:3.22
-ARG NGINX_IMAGE=nginxinc/nginx-unprivileged:1.28-alpine
+# Base images are written out in FROM rather than as ARGs: hadolint does not
+# expand ARGs (DL3006), and literal tags are what Dependabot/Renovate update.
 
 # ──────────────────────────────────────────────────────────────────────────────
 # build
 # ──────────────────────────────────────────────────────────────────────────────
-FROM ${ALPINE_IMAGE} AS build
+FROM alpine:3.22 AS build
 WORKDIR /site
 COPY cisdragnetstudy/ ./
 RUN set -eux; \
@@ -19,7 +19,7 @@ RUN set -eux; \
 # ──────────────────────────────────────────────────────────────────────────────
 # landing — runtime.
 # ──────────────────────────────────────────────────────────────────────────────
-FROM ${NGINX_IMAGE} AS landing
+FROM nginxinc/nginx-unprivileged:1.28-alpine AS landing
 ARG GIT_COMMIT=""
 ARG BUILD_TIME=""
 LABEL org.opencontainers.image.title="cis-landing" \
