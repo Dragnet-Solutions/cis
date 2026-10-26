@@ -9,6 +9,7 @@ for ordering, secrets from Azure Key Vault via External Secrets — never a plai
 |---|---|
 | `api/` | `cis-api` Deployment (Fastify API + headless Chromium for PDF export, non-root uid 1000), Service, HPA, PDB, ServiceAccount, the one-shot `cis-db-migration` Job (`cis-api-migrate` image, `node-pg-migrate up`) and — **dev only** — the `cis-db-seed` Job (reference data + operator passwords) |
 | `admin/` | `cis-admin` Deployment (React SPA on unprivileged nginx, uid 101), Service, HPA, PDB, ServiceAccount, and the Ingress for the whole app |
+| `landing/` | `cis-landing` Deployment (the static cisdragnetstudy.com marketing site on unprivileged nginx, uid 101, from `app/landing-page/Dockerfile`), Service, HPA, PDB, ServiceAccount, and its own Ingress for `cisdragnetstudy.com` + `www` |
 | `redis/` | Dedicated in-cluster Redis StatefulSet (`cis-redis`, password-protected, 2Gi `managed-csi` volume) + headless and ClusterIP Services — not shared with any other app in the namespace |
 | `config/` | `cis-api-config` and `cis-admin-config` ConfigMaps (non-secret env) |
 | `eso/` | `ExternalSecret`s pulling from Azure Key Vault: the API's secrets into `cis-api-secrets`, and — **dev only** — the seeded operators' passwords into `cis-seed-secrets` (read only by the seed Job). The admin has no secrets |
@@ -20,6 +21,9 @@ ArgoCD's `Application` (see `../argocd`) applies this whole tree with `directory
 - **Browser → ingress → `cis-admin`** for everything. Its nginx serves the SPA (`/`, `/firm`,
   `/survey`, `/print/*`) and proxies `/api/*` to `cis-api` with the `/api` prefix stripped, so the
   browser sees a single origin (the API has no CORS).
+- **Browser → ingress → `cis-landing`** for `cisdragnetstudy.com` (and `www`, which the landing
+  image's nginx redirects to the apex). It is a separate static site: it talks to nothing else
+  in the cluster and nothing talks to it except the ingress.
 - **`cis-api` → `cis-admin`** for PDF export: the API's headless Chromium opens
   `REPORT_RENDER_URL` (`http://cis-admin`) `/print/*`, and that page calls `/api` back through
   `cis-admin`. The network policies allow both directions.
@@ -48,12 +52,19 @@ the nginx template.
 0. ServiceAccounts, ConfigMaps, ExternalSecret, NetworkPolicies
 1. Redis StatefulSet + Services
 2. DB migration Job (ArgoCD `Sync` hook — self-deletes and recreates every release), Services, PDBs
-3. `cis-api`, `cis-admin` Deployments; **dev only:** `cis-db-seed` Job (ArgoCD `Sync` hook, after the migration)
-4. HPAs, Ingress
+3. `cis-api`, `cis-admin`, `cis-landing` Deployments; **dev only:** `cis-db-seed` Job (ArgoCD `Sync` hook, after the migration)
+4. HPAs, Ingresses
 
 ## Before first sync (assumptions this makes)
 - **Images**: `dragnet.azurecr.io/cis-api`, `cis-api-migrate` (both from `app/apps/api/Dockerfile`,
-  targets `api` / `migrate`) and `cis-admin` (from `app/apps/admin/Dockerfile`).
+  targets `api` / `migrate`), `cis-admin` (from `app/apps/admin/Dockerfile`) and `cis-landing`
+  (from `app/landing-page/Dockerfile`).
+- **DNS for the landing page**: an `A` record for `cisdragnetstudy.com` → the ingress-nginx
+  controller's public IP (`kubectl -n ingress-nginx get svc`, the `LoadBalancer`'s
+  `EXTERNAL-IP`), and a `CNAME` for `www.cisdragnetstudy.com` → `cisdragnetstudy.com`. Both must
+  resolve before `landing/ingress.yaml` syncs, or cert-manager's HTTP-01 challenge for
+  `cis-landing-tls` fails. The `A` record pins that IP, so it must be a static public IP: if the
+  controller's Service is ever recreated with a dynamic one, the site goes dark.
 - **Namespace prerequisites**: the shared `dev` namespace must already have the baseline
   default-deny/DNS-egress/ingress-nginx NetworkPolicies and an `azure-keyvault-store`
   `SecretStore` — this app does not create them.
@@ -68,7 +79,7 @@ the nginx template.
   through ZeptoMail when it is set, otherwise falls back to `SMTP_URL`), and `cis-argocd-deploy-key` for ArgoCD's repo access.
 - **Postgres**: the first migration runs `CREATE EXTENSION pgcrypto` — allow-list `PGCRYPTO` in the
   Flexible Server's `azure.extensions` parameter first.
-- **CI/CD**: `.github/workflows/api-CI.yaml` and `admin-CI.yaml` build/scan/sign/push each image on
+- **CI/CD**: `.github/workflows/api-CI.yaml`, `admin-CI.yaml` and `landing-CI.yaml` build/scan/sign/push each image on
   every push to `dev` and pin the new SHA into these manifests on the `k8s-release` branch (the
   branch ArgoCD actually syncs from — see `../argocd/application.yaml`). Editing an `image:` line
   directly in this tree only matters as the un-pinned default on `dev`; the running cluster always

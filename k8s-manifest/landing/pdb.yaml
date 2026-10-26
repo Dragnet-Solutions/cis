@@ -1,0 +1,16 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cis-landing-pdb
+  namespace: dev
+  labels:
+    app.kubernetes.io/name: cis-landing
+    app.kubernetes.io/part-of: cis
+    app.kubernetes.io/component: landing
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cis-landing
