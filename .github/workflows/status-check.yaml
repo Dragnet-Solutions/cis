@@ -23,6 +23,7 @@ jobs:
     outputs:
       api: ${{ steps.filter.outputs.api }}
       admin: ${{ steps.filter.outputs.admin }}
+      landing: ${{ steps.filter.outputs.landing }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -51,6 +52,10 @@ jobs:
               - *workspace
               - 'app/apps/admin/**'
               - 'app/packages/survey/**'
+            # Self-contained: no part of the pnpm workspace.
+            landing:
+              - 'app/landing-page/**'
+              - '.github/workflows/status-check.yaml'
 
   api-scanning-and-testing:
     needs: detect-changes
@@ -185,12 +190,93 @@ jobs:
           path: ./
           extra_args: --only-verified --exclude-paths=.github/trufflehog-exclude.txt
 
+  landing-lint-and-test:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.landing == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./app/landing-page
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: app/landing-page/Dockerfile
+          failure-threshold: warning
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./app/landing-page
+          file: ./app/landing-page/Dockerfile
+          push: false
+          load: true
+          tags: cis-landing:test
+          cache-from: type=gha,scope=cis-landing
+
+      # Run the image the way the cluster does (non-root, read-only root
+      # filesystem) and check the site, headers and pre-compression.
+      - name: Smoke Test
+        run: |
+          docker run -d --name landing --read-only \
+            --tmpfs /tmp --tmpfs /var/cache/nginx \
+            -p 8080:8080 cis-landing:test
+
+          for i in $(seq 1 20); do
+            curl -fs http://localhost:8080/healthz > /dev/null && break
+            sleep 1
+          done
+
+          fail() { echo "::error::$1"; docker logs landing; exit 1; }
+          expect() {
+            code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:8080$1")
+            [ "$code" = "$2" ] || fail "$1 returned $code, expected $2"
+          }
+
+          expect /healthz 200
+          expect / 200
+          expect /privacy.html 200
+          expect /robots.txt 200
+          expect /sitemap.xml 200
+          expect /site.webmanifest 200
+          expect /assets/styles.css 200
+          expect /does-not-exist 404
+
+          headers=$(curl -sI http://localhost:8080/)
+          for h in content-security-policy strict-transport-security x-content-type-options x-frame-options; do
+            echo "$headers" | grep -qi "^$h:" || fail "/ is missing the $h header"
+          done
+          curl -sI -H 'Accept-Encoding: gzip' http://localhost:8080/ \
+            | grep -qi '^content-encoding: gzip' || fail "/ is not served gzip-compressed"
+
+          [ "$(docker exec landing id -u)" = "101" ] || fail "container is not running as uid 101"
+
+      - name: Stop Smoke Test Container
+        if: always()
+        run: docker rm -f landing || true
+
+      # Secret scanning (repo root — path must be the git checkout, not a subdirectory)
+      - name: Trufflehog Secret Scanning
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          extra_args: --only-verified --exclude-paths=.github/trufflehog-exclude.txt
+
   status-check:
     if: always()
     needs:
       - detect-changes
       - api-scanning-and-testing
       - admin-lint-and-build
+      - landing-lint-and-test
     runs-on: ubuntu-latest
     steps:
       - name: Require no failed or cancelled jobs

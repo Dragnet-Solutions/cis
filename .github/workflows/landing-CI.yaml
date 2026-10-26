@@ -1,0 +1,284 @@
+name: landing-ci
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - dev
+    paths:
+      - 'app/landing-page/**'
+      - '.github/workflows/landing-CI.yaml'
+
+permissions:
+  actions: read
+  contents: write
+  security-events: write
+  packages: write
+  id-token: write
+
+concurrency:
+  group: landing-ci
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: ./app/landing-page
+
+env:
+  ACR_NAME: dragnet
+  IMAGE_NAME: cis-landing
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: app/landing-page/Dockerfile
+          failure-threshold: warning
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./app/landing-page
+          file: ./app/landing-page/Dockerfile
+          push: false
+          load: true
+          tags: ${{ env.IMAGE_NAME }}:test
+          cache-from: type=gha,scope=${{ env.IMAGE_NAME }}
+          cache-to: type=gha,mode=max,scope=${{ env.IMAGE_NAME }}
+
+      - name: Smoke Test
+        run: |
+          docker run -d --name landing --read-only \
+            --tmpfs /tmp --tmpfs /var/cache/nginx \
+            -p 8080:8080 ${{ env.IMAGE_NAME }}:test
+
+          for i in $(seq 1 20); do
+            curl -fs http://localhost:8080/healthz > /dev/null && break
+            sleep 1
+          done
+
+          fail() { echo "::error::$1"; docker logs landing; exit 1; }
+          expect() {
+            code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:8080$1")
+            [ "$code" = "$2" ] || fail "$1 returned $code, expected $2"
+          }
+
+          expect /healthz 200
+          expect / 200
+          expect /privacy.html 200
+          expect /robots.txt 200
+          expect /sitemap.xml 200
+          expect /site.webmanifest 200
+          expect /assets/styles.css 200
+          expect /does-not-exist 404
+
+          headers=$(curl -sI http://localhost:8080/)
+          for h in content-security-policy strict-transport-security x-content-type-options x-frame-options; do
+            echo "$headers" | grep -qi "^$h:" || fail "/ is missing the $h header"
+          done
+          curl -sI -H 'Accept-Encoding: gzip' http://localhost:8080/ \
+            | grep -qi '^content-encoding: gzip' || fail "/ is not served gzip-compressed"
+
+          [ "$(docker exec landing id -u)" = "101" ] || fail "container is not running as uid 101"
+
+      - name: Stop Smoke Test Container
+        if: always()
+        run: docker rm -f landing || true
+
+      - name: Trufflehog Secret Scanning
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          extra_args: --only-verified --exclude-paths=.github/trufflehog-exclude.txt
+
+  build-and-scan-image:
+    if: github.ref == 'refs/heads/dev' && github.event_name == 'push'
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Record build time
+        id: build-meta
+        run: echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Build Docker Image
+        id: build-image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./app/landing-page
+          file: ./app/landing-page/Dockerfile
+          push: false
+          load: true
+          tags: ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ env.IMAGE_NAME }}
+          cache-to: type=gha,mode=max,scope=${{ env.IMAGE_NAME }}
+          build-args: |
+            GIT_COMMIT=${{ github.sha }}
+            BUILD_TIME=${{ steps.build-meta.outputs.build_time }}
+
+      - name: Scan Image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          format: 'table'
+          exit-code: '0'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'HIGH,CRITICAL'
+
+      - name: Log in to Azure Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.ACR_NAME }}.azurecr.io
+          username: ${{ secrets.AZURE_CLIENT_ID }}
+          password: ${{ secrets.AZURE_CLIENT_SECRET }}
+
+      - name: Push Docker Image to ACR
+        id: push-step
+        run: |
+          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} | cut -d'@' -f2)
+          echo "IMAGE_DIGEST=$DIGEST" >> $GITHUB_ENV
+
+      #Signing and Pushing Image to ACR
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign Docker Image
+        env:
+          IMAGE: ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}@${{ env.IMAGE_DIGEST }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          KEY_VAULT_NAME: ${{ vars.KEY_VAULT_NAME }}
+          KEY_NAME: ${{ vars.KEY_NAME }}
+        run: |
+          # Strip stray whitespace/CR-LF (e.g. a value pasted from Windows) —
+          # it would otherwise end up inside the Key Vault URL.
+          KEY_VAULT_NAME=$(printf '%s' "$KEY_VAULT_NAME" | tr -d '[:space:]')
+          KEY_NAME=$(printf '%s' "$KEY_NAME" | tr -d '[:space:]')
+          cosign sign --yes \
+            --key "azurekms://${KEY_VAULT_NAME}.vault.azure.net/${KEY_NAME}" \
+            ${IMAGE}
+
+  sync-manifests:
+    if: github.ref == 'refs/heads/dev' && github.event_name == 'push'
+    needs: build-and-scan-image
+    runs-on: ubuntu-latest
+    concurrency:
+      group: k8s-release-sync
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
+    steps:
+      - name: Checkout dev branch
+        uses: actions/checkout@v4
+        with:
+          ref: dev
+          path: dev-repo
+
+      - name: Checkout k8s-release branch
+        uses: actions/checkout@v4
+        with:
+          ref: k8s-release
+          path: release-repo
+
+      - name: Sync k8s-manifest and argocd directories from dev to release
+        run: |
+          # Preserve the image SHAs already pinned in k8s-release so that
+          # copying fresh :latest tags from dev does not overwrite them.
+          IMAGES="cis-api cis-api-migrate cis-admin cis-landing"
+          declare -A PINNED
+          for img in $IMAGES; do
+            PINNED[$img]=$(grep -rhoP "image: \K[^ ]*/${img}:[^ ]+" release-repo/k8s-manifest 2>/dev/null | head -n1 || true)
+          done
+
+          # Overwrite all structural content from dev
+          rm -rf release-repo/k8s-manifest/ release-repo/argocd/
+          cp -r dev-repo/k8s-manifest/ release-repo/k8s-manifest/
+          if [ -d dev-repo/argocd ]; then
+            cp -r dev-repo/argocd/ release-repo/argocd/
+          fi
+
+          # Restore each pinned SHA in every file that uses that image
+          for img in $IMAGES; do
+            pinned="${PINNED[$img]}"
+            [ -n "$pinned" ] || continue
+            files=$(grep -rlE "image: [^ ]*/${img}:" release-repo/k8s-manifest || true)
+            [ -n "$files" ] || continue
+            sed -i -E "s|image: [^ ]*/${img}:[^ ]*|image: ${pinned}|g" $files
+          done
+
+      - name: Commit and push synchronized manifests
+        run: |
+          cd release-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A .
+
+          if git diff --cached --quiet; then
+            echo "No manifest changes to sync from dev branch."
+          else
+            git commit -m "chore: sync k8s-manifest from dev branch"
+            git pull origin k8s-release --rebase
+            git push origin k8s-release
+          fi
+
+  update-k8s-manifest:
+    if: github.ref == 'refs/heads/dev' && github.event_name == 'push'
+    needs: sync-manifests
+    runs-on: ubuntu-latest
+    concurrency:
+      group: k8s-release-sync
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: ./
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: k8s-release
+          fetch-depth: 0
+
+      - name: Pin landing image SHA in k8s manifests
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git pull origin k8s-release
+
+          img="${{ env.IMAGE_NAME }}"
+          files=$(grep -rlE "image: [^ ]*/${img}:" k8s-manifest 2>/dev/null || true)
+          if [ -z "$files" ]; then
+            echo "::warning::No manifest under k8s-manifest/ references ${{ env.ACR_NAME }}.azurecr.io/${img} — skipping. Add one to enable propagation."
+            exit 0
+          fi
+
+          NEW_IMAGE="${{ env.ACR_NAME }}.azurecr.io/${img}:${{ github.sha }}"
+          sed -i -E "s|image: [^ ]*/${img}:[^ ]*|image: ${NEW_IMAGE}|g" $files
+          git add $files
+
+          if git diff --cached --quiet; then
+            echo "No manifest changes to commit."
+          else
+            git commit -m "chore: update landing image to ${{ github.sha }}"
+            git push origin k8s-release
+          fi

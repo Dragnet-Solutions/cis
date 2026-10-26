@@ -5,7 +5,8 @@
 #   default-deny-all, allow-dns-egress, allow-acme-solver-ingress, observability policies.
 #
 # Traffic paths:
-#   ingress-nginx → cis-admin:8080          (all browser traffic)
+#   ingress-nginx → cis-admin:8080          (all browser traffic to the app)
+#   ingress-nginx → cis-landing:8080        (cisdragnetstudy.com, static site)
 #   cis-admin     → cis-api:3000            (nginx proxies /api/*)
 #   cis-api       → cis-admin:8080          (headless Chromium opens /print/* for PDFs)
 #   cis-api       → cis-redis:6379          (dedicated in-cluster Redis)
@@ -185,6 +186,36 @@ spec:
         - port: 465
           protocol: TCP
         - port: 587
+          protocol: TCP
+
+---
+# Allow ingress-nginx → cis-landing (port 8080). The landing page is a static
+# site: it has no egress policy because it needs none beyond the baseline DNS.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-cis-landing-ingress
+  namespace: dev
+  labels:
+    app.kubernetes.io/part-of: cis
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: cis-landing
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - port: 8080
           protocol: TCP
 
 ---

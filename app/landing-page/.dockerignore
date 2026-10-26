@@ -1,0 +1,7 @@
+# Allow-list: the image needs only the site and its nginx config.
+*
+!cisdragnetstudy/
+!nginx/
+
+# Never ship hidden files from the site folder.
+cisdragnetstudy/**/.*

@@ -1,0 +1,48 @@
+# cisdragnetstudy.com and www. DNS:
+#   cisdragnetstudy.com      A      → the ingress-nginx controller's static public IP
+#   www.cisdragnetstudy.com  CNAME  → cisdragnetstudy.com
+# Both must resolve before the first sync, or cert-manager's HTTP-01 challenge
+# for cis-landing-tls (one certificate, both names) fails.
+# The www → apex redirect and every security header (CSP included) come from
+# the image's own nginx config; do not add a CSP here (see ../README.md).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cis-landing-ingress
+  namespace: dev
+  labels:
+    app.kubernetes.io/name: cis-landing
+    app.kubernetes.io/part-of: cis
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # Static pages only: no uploads, no forms.
+    nginx.ingress.kubernetes.io/proxy-body-size: "1m"
+spec:
+  tls:
+    - hosts:
+        - cisdragnetstudy.com
+        - www.cisdragnetstudy.com
+      secretName: cis-landing-tls
+  rules:
+    - host: cisdragnetstudy.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: cis-landing
+                port:
+                  number: 80
+    - host: www.cisdragnetstudy.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: cis-landing
+                port:
+                  number: 80

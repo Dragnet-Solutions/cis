@@ -61,7 +61,7 @@ jobs:
           # Preserve the image SHAs already pinned in k8s-release — this
           # workflow never builds an image, so copying dev's un-pinned
           # :latest references must not roll a running image back.
-          IMAGES="cis-api cis-api-migrate cis-admin"
+          IMAGES="cis-api cis-api-migrate cis-admin cis-landing"
           declare -A PINNED
           for img in $IMAGES; do
             PINNED[$img]=$(grep -rhoP "image: \K[^ ]*/${img}:[^ ]+" release-repo/k8s-manifest 2>/dev/null | head -n1 || true)
