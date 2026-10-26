@@ -188,6 +188,13 @@ export function MailPage({ client }: { client: AdminClient }): JSX.Element {
         Accepted means the mail service took the message. ZeptoMail does not confirm that it reached
         the inbox — only a bounce is reported back.
       </p>
+      {o.logged > 0 && (
+        <p className="muted" style={{ fontSize: 13 }}>
+          Recorded, not sent: {status.loggedByReason.testAddress} to test addresses (.example, .test
+          and similar reserved domains are never emailed, by design — for example the demo operator
+          accounts), {status.loggedByReason.noMailService} because no mail service was configured.
+        </p>
+      )}
 
       <h2 style={{ marginTop: 22 }}>Recent failures</h2>
       {status.recentFailures.length === 0 ? (
@@ -215,6 +222,34 @@ export function MailPage({ client }: { client: AdminClient }): JSX.Element {
             </tbody>
           </table>
         </div>
+      )}
+
+      {status.recentHeld.length > 0 && (
+        <>
+          <h2 style={{ marginTop: 22 }}>Recently recorded, not sent</h2>
+          <div className="tablewrap">
+            <table className="ftbl">
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>To</th>
+                  <th>Email</th>
+                  <th>Why it was not sent</th>
+                </tr>
+              </thead>
+              <tbody>
+                {status.recentHeld.map((h, i) => (
+                  <tr key={`${h.at}-${i}`}>
+                    <td>{fmt(h.at)}</td>
+                    <td>{h.to}</td>
+                    <td>{h.kind}</td>
+                    <td>{h.reason}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
 
       <section className="stage" style={{ marginTop: 22 }}>

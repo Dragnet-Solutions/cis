@@ -11,7 +11,11 @@ import { initializePool, getPool, queueEmail, markEmailFailed } from '@cis/db';
 import { hashPassword } from '@cis/auth';
 import { seedReferenceData, addPerson } from '@cis/domain';
 import { buildServer } from '../src/server';
-import { setMailTransportForTests, resetMailTransportForTests } from '../src/mail/mailer';
+import {
+  deliverQueuedEmails,
+  setMailTransportForTests,
+  resetMailTransportForTests,
+} from '../src/mail/mailer';
 import { MailSendError, type MailMessage, type MailTransport } from '../src/mail/transport';
 import { maskAddress } from '../src/routes/mail';
 import {
@@ -143,6 +147,48 @@ describe('GET /mail/status', () => {
         at: expect.any(String),
       },
     ]);
+  });
+
+  it('says why each "recorded, not sent" email was held back (exception #7)', async () => {
+    // A governance notice to a demo operator at a reserved test domain, and a
+    // real recipient: the first is held back by design, the second is sent.
+    const pool = getPool();
+    for (const to of ['segun.oyegbesan@dragnet.example', 'md@realfirm.com']) {
+      await queueEmail(pool, {
+        kind: 'signoff-requested',
+        refId: null,
+        toAddress: to,
+        subject: 's',
+        bodyText: 'b',
+      });
+    }
+    const quiet = { info: () => {}, warn: () => {} };
+    await deliverQueuedEmails(pool, quiet, {
+      transport: fakeTransport(() => ({ messageId: 'm-1' })),
+    });
+    // One more with no mail service configured at all.
+    await queueEmail(pool, {
+      kind: 'x',
+      refId: null,
+      toAddress: 'q@realfirm.com',
+      subject: 's',
+      bodyText: 'b',
+    });
+    await deliverQueuedEmails(pool, quiet, { transport: null });
+
+    const token = await login('adaeze.okoro@cis.example');
+    const body = (
+      await app.inject({ method: 'GET', url: '/mail/status', headers: auth(token) })
+    ).json();
+    expect(body.outbox).toMatchObject({ sent: 1, logged: 2 });
+    expect(body.loggedByReason).toEqual({ testAddress: 1, noMailService: 1 });
+    const reasons = body.recentHeld.map((h: { to: string; reason: string }) => [h.to, h.reason]);
+    expect(reasons).toEqual(
+      expect.arrayContaining([
+        ['se***@dragnet.example', expect.stringMatching(/^Test address/)],
+        ['q***@realfirm.com', expect.stringMatching(/^No mail service/)],
+      ]),
+    );
   });
 
   it('requires a session', async () => {
