@@ -1,4 +1,11 @@
-export { initializePool, getPool, closePool, query, withTransaction } from './client';
+export {
+  initializePool,
+  getPool,
+  closePool,
+  query,
+  withTransaction,
+  isPoolBusyError,
+} from './client';
 export type { Pool, PoolClient, PoolConfig } from './client';
 
 export * from './queries/editions';
