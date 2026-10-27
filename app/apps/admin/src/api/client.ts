@@ -367,7 +367,11 @@ export interface AdminClient {
   }>;
   removeCoordinator(orgId: string, coordinatorId: string): Promise<{ removed: boolean }>;
   // Firm invitations — an emailed personal link to set up the firm's space.
-  listFirmInvitations(orgId: string): Promise<{ invitations: FirmInvitation[]; claimed: boolean }>;
+  /** A firm's invitations — only this edition's when `editionId` is given (NEW-1). */
+  listFirmInvitations(
+    orgId: string,
+    editionId?: string | null,
+  ): Promise<{ invitations: FirmInvitation[]; claimed: boolean }>;
   listEditionFirmInvitations(editionId: string): Promise<{ invitations: FirmInvitation[] }>;
   inviteFirm(
     orgId: string,
@@ -720,7 +724,11 @@ export function createClient(token: string | null, hooks: SessionHooks = {}): Ad
       request(`/firms/${orgId}/coordinators/handover`, { method: 'POST', body, token }),
     removeCoordinator: (orgId, coordinatorId) =>
       request(`/firms/${orgId}/coordinators/${coordinatorId}`, { method: 'DELETE', token }),
-    listFirmInvitations: (orgId) => request(`/firms/${orgId}/invitations`, { token }),
+    listFirmInvitations: (orgId, editionId) =>
+      request(
+        `/firms/${orgId}/invitations${editionId ? `?editionId=${encodeURIComponent(editionId)}` : ''}`,
+        { token },
+      ),
     listEditionFirmInvitations: (editionId) =>
       request(`/editions/${editionId}/firm-invitations`, { token }),
     inviteFirm: (orgId, body) =>

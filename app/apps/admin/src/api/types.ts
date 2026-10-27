@@ -463,6 +463,9 @@ export interface AuthUser {
   displayName: string;
   org: string | null;
   hasDragnetRight: boolean;
+  /** Holds the "Market institutions" right (BUG-01). Missing on a session
+   *  signed in before it existed — treated as held; the API still decides. */
+  hasRegulatorsRight?: boolean;
 }
 
 export interface LoginResponse {

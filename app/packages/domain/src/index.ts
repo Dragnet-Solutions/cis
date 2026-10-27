@@ -101,6 +101,7 @@ export {
   requestInvitation,
   getSeats,
   seatForCoordinator,
+  emailOwnSeatLink,
   assignSeat,
   SEAT_ASSIGNED_EMAIL_KIND,
   FIRM_SPACE_CLAIMED_EMAIL_KIND,

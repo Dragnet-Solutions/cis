@@ -24,6 +24,8 @@ const LoginResponse = z.object({
     displayName: z.string(),
     org: z.string().nullable(),
     hasDragnetRight: z.boolean(),
+    /** Holds the "Market institutions" right (access:regs): the tab shows. */
+    hasRegulatorsRight: z.boolean(),
   }),
 });
 
@@ -63,6 +65,7 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
 
       const permCodes = await getDirectPermissionCodes(pool, user.id);
       const hasDragnetRight = permCodes.includes('access:dragnet');
+      const hasRegulatorsRight = permCodes.includes('access:regs');
 
       await writeAudit(pool, {
         actorId: user.id,
@@ -89,6 +92,7 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
           displayName: user.displayName,
           org: user.organization,
           hasDragnetRight,
+          hasRegulatorsRight,
         },
       });
     },

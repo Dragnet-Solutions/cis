@@ -70,7 +70,12 @@ export const firmInvitationRoutes: FastifyPluginAsyncZod = async (app) => {
     '/firms/:orgId/invitations',
     {
       preHandler: [app.authenticate],
-      schema: { params: z.object({ orgId: z.string().uuid() }) },
+      schema: {
+        params: z.object({ orgId: z.string().uuid() }),
+        // The edition being worked on: only its invitations (NEW-1). Without
+        // it, the firm's whole history.
+        querystring: z.object({ editionId: z.string().uuid().optional() }),
+      },
     },
     async (request, reply) => {
       const pool = getPool();
@@ -80,7 +85,10 @@ export const firmInvitationRoutes: FastifyPluginAsyncZod = async (app) => {
       const invitations = await listInvitationsWithLinks(
         pool,
         rbac,
-        { organizationId: request.params.orgId },
+        {
+          organizationId: request.params.orgId,
+          ...(request.query.editionId ? { editionId: request.query.editionId } : {}),
+        },
         publicOrigin(),
       );
       const claimed = await isFirmClaimed(pool, request.params.orgId);

@@ -141,25 +141,33 @@ export async function getFirmInvitationByToken(
   return row ? mapWithFirm(row) : null;
 }
 
-/** The open (pending) invitation for this firm and address, if any. */
+/**
+ * The open (pending) invitation for this firm and address in this edition, if
+ * any. Invitations belong to an edition: one still open from an earlier
+ * edition is not this edition's (NEW-1).
+ */
 export async function getPendingFirmInvitation(
   db: Db,
   organizationId: string,
   email: string,
+  editionId: string | null,
 ): Promise<FirmInvitation | null> {
   const res = await query<RawInvitationRow>(
     asPool(db),
     `SELECT * FROM firm_invitations
-      WHERE organization_id = $1 AND lower(email) = lower($2) AND status = 'pending'`,
-    [organizationId, email],
+      WHERE organization_id = $1 AND lower(email) = lower($2) AND status = 'pending'
+        AND edition_id IS NOT DISTINCT FROM $3`,
+    [organizationId, email, editionId],
   );
   const row = res.rows[0];
   return row ? mapInvitation(row) : null;
 }
 
+/** A firm's invitations, newest first — only one edition's when `editionId` is given. */
 export async function listFirmInvitationsForOrganization(
   db: Db,
   organizationId: string,
+  editionId?: string,
 ): Promise<FirmInvitationWithFirm[]> {
   const res = await query<RawInvitationRow>(
     asPool(db),
@@ -167,8 +175,9 @@ export async function listFirmInvitationsForOrganization(
        FROM firm_invitations fi
        JOIN organizations o ON o.id = fi.organization_id
       WHERE fi.organization_id = $1
+        AND ($2::uuid IS NULL OR fi.edition_id = $2)
       ORDER BY fi.created_at DESC`,
-    [organizationId],
+    [organizationId, editionId ?? null],
   );
   return res.rows.map(mapWithFirm);
 }
@@ -248,15 +257,20 @@ export async function setFirmClaimInvitation(
   ]);
 }
 
-/** Whether the firm has a pending invitation that has not yet expired. */
-export async function hasOpenFirmInvitation(db: Db, organizationId: string): Promise<boolean> {
+/** Whether the firm has a pending, unexpired invitation for this edition. */
+export async function hasOpenFirmInvitation(
+  db: Db,
+  organizationId: string,
+  editionId: string,
+): Promise<boolean> {
   const res = await query<{ open: boolean }>(
     asPool(db),
     `SELECT EXISTS (
        SELECT 1 FROM firm_invitations
-        WHERE organization_id = $1 AND status = 'pending' AND expires_at > NOW()
+        WHERE organization_id = $1 AND edition_id = $2
+          AND status = 'pending' AND expires_at > NOW()
      ) AS open`,
-    [organizationId],
+    [organizationId, editionId],
   );
   return res.rows[0]?.open ?? false;
 }

@@ -7,8 +7,9 @@
  *  - an unsent response's saved answers are reachable only through its own
  *    handles: the respondent id (`GET /journeys/:id/resume`) and the seat's
  *    link (`/firm-seats/:token/start`, which resumes a started seat);
- *  - the portal never hands a coordinator either handle for anyone else's
- *    seat: no respondent id anywhere, and a seat link only on their own seat;
+ *  - the portal never hands a coordinator either handle: no respondent id
+ *    anywhere, and no seat link — not even for their own seat, whose link is
+ *    emailed to them on request (BUG-16);
  *  - once sent, the link resolves to "complete" (it cannot be resumed) and the
  *    resume state by id carries no answers.
  */
@@ -22,12 +23,14 @@ import {
   updateEditionStatus,
   getInstrumentItems,
   listSeats,
+  listEmailsFor,
 } from '@cis/db';
 import {
   createLeadCoordinator,
   addCoordinator,
   setCoordinatorPin,
   seedReferenceData,
+  SEAT_ASSIGNED_EMAIL_KIND,
 } from '@cis/domain';
 import { buildJourneySequence } from '@cis/survey';
 import { validAnswerFor } from '../../../packages/domain/tests/helpers/answers';
@@ -136,7 +139,7 @@ describe('A coordinator never sees a respondent’s answers (D-24)', () => {
     expect(assigned.statusCode).toBe(200);
     const seatView = assigned.json<{ seat: Record<string, unknown> }>().seat;
     expect(seatView).not.toHaveProperty('respondentId');
-    expect(seatView['linkToken']).toBeNull();
+    expect(seatView).not.toHaveProperty('linkToken');
 
     // The link exists only in the seat holder's email (read here from the DB).
     const s2 = (await listSeats(getPool(), editionId, orgId)).find((s) => s.seatCode === 'S2')!;
@@ -153,7 +156,7 @@ describe('A coordinator never sees a respondent’s answers (D-24)', () => {
     expect(everything).not.toContain(s2.linkToken);
   });
 
-  it('the coordinator’s own seat keeps its link — and only that one', async () => {
+  it('no seat link reaches the portal — not even the coordinator’s own (BUG-16)', async () => {
     await app.inject({
       method: 'POST',
       url: '/portal/seats/S1/assign',
@@ -168,13 +171,84 @@ describe('A coordinator never sees a respondent’s answers (D-24)', () => {
     });
     const seats = (
       await app.inject({ method: 'GET', url: '/portal/seats', headers: auth() })
-    ).json<{ seats: Array<{ seatCode: string; linkToken: string | null }> }>().seats;
+    ).json<{ seats: Array<Record<string, unknown>> }>().seats;
+    for (const s of seats) {
+      expect(s).not.toHaveProperty('respondentId');
+      expect(s).not.toHaveProperty('linkToken');
+    }
+    const everything = await everythingTheCoordinatorCanRead();
+    for (const db of await listSeats(getPool(), editionId, orgId)) {
+      expect(everything).not.toContain(db.linkToken);
+    }
+  });
+
+  it('the coordinator’s own survey link is emailed to them, never returned', async () => {
+    await app.inject({
+      method: 'POST',
+      url: '/portal/seats/S1/assign',
+      headers: auth(),
+      payload: { assignedName: 'Lead One', assignedEmail: LEAD_EMAIL, isSelf: true },
+    });
+    await app.inject({
+      method: 'POST',
+      url: '/portal/seats/S3/assign',
+      headers: auth(),
+      payload: { assignedName: 'Ola Ops', assignedEmail: 'ola@privacy-firm.example' },
+    });
     const db = await listSeats(getPool(), editionId, orgId);
-    expect(seats.find((s) => s.seatCode === 'S1')!.linkToken).toBe(
-      db.find((s) => s.seatCode === 'S1')!.linkToken,
+    const s1 = db.find((s) => s.seatCode === 'S1')!;
+    const before = (await listEmailsFor(getPool(), SEAT_ASSIGNED_EMAIL_KIND, [s1.id])).length;
+
+    const sent = await app.inject({
+      method: 'POST',
+      url: '/portal/seats/S1/email-link',
+      headers: auth(),
+    });
+    expect(sent.statusCode).toBe(200);
+    expect(sent.json()).toEqual({ sentTo: LEAD_EMAIL });
+    expect(sent.body).not.toContain(s1.linkToken);
+    const emails = await listEmailsFor(getPool(), SEAT_ASSIGNED_EMAIL_KIND, [s1.id]);
+    expect(emails).toHaveLength(before + 1);
+    expect(emails.at(-1)!.toAddress.toLowerCase()).toBe(LEAD_EMAIL);
+
+    // Someone else's seat: refused, nothing sent.
+    const s3 = db.find((s) => s.seatCode === 'S3')!;
+    const s3Before = (await listEmailsFor(getPool(), SEAT_ASSIGNED_EMAIL_KIND, [s3.id])).length;
+    const refused = await app.inject({
+      method: 'POST',
+      url: '/portal/seats/S3/email-link',
+      headers: auth(),
+    });
+    expect(refused.statusCode).toBe(400);
+    expect(await listEmailsFor(getPool(), SEAT_ASSIGNED_EMAIL_KIND, [s3.id])).toHaveLength(
+      s3Before,
     );
-    expect(seats.find((s) => s.seatCode === 'S3')!.linkToken).toBeNull();
-    for (const s of seats) expect(s).not.toHaveProperty('respondentId');
+  });
+
+  it('once the results are locked, no seat can be assigned and no link is sent', async () => {
+    await app.inject({
+      method: 'POST',
+      url: '/portal/seats/S1/assign',
+      headers: auth(),
+      payload: { assignedName: 'Lead One', assignedEmail: LEAD_EMAIL, isSelf: true },
+    });
+    await updateEditionStatus(getPool(), editionId, 'locked');
+    const assign = await app.inject({
+      method: 'POST',
+      url: '/portal/seats/S2/assign',
+      headers: auth(),
+      payload: { assignedName: 'Late Joiner', assignedEmail: 'late@privacy-firm.example' },
+    });
+    expect(assign.statusCode).toBe(403);
+    expect(assign.json<{ error: string }>().error).toBe('CollectionClosedError');
+    const s2 = (await listSeats(getPool(), editionId, orgId)).find((s) => s.seatCode === 'S2')!;
+    expect(s2.assignedEmail).toBeNull();
+    const link = await app.inject({
+      method: 'POST',
+      url: '/portal/seats/S1/email-link',
+      headers: auth(),
+    });
+    expect(link.statusCode).toBe(403);
   });
 
   it('sent: the link no longer opens the survey, and the resume state carries no answers', async () => {
@@ -202,9 +276,10 @@ describe('A coordinator never sees a respondent’s answers (D-24)', () => {
   });
 });
 
-// QA item 9: the coordinator's own seat shows its link. A reassignment must
-// never let that link (or any link the coordinator sees) reach answers someone
-// else saved — every reassignment mints a new link and starts a new response.
+// QA item 9: a reassignment must never let a link reach answers someone else
+// saved — every reassignment mints a new link and starts a new response. The
+// links are read from the database here (the holder's inbox): the portal
+// itself returns none (BUG-16).
 describe('A seat link a coordinator sees never resumes someone else’s answers (QA item 9)', () => {
   async function seatsAs(t: string) {
     const res = await app.inject({
@@ -212,8 +287,10 @@ describe('A seat link a coordinator sees never resumes someone else’s answers 
       url: '/portal/seats',
       headers: { authorization: `Bearer ${t}` },
     });
-    return res.json<{ seats: Array<{ seatCode: string; linkToken: string | null }> }>().seats;
+    return res.json<{ seats: Array<Record<string, unknown> & { seatCode: string }> }>().seats;
   }
+  const dbSeat = async (code: string) =>
+    (await listSeats(getPool(), editionId, orgId)).find((s) => s.seatCode === code)!;
   const assign = (t: string, code: string, payload: Record<string, unknown>) =>
     app.inject({
       method: 'POST',
@@ -238,10 +315,9 @@ describe('A seat link a coordinator sees never resumes someone else’s answers 
       isSelf: true,
     });
     expect(reassigned.statusCode).toBe(200);
-    const mine = (await seatsAs(token)).find((s) => s.seatCode === 'S2')!.linkToken;
-    // Own seat (matched ignoring case): the coordinator sees the link…
-    expect(mine).not.toBeNull();
-    // …but it is a new one, and the old one no longer opens anything.
+    expect((await seatsAs(token)).find((s) => s.seatCode === 'S2')).not.toHaveProperty('linkToken');
+    const mine = (await dbSeat('S2')).linkToken;
+    // A new link, and the old one no longer opens anything.
     expect(mine).not.toBe(before.linkToken);
     const old = await app.inject({ method: 'POST', url: `/firm-seats/${before.linkToken}/start` });
     expect(old.statusCode).toBeGreaterThanOrEqual(400);
@@ -252,18 +328,17 @@ describe('A seat link a coordinator sees never resumes someone else’s answers 
     expect(await drafts(fresh)).toEqual([]);
   });
 
-  it('the coordinator started their own seat, then reassigned it: they lose the link, and see no other', async () => {
+  it('the coordinator started their own seat, then reassigned it: their old link dies', async () => {
     await assign(token, 'S2', {
       assignedName: 'Lead One',
       assignedEmail: LEAD_EMAIL,
       isSelf: true,
     });
-    const own = (await seatsAs(token)).find((s) => s.seatCode === 'S2')!.linkToken!;
+    const own = (await dbSeat('S2')).linkToken;
     await seatHolderAnswersSome(own, 2);
 
     await assign(token, 'S2', { assignedName: 'Dayo', assignedEmail: 'dayo@privacy-firm.example' });
     const s2 = (await listSeats(getPool(), editionId, orgId)).find((s) => s.seatCode === 'S2')!;
-    expect((await seatsAs(token)).find((s) => s.seatCode === 'S2')!.linkToken).toBeNull();
     expect(s2.linkToken).not.toBe(own);
     // The link the coordinator kept from before is dead.
     const ctx = await app.inject({ method: 'GET', url: `/firm-seats/${own}/context` });
@@ -273,7 +348,7 @@ describe('A seat link a coordinator sees never resumes someone else’s answers 
     expect(await drafts(start.json<{ respondentId: string }>().respondentId)).toEqual([]);
   });
 
-  it('a co-coordinator sees the link of their own seat only, never the lead’s', async () => {
+  it('a co-coordinator can have only their own seat’s link emailed, never the lead’s', async () => {
     const co = await addCoordinator(getPool(), {
       organizationId: orgId,
       name: 'Co Two',
@@ -295,11 +370,18 @@ describe('A seat link a coordinator sees never resumes someone else’s answers 
     });
     await assign(token, 'S3', { assignedName: 'Co Two', assignedEmail: 'CO@privacy-firm.example' });
 
-    const coView = await seatsAs(coToken);
-    expect(coView.find((s) => s.seatCode === 'S1')!.linkToken).toBeNull();
-    expect(coView.find((s) => s.seatCode === 'S3')!.linkToken).not.toBeNull();
-    const leadView = await seatsAs(token);
-    expect(leadView.find((s) => s.seatCode === 'S3')!.linkToken).toBeNull();
-    expect(leadView.find((s) => s.seatCode === 'S1')!.linkToken).not.toBeNull();
+    for (const view of [await seatsAs(coToken), await seatsAs(token)]) {
+      for (const s of view) expect(s).not.toHaveProperty('linkToken');
+    }
+    const emailLink = (t: string, code: string) =>
+      app.inject({
+        method: 'POST',
+        url: `/portal/seats/${code}/email-link`,
+        headers: { authorization: `Bearer ${t}` },
+      });
+    // Own seat, matched ignoring case.
+    expect((await emailLink(coToken, 'S3')).statusCode).toBe(200);
+    expect((await emailLink(coToken, 'S1')).statusCode).toBe(400);
+    expect((await emailLink(token, 'S3')).statusCode).toBe(400);
   });
 });

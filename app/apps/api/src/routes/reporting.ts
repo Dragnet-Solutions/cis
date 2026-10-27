@@ -312,6 +312,7 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
         displayName: request.session.displayName,
         org: request.session.org,
         hasDragnetRight: false,
+        hasRegulatorsRight: false,
       },
     },
   });

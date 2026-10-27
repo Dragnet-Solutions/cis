@@ -253,7 +253,12 @@ export async function ensureFirmInvitationRecord(
   input: FirmInvitationRecordInput,
   now = new Date(),
 ): Promise<FirmInvitation> {
-  const existing = await getPendingFirmInvitation(db, input.organizationId, input.email.trim());
+  const existing = await getPendingFirmInvitation(
+    db,
+    input.organizationId,
+    input.email.trim(),
+    input.editionId ?? null,
+  );
   if (!existing) return createFirmInvitationRecord(db, input);
   if (existing.expiresAt.getTime() > now.getTime()) return existing;
   const next = await markFirmInvitationSent(db, existing.id, newExpiry(now));
@@ -302,7 +307,7 @@ export async function inviteFirm(
     if (!edition) throw new FirmInvitationError('That edition was not found', 'EDITION_NOT_FOUND');
   }
 
-  const existing = await getPendingFirmInvitation(pool, org.id, email);
+  const existing = await getPendingFirmInvitation(pool, org.id, email, input.editionId ?? null);
   if (existing) {
     const invitation = await sendInvitationAgain(pool, rbac, existing.id, ctx);
     return { invitation, resent: true };
@@ -328,7 +333,7 @@ export async function inviteFirm(
   } catch (err) {
     // Another operator invited the same address a moment ago: send that one.
     if ((err as { code?: string }).code === '23505') {
-      const raced = await getPendingFirmInvitation(pool, org.id, email);
+      const raced = await getPendingFirmInvitation(pool, org.id, email, input.editionId ?? null);
       if (raced) {
         const invitation = await sendInvitationAgain(pool, rbac, raced.id, ctx);
         return { invitation, resent: true };
@@ -426,16 +431,19 @@ export async function revokeInvitation(
   return toView(pool, { ...revoked, firmName: org?.displayName ?? '' });
 }
 
-/** A firm's invitations (or an edition's), newest first, with email delivery. */
+/**
+ * A firm's invitations (only one edition's when `editionId` is given), or an
+ * edition's, newest first, with email delivery.
+ */
 export async function listInvitations(
   pool: Pool,
   rbac: RbacContext,
-  scope: { organizationId: string } | { editionId: string },
+  scope: { organizationId: string; editionId?: string } | { editionId: string },
 ): Promise<FirmInvitationView[]> {
   requirePermission(rbac, SEND_PERMISSION);
   const rows =
     'organizationId' in scope
-      ? await listFirmInvitationsForOrganization(pool, scope.organizationId)
+      ? await listFirmInvitationsForOrganization(pool, scope.organizationId, scope.editionId)
       : await listFirmInvitationsForEdition(pool, scope.editionId);
   return toViews(pool, rows);
 }
@@ -454,13 +462,13 @@ export interface FirmInvitationLinkView extends FirmInvitationView {
 export async function listInvitationsWithLinks(
   pool: Pool,
   rbac: RbacContext,
-  scope: { organizationId: string } | { editionId: string },
+  scope: { organizationId: string; editionId?: string } | { editionId: string },
   portalUrl: string,
 ): Promise<FirmInvitationLinkView[]> {
   requirePermission(rbac, SEND_PERMISSION);
   const rows =
     'organizationId' in scope
-      ? await listFirmInvitationsForOrganization(pool, scope.organizationId)
+      ? await listFirmInvitationsForOrganization(pool, scope.organizationId, scope.editionId)
       : await listFirmInvitationsForEdition(pool, scope.editionId);
   const views = await toViews(pool, rows);
   const tokens = new Map(rows.map((r) => [r.id, r.token]));
@@ -568,7 +576,7 @@ export async function bulkInviteFirms(
       result.skippedClaimed++;
       continue;
     }
-    if (await hasOpenFirmInvitation(pool, firm.id)) {
+    if (await hasOpenFirmInvitation(pool, firm.id, input.editionId)) {
       result.skippedPending++;
       continue;
     }

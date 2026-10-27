@@ -226,13 +226,14 @@ function FirmInvitationsCard({
 
   const load = useCallback(async () => {
     try {
-      const r = await client.listFirmInvitations(orgId);
+      // This edition's invitations only: an earlier edition's are not this one's.
+      const r = await client.listFirmInvitations(orgId, editionId);
       setInvitations(r.invitations);
       setClaimed(r.claimed);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not load invitations');
     }
-  }, [client, orgId]);
+  }, [client, orgId, editionId]);
 
   useEffect(() => {
     setError(null);

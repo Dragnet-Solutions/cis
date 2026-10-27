@@ -1020,6 +1020,7 @@ function Portal({
       <main>
         {screen === 'landing' && (
           <PortalLanding
+            token={session.token}
             firm={firmName}
             phase={phase}
             seats={seats}
@@ -1077,7 +1078,46 @@ function Portal({
 
 // ─── Portal landing (three phases, derived from real edition state) ────────
 
+/**
+ * The coordinator's own survey. Its link lives only in their inbox, never in
+ * the portal (BUG-16): this asks for it to be emailed to them again.
+ */
+function OwnSeatLink({ token, seat }: { token: string; seat: SeatAssignment }): JSX.Element {
+  const [busy, setBusy] = useState(false);
+  const [sentTo, setSentTo] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function send(): Promise<void> {
+    setBusy(true);
+    setError(null);
+    try {
+      setSentTo((await portalClient.emailMySeatLink(token, seat.seatCode)).sentTo);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'The link could not be sent');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <p className="hint">
+        Your personal link is in the email sent to {seat.assignedEmail}. Nobody else, including the
+        other coordinators, can open it.
+      </p>
+      <div className="actions">
+        <button type="button" className="btn-2" disabled={busy} onClick={() => void send()}>
+          {busy ? 'Sending…' : 'Email me my survey link'}
+        </button>
+      </div>
+      {sentTo && <p className="qstate ok">Sent to {sentTo}. Open the email to start.</p>}
+      {error && <div className="err">{error}</div>}
+    </>
+  );
+}
+
 function PortalLanding({
+  token,
   firm,
   phase,
   seats,
@@ -1089,6 +1129,7 @@ function PortalLanding({
   released,
   onReport,
 }: {
+  token: string;
   firm: string;
   phase: 'setup' | 'running' | 'closed';
   seats: SeatAssignment[];
@@ -1103,8 +1144,9 @@ function PortalLanding({
   const assigned = seats.filter((s) => s.state !== 'empty').length;
   const complete = seats.filter((s) => s.state === 'complete').length;
   const allAssigned = assigned === seats.length;
-  // The coordinator's own seat: the only one whose link the portal holds.
-  const mine = seats.find((s) => s.isSelf && s.linkToken);
+  // The coordinator's own seat, still to answer. The portal never holds its
+  // link (BUG-16): the button emails it to them.
+  const mine = seats.find((s) => s.isSelf && s.state !== 'empty' && s.state !== 'complete');
 
   return (
     <>
@@ -1233,11 +1275,7 @@ function PortalLanding({
             About fifteen minutes. Nobody at your firm sees your answers, including your
             coordinator.
           </p>
-          <div className="actions">
-            <a className="btn-2" href={`/survey?firmSeat=${mine.linkToken}`}>
-              Open your survey
-            </a>
-          </div>
+          <OwnSeatLink token={token} seat={mine} />
         </div>
       )}
 
@@ -1403,14 +1441,10 @@ function SeatRow({
             <b>This one is yours.</b> You told us your role when you set up your access, so this
             survey is already assigned to you.
           </p>
-          {seat.linkToken ? (
-            <div className="actions">
-              <a className="btn-2" href={`/survey?firmSeat=${seat.linkToken}`}>
-                Open your survey
-              </a>
-            </div>
+          {seat.state === 'complete' ? (
+            <p className="hint">You have sent this survey. Thank you.</p>
           ) : (
-            <p className="hint">Its link went to {seat.assignedEmail}.</p>
+            <OwnSeatLink token={token} seat={seat} />
           )}
         </div>
       ) : seat.state !== 'empty' ? (

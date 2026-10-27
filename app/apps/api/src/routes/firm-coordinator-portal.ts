@@ -11,6 +11,7 @@ import {
   updateInvestorCategoriesServed,
   getSeats,
   seatForCoordinator,
+  emailOwnSeatLink,
   assignSeat,
   describeSeatReplacement,
   confirmSeatReplacement,
@@ -210,8 +211,8 @@ export const firmCoordinatorPortalRoutes: FastifyPluginAsyncZod = async (app) =>
       if (!editionId) return reply.send({ seats: [] });
       const session = request.coordinatorSession;
       const seats = await getSeats(getPool(), editionId, session.organizationId);
-      // Never a respondent id, and only the coordinator's own seat link (D-24).
-      return reply.send({ seats: seats.map((s) => seatForCoordinator(s, session.email)) });
+      // Never a respondent id, and never a seat link — not even their own (D-24, BUG-16).
+      return reply.send({ seats: seats.map((s) => seatForCoordinator(s)) });
     },
   );
 
@@ -248,7 +249,47 @@ export const firmCoordinatorPortalRoutes: FastifyPluginAsyncZod = async (app) =>
         { portalUrl: publicOrigin() },
       );
       kickMailDispatcher();
-      return reply.send({ seat: seatForCoordinator(seat, request.coordinatorSession.email) });
+      return reply.send({ seat: seatForCoordinator(seat) });
+    },
+  );
+
+  // The coordinator's own survey: its link is emailed to them, never returned
+  // here — the portal holds no seat link (BUG-16).
+  app.post(
+    '/portal/seats/:seatCode/email-link',
+    {
+      preHandler: [app.authenticateCoordinator],
+      // Each press sends an email: a few a minute per signed-in coordinator is
+      // plenty (counted per sign-in, so colleagues behind one office IP don't
+      // share the allowance).
+      config: {
+        rateLimit: {
+          max: 5,
+          timeWindow: 60_000,
+          keyGenerator: (request) => request.headers.authorization ?? request.ip,
+        },
+      },
+      schema: { params: z.object({ seatCode: z.enum(['S1', 'S2', 'S3']) }) },
+    },
+    async (request, reply) => {
+      const editionId = await currentEditionId();
+      if (!editionId) {
+        return reply
+          .status(409)
+          .send({ error: 'Conflict', message: 'No edition is open', statusCode: 409 });
+      }
+      const result = await emailOwnSeatLink(
+        getPool(),
+        {
+          editionId,
+          organizationId: request.coordinatorSession.organizationId,
+          seatCode: request.params.seatCode,
+          coordinatorEmail: request.coordinatorSession.email,
+        },
+        { portalUrl: publicOrigin() },
+      );
+      kickMailDispatcher();
+      return reply.send(result);
     },
   );
 
@@ -294,7 +335,7 @@ export const firmCoordinatorPortalRoutes: FastifyPluginAsyncZod = async (app) =>
         request.coordinatorSession.organizationId,
         request.params.seatCode,
       );
-      return reply.send({ seat: seatForCoordinator(seat, request.coordinatorSession.email) });
+      return reply.send({ seat: seatForCoordinator(seat) });
     },
   );
 
