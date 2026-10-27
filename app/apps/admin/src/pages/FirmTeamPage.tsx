@@ -118,20 +118,31 @@ function FirmDigestCard({
   const [digest, setDigest] = useState<FirmDigest | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(() => {
+  // BUG-09: while a firm's digest loads, show that it is loading — never the
+  // previous firm's figures — and ignore an answer that arrives after the
+  // operator has moved on to another firm.
+  useEffect(() => {
+    let current = true;
+    setDigest(null);
     setError(null);
     client
       .get<{ digest: FirmDigest }>(`/firm/${orgId}/editions/${editionId}/digest`)
-      .then((r) => setDigest(r.digest))
-      .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load digest'));
+      .then((r) => {
+        if (current) setDigest(r.digest);
+      })
+      .catch((err) => {
+        if (current) setError(err instanceof ApiError ? err.message : 'Could not load digest');
+      });
+    return () => {
+      current = false;
+    };
   }, [client, orgId, editionId]);
 
-  useEffect(() => load(), [load]);
-
   return (
-    <fieldset className="contact-fields">
+    <fieldset className="contact-fields" aria-busy={!digest && !error}>
       <legend>Firm digest preview</legend>
       {error && <div className="err">{error}</div>}
+      {!digest && !error && <p className="muted">Loading this firm’s digest…</p>}
       {digest && (
         <>
           <p>
@@ -360,6 +371,7 @@ function FirmInvitationsCard({
                     {inv.email}
                     {inv.contactName && (
                       <>
+                        {' '}
                         <br />
                         <small>{inv.contactName}</small>
                       </>
@@ -632,6 +644,7 @@ function EditionInvitationsCard({
                     {inv.email}
                     {inv.contactName && (
                       <>
+                        {' '}
                         <br />
                         <small>{inv.contactName}</small>
                       </>
