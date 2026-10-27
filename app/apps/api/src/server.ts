@@ -195,6 +195,7 @@ function resolveStatusCode(error: Error & { statusCode?: number }): number {
     case 'SeatNotSubmittedError':
     case 'NationalReportError':
     case 'FirmReportError':
+    case 'FirmNarrativeReviewError':
     case 'ScoringSignoffError':
     case 'ScoringBlockedError':
     case 'PeopleAccessError':

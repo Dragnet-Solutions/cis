@@ -366,6 +366,27 @@ export interface NationalApprovalPreconditions {
 }
 
 /** The sentence-level review of the national report's draft (the AI narrative). */
+/** A firm report's fact-check decisions (BUG-20 / BUG-03). */
+export interface FirmNarrativeReviewView {
+  narrativeId: string | null;
+  model: string | null;
+  draftedAt: string | null;
+  findings: Array<{
+    narrativeIndex: number;
+    section: string;
+    text: string;
+    finding: { kind: string; why: string };
+    decision: {
+      disposition: 'SUPPRESS_CLAIM' | 'REJECT_WITH_REASON';
+      reason: string | null;
+      decidedBy: string;
+      decidedAt: string;
+    } | null;
+  }>;
+  undecided: number;
+  released: boolean;
+}
+
 export interface NationalReview {
   narrativeId: string | null;
   model: string | null;

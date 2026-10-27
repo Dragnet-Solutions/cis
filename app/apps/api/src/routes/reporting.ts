@@ -48,6 +48,9 @@ import {
   prepareNationalReview,
   getNationalReview,
   decideFinding,
+  getFirmNarrativeReview,
+  decideFirmNarrativeFinding,
+  undecidedFirmFindings,
   NATIONAL_SECTIONS,
   listRegulators,
   type SufficiencyContext,
@@ -523,6 +526,59 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
     },
   );
 
+  // ── A firm report's fact-check decisions (BUG-20 / BUG-03) ────────────────
+  // The same step as the national report's: every finding the checker raised
+  // on the firm's written analysis is decided before the report can be
+  // released. Who decided is the session.
+  app.get(
+    '/editions/:id/firms/:firmId/report/review',
+    {
+      preHandler: [app.authenticate],
+      schema: { params: z.object({ id: z.string().uuid(), firmId: z.string().uuid() }) },
+    },
+    async (request, reply) => {
+      const review = await getFirmNarrativeReview(
+        getPool(),
+        request.params.id,
+        request.params.firmId,
+      );
+      return reply.send({ review });
+    },
+  );
+
+  app.post(
+    '/editions/:id/firms/:firmId/report/review/decision',
+    {
+      preHandler: [app.authenticate],
+      schema: {
+        params: z.object({ id: z.string().uuid(), firmId: z.string().uuid() }),
+        body: z.object({
+          narrativeId: z.string().uuid(),
+          narrativeIndex: z.number().int().min(0),
+          disposition: z.enum(['SUPPRESS_CLAIM', 'REJECT_WITH_REASON']),
+          reason: z.string().trim().max(2000).optional(),
+        }),
+      },
+    },
+    async (request, reply) => {
+      const review = await decideFirmNarrativeFinding(
+        getPool(),
+        {
+          editionId: request.params.id,
+          firmId: request.params.firmId,
+          narrativeId: request.body.narrativeId,
+          narrativeIndex: request.body.narrativeIndex,
+          disposition: request.body.disposition,
+          reason: request.body.reason ?? null,
+          decidedBy: request.session.email,
+          decidedById: request.session.sub,
+        },
+        { ipAddress: request.ip, userAgent: request.headers['user-agent'] ?? null },
+      );
+      return reply.send({ review });
+    },
+  );
+
   app.post(
     '/national-reports/:id/request-approval',
     {
@@ -707,6 +763,13 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
           session.email,
         );
         if (!narrative) throw new Error('there are no figures to write about yet');
+        // A redraft at release brings its own findings: they are decided first.
+        const undecided = await undecidedFirmFindings(pool, narrative);
+        if (undecided > 0) {
+          throw new Error(
+            `${undecided} fact-check ${undecided === 1 ? 'finding is' : 'findings are'} not yet decided — decide ${undecided === 1 ? 'it' : 'them'} on the report, then release again`,
+          );
+        }
         return { narrativeId: narrative.id };
       },
     };

@@ -83,4 +83,5 @@ export * from './queries/email-outbox';
 export * from './queries/mail-health';
 export * from './queries/password-set-tokens';
 export * from './queries/national-review';
+export * from './queries/firm-narrative-review';
 export * from './queries/audit-log';

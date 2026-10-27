@@ -35,6 +35,7 @@ import {
   type PasswordSetInfo,
   type ReleaseFirmReportsResult,
   type NationalReview,
+  type FirmNarrativeReviewView,
   type MethodologyApprovalView,
   type ReminderSchedule,
   type ResponsesMonitor,
@@ -207,6 +208,20 @@ export interface AdminClient {
     disposition: 'SUPPRESS_CLAIM' | 'REJECT_WITH_REASON',
     reason?: string,
   ): Promise<{ decided: boolean }>;
+  getFirmNarrativeReview(
+    editionId: string,
+    firmId: string,
+  ): Promise<{ review: FirmNarrativeReviewView }>;
+  decideFirmNarrativeFinding(
+    editionId: string,
+    firmId: string,
+    decision: {
+      narrativeId: string;
+      narrativeIndex: number;
+      disposition: 'SUPPRESS_CLAIM' | 'REJECT_WITH_REASON';
+      reason?: string;
+    },
+  ): Promise<{ review: FirmNarrativeReviewView }>;
   requestNationalApproval(reportId: string, reason: string): Promise<{ requested: boolean }>;
   approveNationalReport(reportId: string): Promise<{ status: string }>;
   // Firm reports (UX-ADM-006)
@@ -546,6 +561,14 @@ export function createClient(token: string | null, hooks: SessionHooks = {}): Ad
       request(`/national-reports/${reportId}/findings/${findingId}/decision`, {
         method: 'POST',
         body: reason ? { disposition, reason } : { disposition },
+        token,
+      }),
+    getFirmNarrativeReview: (editionId, firmId) =>
+      request(`/editions/${editionId}/firms/${firmId}/report/review`, { token }),
+    decideFirmNarrativeFinding: (editionId, firmId, decision) =>
+      request(`/editions/${editionId}/firms/${firmId}/report/review/decision`, {
+        method: 'POST',
+        body: decision,
         token,
       }),
     openNationalDraft: (reportId) =>

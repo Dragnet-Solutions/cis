@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { operatorFirmSource as firmSource } from '../reports/source';
 import { FirmReport as FirmReportDocument } from '../reports/FirmReport';
+import { FirmNarrativeReview } from './FirmNarrativeReview';
 import type { AdminClient } from '../api/client';
 import {
   ApiError,
@@ -142,13 +143,16 @@ export function FirmReportsPage({
 
   if (viewingFirm) {
     return (
-      <FirmReportDocument
-        source={firmSource(client, editionId, viewingFirm)}
-        onBack={() => {
-          setViewingFirm(null);
-          void load();
-        }}
-      />
+      <>
+        <FirmNarrativeReview client={client} editionId={editionId} firmId={viewingFirm} />
+        <FirmReportDocument
+          source={firmSource(client, editionId, viewingFirm)}
+          onBack={() => {
+            setViewingFirm(null);
+            void load();
+          }}
+        />
+      </>
     );
   }
 
