@@ -57,10 +57,9 @@ export interface SeatAssignment {
   state: SeatState;
   isSelf: boolean;
   stalledAt: string | null;
-  /** The seat's survey link — only on the signed-in coordinator's own seat.
-   *  Nobody else's link (or respondent) ever reaches the portal: a coordinator
-   *  never sees anyone's answers, sent or in progress (D-24). */
-  linkToken: string | null;
+  // No survey link and no respondent ever reach the portal, not even for the
+  // coordinator's own seat: a coordinator never sees anyone's answers (D-24,
+  // BUG-16). Their own survey's link is emailed to them (emailMySeatLink).
 }
 
 export interface Coordinator {
@@ -277,6 +276,12 @@ export const portalClient = {
       body: input,
       token,
     }).then((r) => r.seat),
+  /** Email the coordinator the link to their own survey; returns where it went. */
+  emailMySeatLink: (token: string, seatCode: SeatCode) =>
+    request<{ sentTo: string }>(`/portal/seats/${seatCode}/email-link`, {
+      method: 'POST',
+      token,
+    }),
   describeSeatReplacement: (token: string, seatCode: SeatCode) =>
     request<{ state: SeatState; requiresConfirm: boolean; warning: string | null }>(
       `/portal/seats/${seatCode}/replacement`,
