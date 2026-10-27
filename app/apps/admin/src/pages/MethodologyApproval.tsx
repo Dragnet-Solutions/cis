@@ -3,17 +3,19 @@ import type { AdminClient } from '../api/client';
 import { ApiError, type MethodologyApprovalView } from '../api/types';
 
 /**
- * "Approve the scoring methodology" — the Runbook §5.2 step: the method must be
- * approved before any run is official. Two people: one requests it with a
- * reason, a different one approves. The record keeps who, when and which
- * version. Once approved, new scoring runs use it and are marked approved, and
- * the reports show the signed run's index scores.
+ * "Record the methodology approval" — the Runbook §5.2 step, for this edition.
+ * CIS approves the scoring methodology offline (BUG-02), so scoring does not
+ * wait on this: it records, for the edition, that the approval was given. Two
+ * people: one asks with a reason, a different one confirms. The record keeps
+ * who, when, why and which version.
  */
 export function MethodologyApproval({
   client,
+  editionId,
   onChange,
 }: {
   client: AdminClient;
+  editionId: string;
   onChange?: () => void;
 }): JSX.Element | null {
   const [state, setState] = useState<MethodologyApprovalView | null>(null);
@@ -25,11 +27,11 @@ export function MethodologyApproval({
 
   const load = useCallback(async () => {
     try {
-      setState(await client.getScoringMethodology());
+      setState(await client.getScoringMethodology(editionId));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not load the methodology');
     }
-  }, [client]);
+  }, [client, editionId]);
 
   useEffect(() => {
     void load();
@@ -58,15 +60,15 @@ export function MethodologyApproval({
   const ownPending = state.pending?.requestedBy === state.viewerId;
 
   return (
-    <section className={`stage ${state.approved ? '' : 'now'}`}>
+    <section className="stage">
       <div className="stagehead">
-        <h2>Approve the scoring methodology</h2>
+        <h2>Methodology approval for this edition</h2>
         <span className={`pill ${state.approved ? 'ok' : state.pending ? 'wait' : 'started'}`}>
           {state.approved
-            ? 'Approved'
+            ? 'Recorded'
             : state.pending
               ? 'Awaiting a second person'
-              : 'Not approved'}
+              : 'Not recorded'}
         </span>
       </div>
       <div className="stagebody">
@@ -75,9 +77,7 @@ export function MethodologyApproval({
           <p>
             <b>{m}</b> was approved by {name(state.approved.approvedBy)} on{' '}
             {new Date(state.approved.approvedAt).toLocaleString()}, at the request of{' '}
-            {name(state.approved.requestedBy)} (“{state.approved.reason}”). Scoring runs from now on
-            use it and are marked approved; sign off a new run for its index scores to appear in the
-            reports.
+            {name(state.approved.requestedBy)} (“{state.approved.reason}”), for this edition.
           </p>
         ) : state.pending ? (
           <>
@@ -142,12 +142,12 @@ export function MethodologyApproval({
         ) : (
           <>
             <p>
-              Index scores are computed with <b>{m}</b>, which has not been approved. Until it is,
-              every scoring run is a test run and no report shows an index score. Approval takes two
-              people: you ask, with a reason, and someone else approves.
+              Index scores are computed with <b>{m}</b>. CIS approves the methodology outside the
+              platform, so scoring does not wait on this; record here, for this edition, that it was
+              approved. Two people: you ask, with a reason, and someone else confirms.
             </p>
             <div className="field">
-              <label htmlFor="mReason">Why it can be approved now</label>
+              <label htmlFor="mReason">Who approved it, and when</label>
               <p className="hint">
                 For example, who externally approved the method and when. Kept permanently.
               </p>
@@ -163,9 +163,11 @@ export function MethodologyApproval({
                 type="button"
                 className="btn"
                 disabled={busy || reason.trim().length < 4}
-                onClick={() => run(() => client.requestMethodologyApproval(reason.trim()))}
+                onClick={() =>
+                  run(() => client.requestMethodologyApproval(editionId, reason.trim()))
+                }
               >
-                Request approval
+                Record the approval
               </button>
             </div>
           </>

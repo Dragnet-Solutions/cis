@@ -595,11 +595,12 @@ describe('Phase 22 — investor-unit scoring pipeline, real data through the rea
   }, 30000);
 });
 
-describe('Approving the scoring methodology (two people), then scores in the reports', () => {
-  async function approveMethodology() {
+describe('The methodology approval record (two people, per edition), then scores in the reports', () => {
+  async function approveMethodology(forEdition = editionId) {
     const maker = await loadRbacContext(pool, makerUserId);
     const checker = await loadRbacContext(pool, checkerUserId);
     const action = await requestMethodologyApproval(pool, maker, {
+      editionId: forEdition,
       reason: 'Approved externally by the methodology partner on 9 Oct.',
     });
     await expect(
@@ -608,25 +609,43 @@ describe('Approving the scoring methodology (two people), then scores in the rep
     await decideMethodologyApproval(pool, checker, action.id, { approved: true });
   }
 
-  it('records who approved which version, and when; a reason is required', async () => {
+  it('records who approved which version, for which edition, and when; a reason is required', async () => {
     const maker = await loadRbacContext(pool, makerUserId);
-    await expect(requestMethodologyApproval(pool, maker, { reason: ' ' })).rejects.toMatchObject({
-      code: 'INVALID_REASON',
-    });
-    expect((await getMethodologyApproval(pool)).approved).toBeNull();
+    await expect(
+      requestMethodologyApproval(pool, maker, { editionId, reason: ' ' }),
+    ).rejects.toMatchObject({ code: 'INVALID_REASON' });
+    expect((await getMethodologyApproval(pool, editionId)).approved).toBeNull();
     await approveMethodology();
-    const state = await getMethodologyApproval(pool);
+    const state = await getMethodologyApproval(pool, editionId);
+    expect(state.editionId).toBe(editionId);
     expect(state.methodology).toEqual({ id: 'CIS-SCORE-2026', version: '0.15' });
     expect(state.approved?.approvedBy).toBe(checkerUserId);
     expect(state.approved?.requestedBy).toBe(makerUserId);
     expect(state.approved?.approvedAt).toBeInstanceOf(Date);
     expect(state.pending).toBeNull();
+
+    // BUG-02: the record belongs to its edition — a new edition starts with none.
+    const next = await createEdition(pool, { label: '2027-approval' });
+    const fresh = await getMethodologyApproval(pool, next.id);
+    expect(fresh.approved).toBeNull();
+    expect(fresh.pending).toBeNull();
+    await approveMethodology(next.id);
+    expect((await getMethodologyApproval(pool, next.id)).approved?.reason).toMatch(/9 Oct/);
   });
 
-  it('refuses to mark a run approved before the methodology is approved', async () => {
+  it('scoring does not wait on the approval record (CIS approves offline, BUG-02)', async () => {
+    expect((await getMethodologyApproval(pool, editionId)).approved).toBeNull();
+    const { run } = await runCandidateScoring(pool, editionId, { methodologyStatus: 'APPROVED' });
+    expect(run.methodologyStatus).toBe('APPROVED');
+    // The provisional placeholder (no versioned methodology) still can never
+    // be stamped official without an approval: the DB refuses it.
     await expect(
-      runCandidateScoring(pool, editionId, { methodologyStatus: 'APPROVED' }),
-    ).rejects.toMatchObject({ code: 'METHODOLOGY_NOT_APPROVED' });
+      pool.query(
+        `INSERT INTO calculation_runs (edition_id, run_type, dataset_hash, methodology_status)
+         VALUES ($1, 'scoring', 'x', 'APPROVED')`,
+        [editionId],
+      ),
+    ).rejects.toThrow(/cannot be APPROVED/);
   });
 
   it('computes Firm_OMI as the mean of the three role sub-indices', async () => {
@@ -641,7 +660,7 @@ describe('Approving the scoring methodology (two people), then scores in the rep
     expect(scores[0]!.score).toBeCloseTo((100 + 100 + 95) / 3, 3);
   });
 
-  it('after approval, a signed run shows its index scores in the report', async () => {
+  it('a signed run shows its index scores in the report, with no approval record needed', async () => {
     await firmWithFirmSideAnswers('firm-scored', {
       'S1-Q2': '8',
       'S1-Q3': '8',
@@ -651,11 +670,6 @@ describe('Approving the scoring methodology (two people), then scores in the rep
     });
     await updateEditionStatus(pool, editionId, 'locked');
 
-    // Before approval: the placeholder runs and the report stays pending.
-    const before = await triggerScoringRun(pool, { editionId });
-    expect(before.run.methodologyStatus).not.toBe('APPROVED');
-
-    await approveMethodology();
     const { run } = await triggerScoringRun(pool, { editionId });
     expect(run.methodologyStatus).toBe('APPROVED');
     const results = await listCalculatedResults(pool, run.id);

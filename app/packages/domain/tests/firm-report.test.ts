@@ -385,6 +385,15 @@ describe('Delivery: what leaves CIS, frozen as it left', () => {
     ).rejects.toMatchObject({ code: 'NATIONAL_NOT_APPROVED' });
     await expect(getPublishedIndustryReport(pool, editionId)).rejects.toMatchObject({
       code: 'NOT_PUBLISHED',
+      message: 'The Industry report has not been published yet.',
+    });
+    // BUG-08: Institutional Perspectives is printed from the same publication,
+    // and its refusal names it rather than the Industry report.
+    await expect(
+      getPublishedIndustryReport(pool, editionId, 'institutional'),
+    ).rejects.toMatchObject({
+      code: 'NOT_PUBLISHED',
+      message: 'The Institutional Perspectives report has not been published yet.',
     });
 
     await approveNationalFor();

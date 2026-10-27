@@ -31,9 +31,8 @@ import type {
   ScoringCheckedAccount,
 } from '@cis/shared-types';
 import { DomainError } from './errors';
-import { runScoring, type ScoringRunResult } from './calculation-service';
+import { type ScoringRunResult } from './calculation-service';
 import { assertRunOfficialUsable, runCandidateScoring } from './candidate-scoring-service';
-import { isMethodologyApproved } from './methodology-approval-service';
 
 /**
  * UX-ADM-004 — Setup: Results, Scores (sign-off). The maker-checker gate on the
@@ -117,16 +116,14 @@ export async function triggerScoringRun(
   if (edition.status !== 'locked') {
     throw new ScoringBlockedError(edition.status);
   }
-  // Once two people have approved the scoring methodology, a run computes the
-  // five indices with it and is marked APPROVED; until then the provisional
-  // placeholder runs, and no index score is reported.
-  if (await isMethodologyApproved(pool)) {
-    const result = await runCandidateScoring(pool, input.editionId, {
-      methodologyStatus: 'APPROVED',
-    });
-    return { run: result.run, results: await listCalculatedResults(pool, result.run.id) };
-  }
-  return runScoring(pool, input);
+  // A run computes the five indices with the scoring methodology and is
+  // official (APPROVED). CIS approves the methodology offline (Bobby, 25 Oct;
+  // BUG-02), so scoring does not wait on the platform's approval record — that
+  // record documents the approval for the edition, it does not gate the run.
+  const result = await runCandidateScoring(pool, input.editionId, {
+    methodologyStatus: 'APPROVED',
+  });
+  return { run: result.run, results: await listCalculatedResults(pool, result.run.id) };
 }
 
 /** Every run for an edition, newest first — the permanent scoring history. */

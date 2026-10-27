@@ -163,8 +163,11 @@ export interface AdminClient {
   getMissionBoard(id: string): Promise<MissionBoardResponse>;
   // Scoring & sign-off (UX-ADM-004)
   triggerScoringRun(id: string): Promise<{ run: unknown }>;
-  getScoringMethodology(): Promise<MethodologyApprovalView>;
-  requestMethodologyApproval(reason: string): Promise<{ criticalActionId: string }>;
+  getScoringMethodology(editionId: string): Promise<MethodologyApprovalView>;
+  requestMethodologyApproval(
+    editionId: string,
+    reason: string,
+  ): Promise<{ criticalActionId: string }>;
   decideMethodologyApproval(
     actionId: string,
     approved: boolean,
@@ -493,9 +496,10 @@ export function createClient(token: string | null, hooks: SessionHooks = {}): Ad
     getInstruments: (id) => request(`/editions/${id}/instruments`, { token }),
     getMissionBoard: (id) => request(`/editions/${id}/mission-board`, { token }),
     triggerScoringRun: (id) => request(`/editions/${id}/scoring-runs`, { method: 'POST', token }),
-    getScoringMethodology: () => request('/scoring-methodology', { token }),
-    requestMethodologyApproval: (reason) =>
-      request('/scoring-methodology/approval/request', {
+    getScoringMethodology: (editionId) =>
+      request(`/editions/${editionId}/scoring-methodology`, { token }),
+    requestMethodologyApproval: (editionId, reason) =>
+      request(`/editions/${editionId}/scoring-methodology/approval/request`, {
         method: 'POST',
         body: { reason },
         token,

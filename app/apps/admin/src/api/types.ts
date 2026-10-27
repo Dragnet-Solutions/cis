@@ -864,8 +864,9 @@ export interface FirmReportContent {
   publishedAt?: string | null;
 }
 
-/** The scoring methodology's two-person approval (Runbook §5.2). */
+/** The record of the scoring methodology's two-person approval for one edition (BUG-02). */
 export interface MethodologyApprovalView {
+  editionId: string;
   methodology: { id: string; version: string };
   approved: {
     actionId: string;
