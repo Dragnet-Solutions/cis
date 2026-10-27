@@ -563,8 +563,9 @@ export interface FirmContactAddress {
   email: string;
   name: string | null;
   /** Where the address came from: an active coordinator (the firm has a
-   *  space) or the firm's open invitation (it has not claimed one yet). */
-  source: 'coordinator' | 'invitation';
+   *  space), the firm's open invitation (it has not claimed one yet), or the
+   *  contact imported with the firm directory (NEW-2), the last resort. */
+  source: 'coordinator' | 'invitation' | 'directory';
   /** The open invitation's token (source 'invitation', unexpired only). */
   invitationToken: string | null;
 }
@@ -583,7 +584,7 @@ export async function resolveFirmContactAddresses(
     organization_id: string;
     email: string;
     name: string | null;
-    source: 'coordinator' | 'invitation';
+    source: 'coordinator' | 'invitation' | 'directory';
     token: string | null;
   }>(
     pool,
@@ -600,6 +601,10 @@ export async function resolveFirmContactAddresses(
                 2, -EXTRACT(EPOCH FROM created_at)
            FROM firm_invitations
           WHERE organization_id = ANY($1::uuid[]) AND status = 'pending'
+         UNION ALL
+         SELECT organization_id, email, contact_name, 'directory', NULL::text, 3, 0
+           FROM firm_contacts
+          WHERE organization_id = ANY($1::uuid[]) AND email IS NOT NULL
        ) c
       ORDER BY organization_id, rank, ord`,
     [organizationIds],
