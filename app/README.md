@@ -1,4 +1,4 @@
-# CIS - Dragnet Study Survey Platform
+# CIS-Dragnet Benchmark Study Survey Platform
 
 Reusable multi-year survey, measurement and reporting platform. Year 1 (2026) is the first configured edition, not a one-off build.
 
@@ -741,7 +741,7 @@ footer for every notice without a template of its own).
   `{{partner_logo_url}}` `<PORTAL_URL>/dragnet-logo.png` (both served by the
   admin app from `apps/admin/public/`), sized by `EMAIL_LOGO` in
   `email-templates/index.ts`; `{{study_name}}` is `STUDY_NAME` from
-  `@cis/survey` ("CIS - Dragnet Study"); `{{support_email}}` is
+  `@cis/survey` ("CIS-Dragnet Benchmark Study" and its other approved forms); `{{support_email}}` is
   `SUPPORT_EMAIL` (default `support@cisdragnetstudy.com`). Every email's
   Reply-To is `MAIL_REPLY_TO`, else that support address.
 - The Dragnet logo is a placeholder until the client supplies it: replace

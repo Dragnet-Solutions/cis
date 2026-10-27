@@ -1,4 +1,4 @@
-import { STUDY_NAME } from '@cis/survey';
+import { STUDY_SHORT_NAME } from '@cis/survey';
 import { BrandLockup } from '../components/BrandLockup';
 /**
  * The public report pages' own words for the states before a report exists:
@@ -31,7 +31,7 @@ export function PublicReportMissing({ kind }: { kind: PublicReportKind }): JSX.E
       <div className="brand-row">
         <BrandLockup />
       </div>
-      <p className="eyebrow">{STUDY_NAME}</p>
+      <p className="eyebrow">{STUDY_SHORT_NAME}</p>
       <h1>{copy.notPublished}</h1>
       <p className="lede">
         {copy.when} <a href="/survey">Back to the study</a>

@@ -52,7 +52,7 @@ export type TemplateId =
 
 /** Subject lines, as approved (README of the template set). */
 export const TEMPLATE_SUBJECTS: Readonly<Record<TemplateId, string>> = {
-  'F-01': '{{firm}} is invited to the CIS-Dragnet {{edition}} Benchmark Study',
+  'F-01': '{{firm}} is invited to the {{edition}} CIS-Dragnet Benchmark Study',
   'F-02': 'Reminder: {{firm}} has not yet set up its space',
   'F-03': 'A new invitation code for {{firm}}',
   'F-04': "{{firm}}'s study space is ready",
@@ -74,7 +74,7 @@ export const TEMPLATE_SUBJECTS: Readonly<Record<TemplateId, string>> = {
   'O-02': 'Reset your Study Operations password',
   'O-03': 'Approval needed: {{action}}',
   'O-04': '{{action}}: {{outcome}}',
-  'P-01': 'Rate your stockbroker: the CIS-Dragnet {{edition}} investor survey',
+  'P-01': 'Rate your stockbroker: the {{edition}} CIS-Dragnet Benchmark Study investor survey',
   'P-02': 'Your survey is still open',
   'P-03': 'Your survey is still open',
   'P-04': 'Thank you for taking part',

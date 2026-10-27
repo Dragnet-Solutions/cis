@@ -32,7 +32,7 @@ import {
   tabUrl,
   type Tab,
 } from './editionNav';
-import { STUDY_NAME } from '@cis/survey';
+import { STUDY_SHORT_NAME } from '@cis/survey';
 import { BrandLockup } from './components/BrandLockup';
 
 /** A link into operations may name its page (`/?tab=national`), e.g. from an
@@ -215,7 +215,7 @@ export function App(): JSX.Element {
         <div className="lockup">
           <BrandLockup size="sm" />
           <span className="lockup-text">
-            {STUDY_NAME}
+            {STUDY_SHORT_NAME}
             <small>Study operations</small>
           </span>
         </div>

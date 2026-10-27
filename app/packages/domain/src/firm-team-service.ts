@@ -18,6 +18,7 @@ import { DomainError } from './errors';
 import { queueNotice } from './email-content';
 import { firmPortalLink } from './notice-links';
 import { STUDY_NAME } from '@cis/survey';
+import { DEFAULT_SUPPORT_EMAIL } from './email-templates';
 
 /** Outbox kinds of the emails to a coordinator; ref_id is the coordinator. */
 export const COORDINATOR_WELCOME_EMAIL_KIND = 'firm-coordinator-welcome';
@@ -59,7 +60,7 @@ async function queueCoordinatorWelcome(
         : "You do not have a PIN yet: your firm's lead coordinator or the CIS team will set one for you and tell you separately.",
     ],
     action: { label: 'Go to the firm portal', url: firmPortalLink(notify.portalUrl) },
-    footer: 'If you were not expecting this, reply to this email and the CIS team will help.',
+    footer: `If you were not expecting this, reply to this email or write to ${DEFAULT_SUPPORT_EMAIL} and the study team will help.`,
   });
 }
 
@@ -219,7 +220,7 @@ export async function setCoordinatorPin(
           ? `The six-digit PIN you use to sign in to ${firmName}'s space was changed.`
           : `A six-digit PIN has been set for you to sign in to ${firmName}'s space. Whoever set it will tell you what it is; this email never contains it.`,
         'Sign in to the firm portal with this email address and the PIN.',
-        'If you did not expect this, reply to this email straight away and the CIS team will help.',
+        `If you did not expect this, reply to this email straight away or write to ${DEFAULT_SUPPORT_EMAIL} and the study team will help.`,
       ],
       action: { label: 'Go to the firm portal', url: firmPortalLink(notify.portalUrl) },
     });

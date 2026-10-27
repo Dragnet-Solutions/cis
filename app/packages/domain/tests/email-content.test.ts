@@ -103,7 +103,7 @@ describe('textToHtml and renderEmailText', () => {
     expect(text).toContain(
       'Dear Ada,\n\nYour report is ready.\n\nOpen:\nhttps://cis.example/firm\n\nPrivate.',
     );
-    expect(text).toContain('Kind regards,\nThe CIS - Dragnet Study Team');
+    expect(text).toContain('Kind regards,\nThe CIS-Dragnet Benchmark Study Team');
     expect(text).toContain('Questions? Contact help@cis.example.');
     expect(text).not.toMatch(/<|Button not working/);
   });

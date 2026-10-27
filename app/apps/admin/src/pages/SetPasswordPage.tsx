@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { getPasswordSetInfo, setPasswordWithLink } from '../api/client';
 import { ApiError, type PasswordSetInfo } from '../api/types';
 import { passwordHint } from '../auth/passwordHint';
-import { STUDY_NAME } from '@cis/survey';
+import { STUDY_SHORT_NAME } from '@cis/survey';
 import { BrandLockup } from '../components/BrandLockup';
 
 /**
@@ -89,7 +89,7 @@ export function SetPasswordPage(): JSX.Element {
         <div className="brand-row">
           <BrandLockup />
         </div>
-        <p className="eyebrow">{STUDY_NAME}</p>
+        <p className="eyebrow">{STUDY_SHORT_NAME}</p>
         {state.kind === 'loading' && <p>Checking your link…</p>}
 
         {state.kind === 'invalid' && (

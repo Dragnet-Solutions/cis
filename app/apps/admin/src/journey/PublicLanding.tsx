@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { STUDY_NAME } from '@cis/survey';
+import { STUDY_SHORT_NAME } from '@cis/survey';
 
 /**
  * UX-PUB-001 public landing. Built in full, INCLUDING the results section, which
@@ -44,7 +44,7 @@ export function PublicLanding({
   return (
     <div className="journey public-landing">
       <p className="eyebrow">
-        {STUDY_NAME} · {editionLabel ?? 'Current edition'}
+        {STUDY_SHORT_NAME} · {editionLabel ?? 'Current edition'}
       </p>
       <h1 tabIndex={-1}>The Nigerian Capital Market Brokerage Benchmark</h1>
       <p className="lede">

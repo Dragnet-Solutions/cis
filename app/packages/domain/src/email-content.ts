@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from 'pg';
 import { queueEmail, type OutboxEmail } from '@cis/db';
-import { STUDY_NAME } from '@cis/survey';
+import { STUDY_SIGN_OFF } from '@cis/survey';
 import {
   escapeHtml,
   htmlToText,
@@ -45,15 +45,15 @@ export interface EmailContent {
 
 const FOOTER_NOTE: Record<NoticeAudience, (edition: string) => string> = {
   firm: (e) =>
-    `You are receiving this because your firm is a participating firm in the CIS-Dragnet ${e} Benchmark Study.`,
+    `You are receiving this because your firm is a participating firm in the ${e} CIS-Dragnet Benchmark Study.`,
   investor: (e) =>
-    `You are receiving this because you took part in, or were invited to, the CIS-Dragnet ${e} investor survey.`,
+    `You are receiving this because you took part in, or were invited to, the ${e} CIS-Dragnet Benchmark Study investor survey.`,
   institution: (e) =>
-    `You are receiving this as the named contact for your institution in the CIS-Dragnet ${e} Benchmark Study.`,
+    `You are receiving this as the named contact for your institution in the ${e} CIS-Dragnet Benchmark Study.`,
   operator: () =>
     'You are receiving this because you have an account on CIS-Dragnet Study Operations.',
   general: (e) =>
-    `You are receiving this because of your part in the CIS-Dragnet ${e} Benchmark Study.`,
+    `You are receiving this because of your part in the ${e} CIS-Dragnet Benchmark Study.`,
 };
 
 /** The edition label emails name when none is given: the open (else latest)
@@ -144,7 +144,7 @@ export function renderEmailHtml(content: EmailContent, opts: RenderOptions = {})
     }
   }
   const team =
-    audience === 'operator' ? 'CIS-Dragnet Study Operations' : `The ${escapeHtml(STUDY_NAME)} Team`;
+    audience === 'operator' ? 'CIS-Dragnet Study Operations' : escapeHtml(STUDY_SIGN_OFF);
   parts.push(
     `<p style="margin:8px 0 0;${ARIAL}font-size:15px;line-height:24px;color:#3B3848;">Kind regards,<br><strong style="color:#1B1530;">${team}</strong></p>`,
   );
@@ -153,7 +153,7 @@ export function renderEmailHtml(content: EmailContent, opts: RenderOptions = {})
       ? ''
       : `  <p style="${S.footerLine}">Individual answers are confidential and reported only in aggregate.</p>\n`;
   const title =
-    content.heading ?? content.paragraphs[0] ?? `CIS-Dragnet ${edition} Benchmark Study`;
+    content.heading ?? content.paragraphs[0] ?? `${edition} CIS-Dragnet Benchmark Study`;
   return renderLayout(
     {
       title,

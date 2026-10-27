@@ -78,7 +78,7 @@ describe('Requests for an invitation', () => {
     expect(approved!.bodyText).toContain(`(ref ${requestRef(req.id)})`);
     const [invitation] = await listEmailsFor(pool, INVITATION_REQUEST_EMAIL_KIND, [req.id]);
     expect(invitation!.subject).toBe(
-      'Cordros Securities is invited to the CIS-Dragnet 2026 Benchmark Study',
+      'Cordros Securities is invited to the 2026 CIS-Dragnet Benchmark Study',
     );
     expect(invitation!.bodyText).toMatch(
       /Your invitation code:\nhttps:\/\/cis\.example\/firm\?invite=/,

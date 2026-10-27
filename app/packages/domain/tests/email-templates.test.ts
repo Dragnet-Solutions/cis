@@ -122,8 +122,8 @@ describe.each(TEMPLATE_IDS)('template %s', (id) => {
 
   it('signs off as the study team, by its one name', () => {
     if (id.startsWith('O-')) return; // operator emails sign off from Study Operations
-    expect(r.html).toContain('The CIS - Dragnet Study Team');
-    expect(r.text).toContain('The CIS - Dragnet Study Team');
+    expect(r.html).toContain('The CIS-Dragnet Benchmark Study Team');
+    expect(r.text).toContain('The CIS-Dragnet Benchmark Study Team');
   });
 
   it('escapes every merge value', () => {
@@ -149,7 +149,7 @@ describe('template details', () => {
     const r = renderTemplate('O-03', SAMPLE_FIELDS['O-03'], { brand: BRAND });
     expect(r.subject).toBe('Approval needed: Release the firm reports');
     expect(TEMPLATE_SUBJECTS['F-01']).toBe(
-      '{{firm}} is invited to the CIS-Dragnet {{edition}} Benchmark Study',
+      '{{firm}} is invited to the {{edition}} CIS-Dragnet Benchmark Study',
     );
   });
 
@@ -191,7 +191,7 @@ describe('the shared layout (notices without a template)', () => {
     expectLogoPair(html);
     expect(text).toContain('help@cis.example');
     expect(`${n.subject}\n${text}`).not.toContain('×');
-    if (n.audience !== 'operator') expect(text).toContain('The CIS - Dragnet Study Team');
+    if (n.audience !== 'operator') expect(text).toContain('The CIS-Dragnet Benchmark Study Team');
     if (n.action) expect(text).toContain(n.action.url);
   });
 
@@ -300,7 +300,7 @@ describe('optional parts (restored for platform parity)', () => {
       { paragraphs: ['Hi'], audience: 'firm' },
       { brand: BRAND, edition: '2027' },
     );
-    expect(base).toContain('CIS-Dragnet 2027 Benchmark Study');
+    expect(base).toContain('2027 CIS-Dragnet Benchmark Study');
     expect(base).not.toContain('2026');
   });
 });

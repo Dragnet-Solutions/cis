@@ -23,9 +23,12 @@ describe('SMTP transport — sender and Reply-To', () => {
     const out = await t.send({ to: 'ada@firm.example', subject: 'S', text: 'T' });
     expect(out).toEqual({ messageId: '<m1@smtp>' });
     const opts = sendMail.mock.calls[0]![0];
-    expect(opts['from']).toEqual({ name: 'CIS - Dragnet Study', address: 'noreply@idhub.ng' });
+    expect(opts['from']).toEqual({
+      name: 'The CIS-Dragnet Benchmark Study',
+      address: 'noreply@idhub.ng',
+    });
     expect(opts['replyTo']).toEqual({
-      name: 'CIS - Dragnet Study',
+      name: 'The CIS-Dragnet Benchmark Study',
       address: 'support@cisdragnetstudy.com',
     });
   });

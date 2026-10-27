@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { login, requestPasswordReset } from '../api/client';
 import { ApiError } from '../api/types';
 import type { Session } from '../auth/useSession';
-import { STUDY_NAME } from '@cis/survey';
+import { STUDY_SHORT_NAME } from '@cis/survey';
 import { BrandLockup } from '../components/BrandLockup';
 
 export function LoginPage({
@@ -44,7 +44,7 @@ export function LoginPage({
         <div className="brand-row">
           <BrandLockup />
         </div>
-        <p className="eyebrow">{STUDY_NAME}</p>
+        <p className="eyebrow">{STUDY_SHORT_NAME}</p>
         <h1 tabIndex={-1}>Reset your password</h1>
         <p className="lede">
           Enter the email address you sign in with. If it has an account, we will email it a link to
@@ -111,7 +111,7 @@ export function LoginPage({
       <div className="brand-row">
         <BrandLockup />
       </div>
-      <p className="eyebrow">{STUDY_NAME}</p>
+      <p className="eyebrow">{STUDY_SHORT_NAME}</p>
       <h1 tabIndex={-1}>Study operations</h1>
       <p className="lede">Sign in to manage the current edition and its surveys.</p>
       {notice && (

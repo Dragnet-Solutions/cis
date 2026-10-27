@@ -1,4 +1,4 @@
-import { STUDY_NAME } from '@cis/survey';
+import { STUDY_NAME, STUDY_SHORT_NAME } from '@cis/survey';
 import type { EmailContent } from '../email-content';
 import type { MergeFields, TemplateId } from './index';
 
@@ -178,7 +178,7 @@ export const SAMPLE_BASE_NOTICES: ReadonlyArray<{ kind: string; subject: string 
   [
     {
       kind: 'mail-test',
-      subject: `${STUDY_NAME}: test email`,
+      subject: `${STUDY_SHORT_NAME}: test email`,
       audience: 'operator',
       label: 'Test',
       heading: 'Test email',
@@ -199,7 +199,8 @@ export const SAMPLE_BASE_NOTICES: ReadonlyArray<{ kind: string; subject: string 
         'You sign in to the firm portal with this email address and a six-digit PIN.',
       ],
       action: { label: 'Open the firm portal', url: `${PORTAL}/firm` },
-      footer: 'If you were not expecting this, reply to this email and the CIS team will help.',
+      footer:
+        'If you were not expecting this, reply to this email or write to support@cisdragnetstudy.com and the study team will help.',
     },
     {
       kind: 'survey-resume-link',

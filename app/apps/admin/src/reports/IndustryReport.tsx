@@ -18,7 +18,7 @@ import {
   gapOf,
   show,
 } from './parts';
-import { STUDY_NAME } from '@cis/survey';
+import { STUDY_SHORT_NAME, studyTitle } from '@cis/survey';
 
 /**
  * The public Industry report, laid out to the approved sample
@@ -210,7 +210,7 @@ export function IndustryReport({
         <Cover
           watermark={c.edition.label.slice(-2)}
           right={<span className="rpt-kind">Flagship industry benchmark</span>}
-          eyebrow={`${STUDY_NAME} · ${c.edition.label} edition`}
+          eyebrow={`${STUDY_SHORT_NAME} · ${c.edition.label} edition`}
           title="State of Stockbroking Operations & Investor Experience in Nigeria"
           sub="The profession’s evidence-based benchmark of how firms operate and how investors experience them."
           meta={[
@@ -680,10 +680,7 @@ export function IndustryReport({
           <Prose narrative={c.narrative} section="CLOSING" />
           <div className="rpt-foot">
             <Brand />
-            <div>
-              State of Stockbroking Operations and Investor Experience in Nigeria: A{' '}
-              {c.edition.label} {STUDY_NAME}
-            </div>
+            <div>{studyTitle(c.edition.label)}</div>
           </div>
           <p className="rpt-method">
             How these figures are made: every figure is computed from submitted responses. Ratings

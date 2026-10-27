@@ -175,7 +175,7 @@ describe('Invitation batches render the template and resolve each firm’s addre
     expect(toLead.refId).toBe(byOrg.get(withLead.id)!.id);
     expect(toLead.toName).toBe('Lead Person');
     // The seeded "First invitation" goes out in its approved design (F-01).
-    expect(toLead.subject).toBe('Lead Capital is invited to the CIS-Dragnet 2026 Benchmark Study');
+    expect(toLead.subject).toBe('Lead Capital is invited to the 2026 CIS-Dragnet Benchmark Study');
     expect(toLead.bodyText).toContain('Dear Lead Person,');
     expect(toLead.bodyText).not.toContain('{{');
     // A firm with a space is sent to the portal's sign-in, not a claim link.
@@ -235,7 +235,7 @@ describe('Invitation batches render the template and resolve each firm’s addre
     const [email] = await listEmailsFor(pool, INVITATION_BATCH_EMAIL_KIND, [rec!.id]);
     // F-01's design (subject, code box, button) around the operators' text.
     expect(email!.subject).toBe(
-      'Edited Words Ltd is invited to the CIS-Dragnet 2026 Benchmark Study',
+      'Edited Words Ltd is invited to the 2026 CIS-Dragnet Benchmark Study',
     );
     expect(email!.bodyText).toContain(
       'Dear Edited Words Ltd,\n\nWe would <really> like you to join.',
