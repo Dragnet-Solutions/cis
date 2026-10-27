@@ -229,7 +229,7 @@ describe('Campaign sends reach a firm through its directory contact (NEW-2)', ()
       portalUrl: 'https://portal.example',
     });
     expect(r.sent).toBe(1);
-    const inv = await getPendingFirmInvitation(pool, f.id, 'ada@fileonly.example');
+    const inv = await getPendingFirmInvitation(pool, f.id, 'ada@fileonly.example', editionId);
     expect(inv).toMatchObject({ email: 'ada@fileonly.example', contactName: 'Ada Obi' });
   });
 });
