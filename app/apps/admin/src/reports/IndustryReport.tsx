@@ -1,7 +1,7 @@
 import type { IndustryReportContent } from '../api/types';
 import type { ReportSource } from './source';
 import { useReport } from './useReport';
-import { InstitutionGroups } from './institutional';
+import { InstitutionGroups, outOfScope, outOfScopeNote, participationLine } from './institutional';
 import {
   Bar,
   Brand,
@@ -74,6 +74,10 @@ export function IndustryReport({
 
   const section = (id: string) => c.sections?.find((s) => s.id === id) ?? null;
   const no = (id: string) => String(SECTION_ORDER.indexOf(id) + 1).padStart(2, '0');
+  // Institutions that responded but were out of scope (no reading) — BUG-17.
+  const scopedOut = outOfScope(c.institutionalContributors ?? [], c.institutional).map(
+    (r) => r.code,
+  );
 
   /** A section's body — or its suppressed / caveated state from the national report. */
   const gated = (id: string, body: JSX.Element): JSX.Element => {
@@ -569,7 +573,7 @@ export function IndustryReport({
                         </span>
                       </span>
                       <span className="num">
-                        <small>n={r.n}</small>
+                        <small>{r.n.toLocaleString()} gave a view</small>
                       </span>
                     </div>
                   ))}
@@ -589,8 +593,10 @@ export function IndustryReport({
                   </span>
                 </div>
                 <p className="rpt-note">
-                  Base: {c.comparators.base} retail investors (compared with their bank and with
-                  digital apps). “Unable to compare” is excluded from each comparison.
+                  Base: {c.comparators.base.toLocaleString()} retail investors answered this
+                  question. Each bar counts the investors who gave a view on that comparison;
+                  “Unable to compare” is excluded from that bar, so its count can be lower than the
+                  base.
                 </p>
               </>
             ) : (
@@ -646,14 +652,18 @@ export function IndustryReport({
           />
           {gated(
             'PUB_10_INSTITUTIONAL_PERSPECTIVES',
-            c.institutional.length ? (
+            c.institutional.length || scopedOut.length ? (
               <>
                 <InstitutionGroups readings={c.institutional} narrative={c.narrative} />
                 <p className="rpt-note">
-                  {c.institutionalParticipation.contributed} of{' '}
-                  {c.institutionalParticipation.invited} invited institutions contributed. The full
-                  reading, with what the institutions share, is published as the companion report
-                  Institutional Perspectives on Market Operations.
+                  {participationLine(
+                    c.institutionalParticipation,
+                    c.institutional.length,
+                    scopedOut,
+                  )}{' '}
+                  {outOfScopeNote(scopedOut) ?? ''} The full reading, with what the institutions
+                  share, is published as the companion report Institutional Perspectives on Market
+                  Operations.
                 </p>
               </>
             ) : (

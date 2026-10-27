@@ -9,6 +9,62 @@ import type { InstitutionalReading, ReportNarrativeView } from '../api/types';
  * "exchange efficiency").
  */
 
+const COUNT_WORDS = [
+  'no',
+  'one',
+  'two',
+  'three',
+  'four',
+  'five',
+  'six',
+  'seven',
+  'eight',
+  'nine',
+  'ten',
+];
+/** A count in words ("six"), or digits past ten. */
+export const inWords = (n: number): string => COUNT_WORDS[n] ?? String(n);
+const capFirst = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/**
+ * Institutions that responded but have no reading: their scope question (Q0
+ * "Rare" / "Effectively none") closed the survey. They count as contributing
+ * and are described as out of scope, so "six contributed" never sits beside
+ * five readings unexplained (BUG-17).
+ */
+export function outOfScope<T extends { name: string }>(
+  contributors: T[],
+  readings: InstitutionalReading[],
+): T[] {
+  const read = new Set(readings.map((r) => r.role));
+  return contributors.filter((c) => !read.has(c.name));
+}
+
+const listCodes = (xs: string[]) =>
+  xs.length <= 1 ? (xs[0] ?? '') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`;
+
+/** The neutral note for institutions out of scope this edition, or null. */
+export function outOfScopeNote(codes: string[]): string | null {
+  if (codes.length === 0) return null;
+  const one = codes.length === 1;
+  return `${listCodes(codes)} responded, but reported too little direct operational contact with stockbroking firms this edition to give a reading. ${one ? 'It is' : 'They are'} counted as contributing; no reading is shown for ${one ? 'it' : 'them'}.`;
+}
+
+/**
+ * The participation sentence: contributed, then how many gave a reading, so the
+ * counts always agree with the readings shown.
+ */
+export function participationLine(
+  p: { invited: number; contributed: number },
+  readingCount: number,
+  outOfScopeCodes: string[],
+): string {
+  if (p.invited === 0) return 'No institution has been invited to give a reading yet.';
+  const base = `${capFirst(inWords(p.contributed))} of ${inWords(p.invited)} invited institution${p.invited === 1 ? '' : 's'} contributed.`;
+  if (outOfScopeCodes.length === 0) return base;
+  return `${base} ${capFirst(inWords(readingCount))} gave a reading; ${listCodes(outOfScopeCodes)} ${outOfScopeCodes.length === 1 ? 'was' : 'were'} out of scope this edition.`;
+}
+
 /** Neutral labels for a reading frozen before per-instrument labels existed. */
 const NEUTRAL_LABELS = {
   issue: 'Most frequently cited issue',

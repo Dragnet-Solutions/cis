@@ -155,11 +155,22 @@ export function industryFacts(c: IndustryReportContent): NarrativeFact[] {
   // figure (BANDED), and never words put in an institution's mouth.
   const ip = c.institutionalParticipation;
   if (ip.invited > 0) {
+    // Out of scope: responded, but the scope question closed the survey, so
+    // there is no reading — said here so the narrative never counts six
+    // contributors over five readings unexplained (BUG-17).
+    const read = new Set(c.institutional.map((i) => i.role));
+    const scopedOut = (c.institutionalContributors ?? [])
+      .filter((x) => !read.has(x.name))
+      .map((x) => x.code);
+    const readings = new Set(c.institutional.map((i) => i.role)).size;
     facts.push(
-      fact('INST.PART', `${ip.contributed} of ${ip.invited} invited institutions contributed.`, [
-        ip.contributed,
-        ip.invited,
-      ]),
+      fact(
+        'INST.PART',
+        scopedOut.length
+          ? `${ip.contributed} of ${ip.invited} invited institutions contributed; ${readings} gave a reading, and ${scopedOut.join(', ')} reported too little direct contact with stockbroking firms this edition to give one (out of scope).`
+          : `${ip.contributed} of ${ip.invited} invited institutions contributed.`,
+        scopedOut.length ? [ip.contributed, ip.invited, readings] : [ip.contributed, ip.invited],
+      ),
     );
   }
   for (const i of c.institutional) {
@@ -198,13 +209,15 @@ export function industryFacts(c: IndustryReportContent): NarrativeFact[] {
     );
   }
   const th = c.institutionalThemes;
-  th.themes.forEach((t, k) =>
+  // The same list the report's table shows: only areas named by more than one
+  // institution. An area one institution names alone is its own finding (the
+  // INST.APART facts), never a theme the narrative names that the table lacks
+  // (BUG-22).
+  sharedThemes(th).forEach((t, k) =>
     facts.push(
       fact(
         `INST.THEME.${k + 1}`,
-        t.codes.length > 1
-          ? `${t.theme} is named among the most frequent issues or greatest consequences by ${t.codes.join(', ')} — a reading shared across institutions.`
-          : `${t.theme} is named by ${t.codes[0]} alone.`,
+        `${t.theme} is named among the most frequent issues or greatest consequences by ${t.codes.join(', ')} — a reading shared across institutions.`,
         [],
         'BANDED',
       ),
@@ -221,6 +234,13 @@ export function industryFacts(c: IndustryReportContent): NarrativeFact[] {
     ),
   );
   return facts;
+}
+
+/** The operational areas more than one institution names — the table's rows. */
+export function sharedThemes(
+  th: IndustryReportContent['institutionalThemes'],
+): Array<{ theme: string; codes: string[] }> {
+  return th.themes.filter((t) => t.codes.length > 1);
 }
 
 export function firmFacts(c: FirmReportContent): NarrativeFact[] {

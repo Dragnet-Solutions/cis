@@ -401,6 +401,10 @@ export function comparatorShares(rows: ReportAnswerRow[]): IndustryReportContent
     for (const comparator of Object.keys(r.answer as Record<string, unknown>)) {
       const v = gridCell(r.answer, comparator);
       if (typeof v !== 'string') continue;
+      // The section's one base is every investor who answered the question —
+      // "Unable to compare" included — so it matches the retail base used
+      // elsewhere; each comparison's own n is those who gave a view (BUG-21).
+      respondents.add(r.respondentId);
       const t = tallies.get(comparator) ?? { better: 0, same: 0, worse: 0, n: 0 };
       if (BETTER.has(v)) t.better++;
       else if (WORSE.has(v)) t.worse++;
@@ -408,7 +412,6 @@ export function comparatorShares(rows: ReportAnswerRow[]): IndustryReportContent
       else continue; // "Unable to compare" is no view either way
       t.n++;
       tallies.set(comparator, t);
-      respondents.add(r.respondentId);
     }
   }
   if (respondents.size < SUPPRESS_BELOW) return null;
@@ -547,12 +550,16 @@ export function buildAgenda(
 
   const strongest = [...gaps].sort((a, b) => b.gap - a.gap)[0];
   if (strongest && strongest.gap >= margin) {
+    // "The gaps above" only when the agenda above names one (BUG-23).
+    const gapsAbove = agenda.length > 0;
     agenda.push({
       priority: 'sustain',
       title: `Protect your ${strongest.label.toLowerCase()} strength`,
       detail:
         `You rate ${strongest.firm.value} against an industry ${strongest.industry.value}. ` +
-        'Hold it while you address the gaps above.',
+        (gapsAbove
+          ? 'Hold it while you address the gaps above.'
+          : 'No gap needs closing elsewhere: keep this lead as the standard for the rest.'),
     });
   }
 
@@ -959,7 +966,10 @@ export async function buildFirmReportContent(
       releaseState: firmReport.releaseState,
     },
     margin,
-    indices: await buildIndices(pool, editionId, firmId, opts.scoringRunId),
+    indices: withholdUnsupportedSei(
+      await buildIndices(pool, editionId, firmId, opts.scoringRunId),
+      selfVsInvestors.investorExperience,
+    ),
     dimensions,
     selfVsInvestors,
     retailCut: {
@@ -980,6 +990,39 @@ export async function buildFirmReportContent(
       margin,
     ),
   };
+}
+
+/**
+ * A firm's SEI compares its own expectation with its investors' experience.
+ * When this report withholds that experience (fewer than ten of the firm's
+ * investors), it withholds the SEI built on it too: no report shows a score
+ * whose input it hides (BUG-19).
+ */
+export function withholdUnsupportedSei(indices: Indices, investorExperience: Rating): Indices {
+  if (indices.state !== 'reported' || !indices.firm) return indices;
+  if (investorExperience.value !== null) return indices;
+  return {
+    ...indices,
+    firm: indices.firm.map((s) =>
+      s.code === 'SEI' && s.value !== null
+        ? {
+            ...s,
+            value: null,
+            note: `Withheld: it rests on how your investors rate their experience, which this report withholds (${plural(investorExperience.n, 'investor', 'investors')} answered, fewer than ${SUPPRESS_BELOW}).`,
+          }
+        : s,
+    ),
+  };
+}
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * Industry SEI is the mean of firms' own SEI, not a pool of investors: its
+ * base is the eligible firms, and it says so (BUG-19).
+ */
+export function industrySeiNote(eligibleFirms: number): string {
+  return `The mean of ${plural(eligibleFirms, 'firm', 'firms')}’ own scores — only firms where at least ${SUPPRESS_BELOW} of their investors answered are counted.`;
 }
 
 /**
@@ -1069,6 +1112,8 @@ async function buildIndices(
       } else {
         note = `From ${plural(n, 'firm', 'firms')}.`;
       }
+    } else if (code === 'SEI' && n !== null) {
+      note = industrySeiNote(n);
     } else if (n !== null) {
       note = `Pooled from ${plural(n, 'investor', 'investors')} in segments that clear their floor.`;
     }

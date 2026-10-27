@@ -1,5 +1,11 @@
 import type { IndustryReportContent } from '../api/types';
-import { InstitutionGroups } from './institutional';
+import {
+  InstitutionGroups,
+  inWords,
+  outOfScope,
+  outOfScopeNote,
+  participationLine,
+} from './institutional';
 import {
   Brand,
   Cover,
@@ -27,8 +33,6 @@ import { STUDY_NAME } from '@cis/survey';
  * institutions share is computed from their answers, not assumed.
  */
 
-const WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
-const inWords = (n: number) => WORDS[n] ?? String(n);
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 export function InstitutionalReport({
@@ -72,6 +76,9 @@ export function InstitutionalReport({
       code: r.code,
     }));
   const p = c.institutionalParticipation;
+  // Responded, but the scope question closed the survey: no reading (BUG-17).
+  const scopedOut = outOfScope(institutions, readings).map((r) => r.code);
+  const scopedOutNote = outOfScopeNote(scopedOut);
   const shared = c.institutionalThemes.themes.filter((t) => t.codes.length > 1);
 
   return (
@@ -178,7 +185,12 @@ export function InstitutionalReport({
                           </td>
                           <td>
                             {r.name}
-                            {vantage ? ` — ${vantage}` : ''}.
+                            {vantage
+                              ? ` — ${vantage}`
+                              : scopedOut.includes(r.code)
+                                ? ' — out of scope this edition; no reading'
+                                : ''}
+                            .
                           </td>
                         </tr>
                       );
@@ -189,9 +201,9 @@ export function InstitutionalReport({
               <div className="rpt-box">
                 <p className="rpt-eyebrow">Participation, this edition</p>
                 <p>
-                  {p.invited === 0
-                    ? 'No institution has been invited to give a reading yet.'
-                    : `${cap(inWords(p.contributed))} of ${inWords(p.invited)} invited institution${p.invited === 1 ? '' : 's'} contributed. Each reading reflects one consolidated position, completed by a nominated contact whose role brings them into direct contact with stockbroking firms.`}
+                  {participationLine(p, readings.length, scopedOut)}
+                  {p.invited > 0 &&
+                    ' Each reading reflects one consolidated position, completed by a nominated contact whose role brings them into direct contact with stockbroking firms.'}
                 </p>
               </div>
             </section>
@@ -209,6 +221,7 @@ export function InstitutionalReport({
                   No institution has submitted its reading.
                 </div>
               )}
+              {scopedOutNote && <p className="rpt-note">{scopedOutNote}</p>}
               <div className="rpt-box">
                 <p className="rpt-eyebrow">A note on the readings</p>
                 <p>
