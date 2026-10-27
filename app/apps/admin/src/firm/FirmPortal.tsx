@@ -34,7 +34,7 @@ import { ApiError } from '../api/types';
 import { ErrorState, type ErrorStateKind } from '../shared/ErrorState';
 import { isValidEmail } from '../lib/email';
 import { useEmailField } from '../lib/useEmailField';
-import { STUDY_NAME } from '@cis/survey';
+import { STUDY_SHORT_NAME } from '@cis/survey';
 import { BrandLockup } from '../components/BrandLockup';
 
 /**
@@ -185,7 +185,7 @@ function ClaimOrSignIn({
         <div className="lockup">
           <BrandLockup size="sm" />
           <span className="lockup-text">
-            {STUDY_NAME}
+            {STUDY_SHORT_NAME}
             <small>Stockbroking firm portal</small>
           </span>
         </div>
@@ -1012,7 +1012,7 @@ function Portal({
         <div className="lockup">
           <BrandLockup size="sm" />
           <span className="lockup-text">
-            {STUDY_NAME}
+            {STUDY_SHORT_NAME}
             <small>Stockbroking firm portal</small>
           </span>
         </div>

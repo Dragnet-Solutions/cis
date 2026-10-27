@@ -15,7 +15,7 @@ import {
   show,
   signed,
 } from './parts';
-import { STUDY_NAME } from '@cis/survey';
+import { STUDY_ATTRIBUTION, STUDY_NAME, studyTitle } from '@cis/survey';
 
 /**
  * A firm's private report, laid out to the approved sample
@@ -445,11 +445,8 @@ export function FirmReport({
         <div className="rpt-closing">
           <div className="rpt-foot" style={{ marginTop: 0 }}>
             <Brand />
-            <div>
-              State of Stockbroking Operations and Investor Experience in Nigeria: A{' '}
-              {c.edition.label} {STUDY_NAME}
-            </div>
-            <div>{STUDY_NAME} · Private Member Report</div>
+            <div>{studyTitle(c.edition.label)}</div>
+            <div>{STUDY_ATTRIBUTION} · Private Member Report</div>
           </div>
           <p className="rpt-method">
             This report is private to {c.firm.name}: it is never shared with other firms or any

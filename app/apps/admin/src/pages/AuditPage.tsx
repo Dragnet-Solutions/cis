@@ -272,8 +272,7 @@ export function AuditPage({
                     <td>
                       {e.actor ? (
                         <>
-                          {e.actor.name ?? 'Unknown'}
-                          <br />
+                          {e.actor.name ?? 'Unknown'} <br />
                           <small>{e.actor.email}</small>
                         </>
                       ) : (

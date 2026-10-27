@@ -606,7 +606,11 @@ export type {
 
 // ── Phase 18: Public content — help/privacy/about + previous editions
 //    (UX-X-002, UX-PUB-002) ──────────────────────────────────────────────────
-export { getPublicContent, listPreviousPublishedEditions } from './public-content-service';
+export {
+  getPublicContent,
+  listPreviousPublishedEditions,
+  DEFAULT_PUBLIC_CONTENT,
+} from './public-content-service';
 export type {
   PublicContent,
   OrganisationDescriptions,

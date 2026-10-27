@@ -17,7 +17,7 @@ import {
 } from './parts';
 import type { ReportSource } from './source';
 import { useReport } from './useReport';
-import { STUDY_NAME } from '@cis/survey';
+import { STUDY_SHORT_NAME } from '@cis/survey';
 
 /**
  * Institutional Perspectives on Market Operations — section 10 of the public
@@ -114,7 +114,7 @@ export function InstitutionalReport({
         <Cover
           watermark="10"
           right={<span className="rpt-kind">Companion to the Industry report</span>}
-          eyebrow={`${STUDY_NAME} · ${c.edition.label} edition`}
+          eyebrow={`${STUDY_SHORT_NAME} · ${c.edition.label} edition`}
           title={
             <>
               Institutional Perspectives
@@ -296,9 +296,7 @@ export function InstitutionalReport({
           </p>
           <div className="rpt-foot">
             <Brand />
-            <div>
-              Institutional Perspectives · A {c.edition.label} {STUDY_NAME}
-            </div>
+            <div>Institutional Perspectives · A {c.edition.label} CIS-Dragnet Study</div>
           </div>
         </div>
       </div>

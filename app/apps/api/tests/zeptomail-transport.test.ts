@@ -124,7 +124,7 @@ describe('ZeptoMail transport — the request', () => {
     const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
     expect(body.from).toEqual({
       address: 'no-reply@mail.example.org',
-      name: 'CIS - Dragnet Study',
+      name: 'The CIS-Dragnet Benchmark Study',
     });
     expect(body.to).toEqual([{ email_address: { address: 'b@firm.example' } }]);
     expect(body).not.toHaveProperty('htmlbody');
@@ -142,22 +142,22 @@ describe('ZeptoMail transport — the request', () => {
 
 describe('Reply-To, for every transport', () => {
   it('is MAIL_REPLY_TO, else SUPPORT_EMAIL, else support@cisdragnetstudy.com', () => {
-    const from = { address: 'noreply@idhub.ng', name: 'CIS - Dragnet Study' };
+    const from = { address: 'noreply@idhub.ng', name: 'The CIS-Dragnet Benchmark Study' };
     expect(
       replyToFromEnv({ MAIL_REPLY_TO: 'a@x.example', SUPPORT_EMAIL: 'b@x.example' }, from),
-    ).toEqual({ address: 'a@x.example', name: 'CIS - Dragnet Study' });
+    ).toEqual({ address: 'a@x.example', name: 'The CIS-Dragnet Benchmark Study' });
     expect(replyToFromEnv({ SUPPORT_EMAIL: 'b@x.example' }, from)).toEqual({
       address: 'b@x.example',
-      name: 'CIS - Dragnet Study',
+      name: 'The CIS-Dragnet Benchmark Study',
     });
     expect(replyToFromEnv({}, from)).toEqual({
       address: 'support@cisdragnetstudy.com',
-      name: 'CIS - Dragnet Study',
+      name: 'The CIS-Dragnet Benchmark Study',
     });
     // The sender name defaults to the study's name.
     expect(replyToFromEnv({ MAIL_FROM: 'noreply@idhub.ng' })).toEqual({
       address: 'support@cisdragnetstudy.com',
-      name: 'CIS - Dragnet Study',
+      name: 'The CIS-Dragnet Benchmark Study',
     });
   });
 });
@@ -239,12 +239,15 @@ describe('selectTransport and sender parsing', () => {
   });
 
   it('parses "Name <addr>", quoted names and bare addresses', () => {
-    expect(parseAddress('CIS - Dragnet Study <a@b.org>')).toEqual({
+    expect(parseAddress('The CIS-Dragnet Benchmark Study <a@b.org>')).toEqual({
       address: 'a@b.org',
-      name: 'CIS - Dragnet Study',
+      name: 'The CIS-Dragnet Benchmark Study',
     });
     expect(parseAddress('"The Team" <a@b.org>')).toEqual({ address: 'a@b.org', name: 'The Team' });
-    expect(parseAddress('a@b.org')).toEqual({ address: 'a@b.org', name: 'CIS - Dragnet Study' });
+    expect(parseAddress('a@b.org')).toEqual({
+      address: 'a@b.org',
+      name: 'The CIS-Dragnet Benchmark Study',
+    });
     expect(parseAddress('')).toBeNull();
   });
 });

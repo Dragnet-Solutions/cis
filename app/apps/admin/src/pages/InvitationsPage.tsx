@@ -572,8 +572,7 @@ function NewMessageWizard({
                     }
                   >
                     <td>
-                      <b>{t.name}</b>
-                      <br />
+                      <b>{t.name}</b> <br />
                       <span className="tag soft">{t.subject}</span>
                     </td>
                     <td>

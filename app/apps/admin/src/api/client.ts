@@ -385,7 +385,7 @@ export interface AdminClient {
   downloadFirmInvitationsCsv(editionId: string): Promise<Blob>;
   bulkInviteFirms(
     editionId: string,
-    body: { organizationIds?: string[]; namePrefix?: string; emailTemplate: string },
+    body: { organizationIds?: string[]; namePrefix?: string; emailTemplate?: string },
   ): Promise<BulkFirmInviteResult>;
   // People & Access (UX-OPS-006)
   getPeople(): Promise<PeopleResponse>;
@@ -759,7 +759,11 @@ export function createClient(token: string | null, hooks: SessionHooks = {}): Ad
       request('/reminders/schedule', { method: 'PUT', body: schedule, token }),
     setReminderCap: (cap) => request('/reminders/cap', { method: 'PUT', body: { cap }, token }),
     runReminders: (editionId) =>
-      request(`/editions/${editionId}/reminders/run`, { method: 'POST', body: {}, token }),
+      request(`/editions/${editionId}/reminders/run`, {
+        method: 'POST',
+        body: { now: true },
+        token,
+      }),
     get: <T = unknown>(path: string) => request<T>(path, { token }),
     post: <T = unknown>(path: string, body: unknown) =>
       request<T>(path, { method: 'POST', body, token }),

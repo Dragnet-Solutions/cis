@@ -1,6 +1,7 @@
 import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { getPool } from '@cis/db';
+import { loadRbacContext, requirePermission } from '@cis/auth';
 import {
   listAudiences,
   listMessageTemplates,
@@ -148,6 +149,9 @@ export const invitationsRoutes: FastifyPluginAsyncZod = async (app) => {
       },
     },
     async (request, reply) => {
+      // Writing to firms, regulators and participants is a right of its own
+      // ("access:send"), as for reminders and the test email.
+      requirePermission(await loadRbacContext(getPool(), request.user.sub), 'access:send');
       const result = await sendBatch(getPool(), {
         editionId: request.params.id,
         templateId: request.body.templateId,

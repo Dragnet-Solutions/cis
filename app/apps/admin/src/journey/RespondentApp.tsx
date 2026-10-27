@@ -10,7 +10,7 @@ import { PreviousEditions } from './PreviousEditions';
 import { journeyApi, type ParticipatingFirm } from './journeyClient';
 import { ApiError } from '../api/types';
 import { ErrorState, type ErrorStateKind } from '../shared/ErrorState';
-import { STUDY_NAME } from '@cis/survey';
+import { STUDY_SHORT_NAME } from '@cis/survey';
 import { BrandLockup } from '../components/BrandLockup';
 import {
   deviceStore,
@@ -265,7 +265,7 @@ export function RespondentApp(): JSX.Element {
           <div className="lockup">
             <BrandLockup size="sm" />
             <span className="lockup-text">
-              {STUDY_NAME}
+              {STUDY_SHORT_NAME}
               <small>Benchmark survey</small>
             </span>
           </div>
@@ -283,7 +283,7 @@ export function RespondentApp(): JSX.Element {
         <div className="lockup">
           <BrandLockup size="sm" />
           <span className="lockup-text">
-            {STUDY_NAME}
+            {STUDY_SHORT_NAME}
             <small>Benchmark survey</small>
           </span>
         </div>

@@ -113,7 +113,7 @@ describe('inviteFirm', () => {
     expect(email.bodyText).toContain(`${PORTAL}/firm?invite=${token}`);
     expect(email.bodyHtml).toContain(`${PORTAL}/firm?invite=${token}`);
     // The approved firm invitation (F-01): the link is the invitation code.
-    expect(email.subject).toBe('CORDROS Ltd is invited to the CIS-Dragnet 2026 Benchmark Study');
+    expect(email.subject).toBe('CORDROS Ltd is invited to the 2026 CIS-Dragnet Benchmark Study');
     expect(email.bodyText).toContain(`Your invitation code:\n${PORTAL}/firm?invite=${token}`);
     expect(email.bodyText).toMatch(/Survey closes: /);
 
@@ -503,9 +503,9 @@ describe('operator links, CSV and bulk invitations', () => {
     expect(listed).toMatchObject({ considered: 1, invited: 1 });
   });
 
-  it('bulk invite needs an address pattern and the access:send right', async () => {
+  it('bulk invite refuses a malformed address pattern, and needs the access:send right', async () => {
     await expect(
-      bulkInviteFirms(pool, operator, { editionId, namePrefix: '[Test]' }, CTX),
+      bulkInviteFirms(pool, operator, { editionId, emailTemplate: 'not-an-address' }, CTX),
     ).rejects.toMatchObject({ code: 'EMAIL_INVALID' });
     await expect(
       bulkInviteFirms(
