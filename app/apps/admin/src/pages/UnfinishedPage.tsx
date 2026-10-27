@@ -25,7 +25,7 @@ export function describeReminderRun(r: ReminderRunResult): string {
     return 'No reminders sent: this edition is not collecting responses.';
   }
   const parts = [
-    r.emailed === 0 ? 'No reminders were due.' : `Sent ${plural(r.emailed, 'reminder')} by email.`,
+    r.emailed === 0 ? 'No reminders were sent.' : `Sent ${plural(r.emailed, 'reminder')} by email.`,
   ];
   const skipped: string[] = [];
   if (r.skipped.notEmail > 0)
@@ -36,7 +36,10 @@ export function describeReminderRun(r: ReminderRunResult): string {
   if (r.skipped.noLongerEligible > 0)
     skipped.push(`${r.skipped.noLongerEligible} submitted or stopped reminders meanwhile`);
   if (skipped.length > 0) parts.push(`Skipped: ${skipped.join('; ')}.`);
-  if (r.notDue > 0) parts.push(`${plural(r.notDue, 'person', 'people')} not due yet.`);
+  if (r.notDue > 0)
+    parts.push(
+      `${plural(r.notDue, 'person', 'people')} not reminded: they had a reminder in the last day, or have had every reminder.`,
+    );
   return parts.join(' ');
 }
 
@@ -197,8 +200,9 @@ export function UnfinishedPage({
         </p>
       )}
       <p className="muted">
-        Reminders also go out on their own every hour, by the reminder schedule. This sends any that
-        are due now; nobody gets the same reminder twice.
+        This sends each unfinished person their next reminder straight away — only people who
+        started and did not submit, and who can be reached. Nobody gets the same reminder twice or
+        more than one a day. Reminders also go out on their own every hour, by the schedule below.
       </p>
       {runMsg && (
         <p className="qstate ok" role="status">

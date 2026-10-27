@@ -153,6 +153,9 @@ export function nextDueReminder(params: {
   lastActivityAt: Date;
   closeAt: Date | null;
   asOf: Date;
+  /** D-03 "Send reminders now": the next unsent step is due straight away,
+   *  whatever its wait. The cap and the one-a-day gap still apply. */
+  now?: boolean;
 }): DueReminder | null {
   if (params.sentSteps.length >= params.cap) return null;
   // Never two reminders to one person within REMINDER_MIN_GAP_MS — e.g. a
@@ -168,7 +171,9 @@ export function nextDueReminder(params: {
   const steps = params.schedule.steps.filter((s) => s.enabled).sort((a, b) => a.step - b.step);
   for (const s of steps) {
     if (sent.has(s.step)) continue;
-    const trigger = triggerTimeFor(s, params.lastActivityAt, params.closeAt);
+    const trigger = params.now
+      ? params.asOf
+      : triggerTimeFor(s, params.lastActivityAt, params.closeAt);
     if (trigger && params.asOf.getTime() >= trigger.getTime()) {
       return {
         step: s.step,
@@ -258,7 +263,7 @@ export async function runEditionReminders(
   pool: Pool,
   editionId: string,
   asOf: Date = new Date(),
-  opts: { portalUrl?: string } = {},
+  opts: { portalUrl?: string; now?: boolean } = {},
 ): Promise<ReminderRunSummary> {
   const summary: ReminderRunSummary = {
     editionId,
@@ -288,6 +293,7 @@ export async function runEditionReminders(
         lastActivityAt: r.lastActivityAt,
         closeAt,
         asOf,
+        ...(opts.now ? { now: true } : {}),
       });
     const due = dueFor(await listReminderHistory(pool, editionId, r.responseId));
     if (!due) {
@@ -443,7 +449,7 @@ export interface ReminderPassResult {
  */
 export async function runReminderPass(
   pool: Pool,
-  opts: { asOf?: Date; portalUrl?: string; editionIds?: string[] } = {},
+  opts: { asOf?: Date; portalUrl?: string; editionIds?: string[]; now?: boolean } = {},
 ): Promise<ReminderPassResult> {
   const asOf = opts.asOf ?? new Date();
   const lockClient = await pool.connect();
@@ -475,6 +481,7 @@ export async function runReminderPass(
       editions.push(
         await runEditionReminders(pool, id, asOf, {
           ...(opts.portalUrl ? { portalUrl: opts.portalUrl } : {}),
+          ...(opts.now ? { now: true } : {}),
         }),
       );
     }
