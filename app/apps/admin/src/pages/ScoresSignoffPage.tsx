@@ -140,7 +140,7 @@ export function ScoresSignoffPage({
 
       {error && <div className="err">{error}</div>}
 
-      <MethodologyApproval client={client} onChange={() => void load()} />
+      <MethodologyApproval client={client} editionId={editionId} onChange={() => void load()} />
 
       {!currentRun ? (
         <div className="warnbox">

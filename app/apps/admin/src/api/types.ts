@@ -383,6 +383,27 @@ export interface NationalApprovalPreconditions {
 }
 
 /** The sentence-level review of the national report's draft (the AI narrative). */
+/** A firm report's fact-check decisions (BUG-20 / BUG-03). */
+export interface FirmNarrativeReviewView {
+  narrativeId: string | null;
+  model: string | null;
+  draftedAt: string | null;
+  findings: Array<{
+    narrativeIndex: number;
+    section: string;
+    text: string;
+    finding: { kind: string; why: string };
+    decision: {
+      disposition: 'SUPPRESS_CLAIM' | 'REJECT_WITH_REASON';
+      reason: string | null;
+      decidedBy: string;
+      decidedAt: string;
+    } | null;
+  }>;
+  undecided: number;
+  released: boolean;
+}
+
 export interface NationalReview {
   narrativeId: string | null;
   model: string | null;
@@ -884,8 +905,9 @@ export interface FirmReportContent {
   publishedAt?: string | null;
 }
 
-/** The scoring methodology's two-person approval (Runbook §5.2). */
+/** The record of the scoring methodology's two-person approval for one edition (BUG-02). */
 export interface MethodologyApprovalView {
+  editionId: string;
   methodology: { id: string; version: string };
   approved: {
     actionId: string;

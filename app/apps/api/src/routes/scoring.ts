@@ -24,30 +24,41 @@ import {
  * sign-off. Domain errors carry codes the shared error handler maps to 4xx.
  */
 export const scoringRoutes: FastifyPluginAsyncZod = async (app) => {
-  // ── The scoring methodology's approval (Runbook §5.2) ──────────────────────
-  // Two people: one requests with a reason, a different one approves. Until it
-  // is approved, runs are not official and no report shows an index score.
-  app.get('/scoring-methodology', { preHandler: [app.authenticate] }, async (request, reply) => {
-    const pool = getPool();
-    const state = await getMethodologyApproval(pool);
-    const operatorNames = await getDisplayNamesByIdentifier(pool, [
-      state.approved?.requestedBy ?? '',
-      state.approved?.approvedBy ?? '',
-      state.pending?.requestedBy ?? '',
-    ]);
-    return reply.send({ ...state, viewerId: request.session.sub, operatorNames });
-  });
+  // ── The scoring methodology's approval record (Runbook §5.2, BUG-02) ───────
+  // One record per edition. Two people: one requests with a reason, a
+  // different one approves. CIS approves the method offline, so scoring does
+  // not wait on this record; it documents the approval for the edition.
+  app.get(
+    '/editions/:id/scoring-methodology',
+    { preHandler: [app.authenticate], schema: { params: z.object({ id: z.string().uuid() }) } },
+    async (request, reply) => {
+      const pool = getPool();
+      const state = await getMethodologyApproval(pool, request.params.id);
+      const operatorNames = await getDisplayNamesByIdentifier(pool, [
+        state.approved?.requestedBy ?? '',
+        state.approved?.approvedBy ?? '',
+        state.pending?.requestedBy ?? '',
+      ]);
+      return reply.send({ ...state, viewerId: request.session.sub, operatorNames });
+    },
+  );
 
   app.post(
-    '/scoring-methodology/approval/request',
-    { preHandler: [app.authenticate], schema: { body: z.object({ reason: z.string() }) } },
+    '/editions/:id/scoring-methodology/approval/request',
+    {
+      preHandler: [app.authenticate],
+      schema: {
+        params: z.object({ id: z.string().uuid() }),
+        body: z.object({ reason: z.string() }),
+      },
+    },
     async (request, reply) => {
       const pool = getPool();
       const rbac = await loadRbacContext(pool, request.session.sub);
       const action = await requestMethodologyApproval(
         pool,
         rbac,
-        { reason: request.body.reason },
+        { editionId: request.params.id, reason: request.body.reason },
         { ipAddress: request.ip, userAgent: request.headers['user-agent'] ?? null },
       );
       return reply.status(201).send({ criticalActionId: action.id });

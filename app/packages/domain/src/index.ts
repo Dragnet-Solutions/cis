@@ -740,3 +740,14 @@ export {
   decideMethodologyApproval,
   type MethodologyApprovalState,
 } from './methodology-approval-service';
+
+// BUG-20 / BUG-03: the firm report's fact-check decision step.
+export {
+  FirmNarrativeReviewError,
+  getFirmNarrativeReview,
+  decideFirmNarrativeFinding,
+  undecidedFirmFindings,
+  type FirmNarrativeReview,
+  type FirmNarrativeFinding,
+  type FirmFindingDisposition,
+} from './firm-narrative-review-service';

@@ -21,6 +21,7 @@ import {
   getOrganizationById,
   insertReportSnapshot,
   withTransaction,
+  getLatestReportNarrative,
 } from '@cis/db';
 import { notifyApprovalDecided, notifyApprovalRequested } from './approval-notices';
 import {
@@ -41,6 +42,7 @@ import {
 import type { ActorContext } from './edition-service';
 import { eligibleFirmIds } from './eligibility-service';
 import { assertRunOfficialUsable } from './candidate-scoring-service';
+import { undecidedFirmFindings } from './firm-narrative-review-service';
 import { firmReportSnapshotData } from './report-snapshot-service';
 
 /**
@@ -199,6 +201,33 @@ async function requestableReports(pool: Pool, editionId: string): Promise<FirmRe
   );
 }
 
+/**
+ * Every fact-check finding in each report's written analysis has been decided
+ * (BUG-20 / BUG-03) — the firm-report counterpart of the national report's
+ * review. A report with no analysis drafted yet has nothing to decide here;
+ * the release itself drafts it and holds the report if that draft has
+ * undecided findings.
+ */
+async function assertFindingsDecided(pool: Pool, reports: FirmReport[]): Promise<void> {
+  const waiting: string[] = [];
+  let total = 0;
+  for (const r of reports) {
+    const narrative = await getLatestReportNarrative(pool, r.editionId, 'firm', r.organizationId);
+    const n = narrative ? await undecidedFirmFindings(pool, narrative) : 0;
+    if (n === 0) continue;
+    total += n;
+    if (waiting.length < 5) {
+      waiting.push((await getOrganizationById(pool, r.organizationId))?.displayName ?? 'a firm');
+    }
+  }
+  if (total > 0) {
+    throw new FirmReportError(
+      `${total} fact-check ${total === 1 ? 'finding is' : 'findings are'} not yet decided in the written analysis of ${waiting.join(', ')}. Decide each one — keep the sentence out, or put it back with a reason — before these reports can be released.`,
+      'FINDINGS_UNDECIDED',
+    );
+  }
+}
+
 function reportIdsOf(action: CriticalAction): string[] {
   const ids = action.payload['reportIds'];
   return Array.isArray(ids) ? ids.filter((x): x is string => typeof x === 'string') : [];
@@ -252,6 +281,7 @@ export async function requestFirmReportRelease(
   if (covered.length === 0) {
     throw new FirmReportError('There are no generated reports waiting for approval', 'NOTHING');
   }
+  await assertFindingsDecided(pool, covered);
 
   const action = await createCriticalAction(pool, {
     actionType: FIRM_REPORT_RELEASE_ACTION,
@@ -385,6 +415,9 @@ export async function decideFirmReportRelease(
     }
     reports.push(r);
   }
+
+  // Decide every fact-check finding before approve (BUG-20 / BUG-03).
+  await assertFindingsDecided(pool, reports);
 
   // Open before approve: each report read by one of the two people deciding.
   const deciders = new Set([action.requestedBy, rbac.userId]);

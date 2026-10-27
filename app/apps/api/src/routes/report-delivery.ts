@@ -124,7 +124,7 @@ export const reportDeliveryRoutes: FastifyPluginAsyncZod = async (app) => {
   const pdfCache = new Map<string, Promise<Buffer>>();
   const publicPdf = async (editionId: string, document: 'industry' | 'institutional') => {
     const pool = getPool();
-    const report = await getPublishedIndustryReport(pool, editionId);
+    const report = await getPublishedIndustryReport(pool, editionId, document);
     const narrative = await getIndustryNarrative(pool, editionId);
     const key = `${document}:${editionId}:${narrative?.id ?? 'none'}`;
     let pdf = pdfCache.get(key);

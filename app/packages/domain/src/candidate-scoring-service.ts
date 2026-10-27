@@ -21,7 +21,6 @@ import type { CalculationRun, CalculatedResultComposition } from '@cis/shared-ty
 import { DomainError } from './errors';
 import { datasetHashFor } from './calculation-service';
 import { scoreItem, isSubstantive, applyTransform, scoreS3Q4Composite } from './scoring-transforms';
-import { isMethodologyApproved } from './methodology-approval-service';
 import { computeSufficiency, segmentDisplayState, REPORTABLE_AT } from './sufficiency-service';
 import type { SegmentDisplayState } from '@cis/shared-types';
 
@@ -1155,15 +1154,11 @@ export async function runCandidateScoring(
       'UNEXPECTED_STATUS',
     );
   }
-  // A run is APPROVED only when two people have approved this methodology
-  // version on the Scoring page (methodology-approval-service.ts).
+  // APPROVED is the official scoring path (triggerScoringRun). CIS approves
+  // the methodology offline, so it does not wait on the platform's approval
+  // record (BUG-02); the DB accepts APPROVED for a run that names this
+  // versioned methodology.
   const methodologyStatus = opts.methodologyStatus ?? 'TEST_UNAPPROVED';
-  if (methodologyStatus === 'APPROVED' && !(await isMethodologyApproved(pool))) {
-    throw new CandidateScoringError(
-      `${meta.id} v${meta.version} has not been approved, so its runs cannot be marked approved`,
-      'METHODOLOGY_NOT_APPROVED',
-    );
-  }
   const datasetHash = await datasetHashFor(pool, editionId);
   const run = await createCalculationRun(pool, {
     editionId,
