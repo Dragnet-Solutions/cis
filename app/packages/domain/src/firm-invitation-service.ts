@@ -16,6 +16,7 @@ import {
   listEmailsFor,
   hasOpenFirmInvitation,
   listEditionFirmsForInvitation,
+  getFirmContact,
   type FirmInvitation,
   type FirmInvitationWithFirm,
   type EmailStatus,
@@ -503,7 +504,11 @@ export interface BulkInviteInput {
   /** These firms; otherwise every participating firm whose name starts with `namePrefix`. */
   organizationIds?: string[];
   namePrefix?: string;
-  /** The address to invite; `{slug}` becomes the firm's slug, e.g. "coordinator+{slug}@test.example". */
+  /**
+   * The address to invite; `{slug}` becomes the firm's slug, e.g.
+   * "coordinator+{slug}@test.example". Left out, each firm is invited at the
+   * contact on file from the firm directory import (NEW-2).
+   */
   emailTemplate?: string;
 }
 
@@ -512,6 +517,8 @@ export interface BulkInviteResult {
   invited: number;
   skippedClaimed: number;
   skippedPending: number;
+  /** Firms with no contact email on file (only when no address pattern was given). */
+  skippedNoContact: number;
   failed: Array<{ organizationId: string; firmName: string; message: string }>;
 }
 
@@ -531,7 +538,8 @@ export async function bulkInviteFirms(
 ): Promise<BulkInviteResult> {
   requirePermission(rbac, SEND_PERMISSION);
   const template = input.emailTemplate?.trim() ?? '';
-  if (!emailOk(template.replace(/\{slug\}/g, 'firm'))) {
+  const useContacts = template === '';
+  if (!useContacts && !emailOk(template.replace(/\{slug\}/g, 'firm'))) {
     throw new FirmInvitationError(
       'Give the address pattern to invite, e.g. coordinator+{slug}@yourdomain.com',
       'EMAIL_INVALID',
@@ -561,6 +569,7 @@ export async function bulkInviteFirms(
     invited: 0,
     skippedClaimed: 0,
     skippedPending: 0,
+    skippedNoContact: 0,
     failed: [],
   };
   for (const firm of targets) {
@@ -572,6 +581,11 @@ export async function bulkInviteFirms(
       result.skippedPending++;
       continue;
     }
+    const contact = useContacts ? await getFirmContact(pool, firm.id) : null;
+    if (useContacts && !contact?.email) {
+      result.skippedNoContact++;
+      continue;
+    }
     try {
       await inviteFirm(
         pool,
@@ -579,7 +593,8 @@ export async function bulkInviteFirms(
         {
           organizationId: firm.id,
           editionId: input.editionId,
-          email: template.replace(/\{slug\}/g, firm.slug),
+          email: contact?.email ?? template.replace(/\{slug\}/g, firm.slug),
+          ...(contact?.contactName ? { contactName: contact.contactName } : {}),
         },
         ctx,
       );

@@ -527,19 +527,22 @@ function EditionInvitationsCard({
     const prefix = bulkPrefix.trim();
     if (
       !window.confirm(
-        `Invite every firm in this edition${prefix ? ` whose name starts with “${prefix}”` : ''} that has no space and no open invitation, at ${pattern}?`,
+        `Invite every firm in this edition${prefix ? ` whose name starts with “${prefix}”` : ''} that has no space and no open invitation, ${pattern ? `at ${pattern}` : 'at the contact on file'}?`,
       )
     )
       return;
     await act(async () => {
       const r = await client.bulkInviteFirms(editionId, {
-        emailTemplate: pattern,
+        ...(pattern ? { emailTemplate: pattern } : {}),
         ...(prefix ? { namePrefix: prefix } : {}),
       });
       const parts = [
         `${firmCount(r.invited)} invited`,
         r.skippedClaimed ? `${firmCount(r.skippedClaimed)} already set up` : null,
         r.skippedPending ? `${firmCount(r.skippedPending)} already had an open invitation` : null,
+        r.skippedNoContact
+          ? `${firmCount(r.skippedNoContact)} have no contact email on file`
+          : null,
         r.failed.length
           ? `${firmCount(r.failed.length)} not invited (${r.failed.map((f) => `${f.firmName}: ${f.message}`).join('; ')})`
           : null,
@@ -577,8 +580,9 @@ function EditionInvitationsCard({
         <summary>Invite all unclaimed firms</summary>
         <p className="lede" style={{ fontSize: 13 }}>
           Invites every firm taking part in this edition that has not set up its space and has no
-          open invitation. <code>{'{slug}'}</code> in the address becomes the firm’s short name,
-          e.g. <code>{'coordinator+{slug}@yourdomain.com'}</code>.
+          open invitation, at the contact imported with the firm directory. To send to a pattern
+          instead (e.g. for testing), give one: <code>{'{slug}'}</code> in the address becomes the
+          firm’s short name, e.g. <code>{'coordinator+{slug}@yourdomain.com'}</code>.
         </p>
         <div className="field">
           <label htmlFor="ftp-bulk-prefix">Only firms whose name starts with (optional)</label>
@@ -590,7 +594,9 @@ function EditionInvitationsCard({
           />
         </div>
         <div className="field">
-          <label htmlFor="ftp-bulk-email">Email address pattern</label>
+          <label htmlFor="ftp-bulk-email">
+            Email address pattern (optional — leave empty to use each firm’s contact)
+          </label>
           <input
             id="ftp-bulk-email"
             value={bulkEmail}
@@ -599,12 +605,7 @@ function EditionInvitationsCard({
           />
         </div>
         <div className="actions">
-          <button
-            type="button"
-            className="btn"
-            disabled={busy || !bulkEmail.trim()}
-            onClick={() => void inviteAll()}
-          >
+          <button type="button" className="btn" disabled={busy} onClick={() => void inviteAll()}>
             {busy ? 'Inviting…' : 'Invite all unclaimed firms'}
           </button>
         </div>
@@ -775,6 +776,10 @@ function FirmDirectoryImport({
           result.enrolled !== null && result.enrolled > 0
             ? ` ${firmCount(result.enrolled)} enrolled in this edition, so they appear in the surveys.`
             : ''
+        }${
+          result.contactsSaved > 0
+            ? ` Contacts saved for ${firmCount(result.contactsSaved)}; invite them from “Invite all unclaimed firms” below.`
+            : ''
         }`,
       );
       setPreview(null);
@@ -791,10 +796,14 @@ function FirmDirectoryImport({
     <fieldset className="contact-fields">
       <legend>Import the firm directory</legend>
       <p className="lede" style={{ fontSize: 13 }}>
-        Load the participating firms from a CSV file before launch. The first line is a header with
-        a <b>name</b> column, and optionally a <b>slug</b> column (a short permanent identifier,
-        made from the name if left out). You see what would be added before anything changes. Firms
-        already listed are skipped.
+        Load the participating firms from a CSV file before launch — one file for the firms and
+        their contacts. The first line is a header. <b>name</b> (the firm) is required; optional
+        columns are <b>contact name</b>, <b>email</b>, <b>phone</b> and <b>registration number</b>{' '}
+        (headers are matched ignoring case, e.g. “Firm name”, “E-mail”, “Mobile”, “RC number”), and{' '}
+        <b>slug</b>, a short permanent identifier made from the name if left out. You see what would
+        be added before anything changes. Firms already listed are not added twice, but are enrolled
+        and take the contact the file gives them. A firm with an email can then be invited from
+        “Invite all unclaimed firms” with no address pattern.
       </p>
       <div className="field">
         <label htmlFor="ftp-import">CSV file</label>
@@ -846,6 +855,7 @@ function FirmDirectoryImport({
                   <th scope="col">Line</th>
                   <th scope="col">Firm to add</th>
                   <th scope="col">Slug</th>
+                  {preview.withContact > 0 && <th scope="col">Contact</th>}
                 </tr>
               </thead>
               <tbody>
@@ -854,6 +864,11 @@ function FirmDirectoryImport({
                     <td>{r.line}</td>
                     <td>{r.name}</td>
                     <td>{r.slug}</td>
+                    {preview.withContact > 0 && (
+                      <td>
+                        {[r.contactName, r.email, r.phone].filter(Boolean).join(' · ') || '—'}
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -866,6 +881,7 @@ function FirmDirectoryImport({
                 {preview.duplicates.map((d) => (
                   <li key={`d${d.line}`}>
                     Line {d.line}, {d.name}: {d.reason}
+                    {d.email ? ` Its contact will be set to ${d.email}.` : ''}
                   </li>
                 ))}
               </ul>
@@ -875,10 +891,16 @@ function FirmDirectoryImport({
             <button
               type="button"
               className="btn"
-              disabled={busy || preview.errors.length > 0 || preview.toAdd.length === 0}
+              disabled={
+                busy ||
+                preview.errors.length > 0 ||
+                (preview.toAdd.length === 0 && preview.duplicates.length === 0)
+              }
               onClick={() => void importNow()}
             >
-              Import {firmCount(preview.toAdd.length)}
+              {preview.toAdd.length > 0
+                ? `Import ${firmCount(preview.toAdd.length)}`
+                : `Update ${firmCount(preview.duplicates.length)} already listed`}
             </button>
           </div>
         </div>

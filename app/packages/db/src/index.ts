@@ -41,6 +41,7 @@ export * from './queries/managed-content';
 export * from './queries/dragnet';
 export * from './queries/firm-digest';
 export * from './queries/firm-invitations';
+export * from './queries/firm-contacts';
 export {
   loadScoringConfig,
   getMethodologyMeta,

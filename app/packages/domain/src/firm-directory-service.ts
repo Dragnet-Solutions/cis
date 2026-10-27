@@ -5,6 +5,7 @@ import {
   withTransaction,
   getEditionById,
   upsertEditionParticipation,
+  upsertFirmContact,
 } from '@cis/db';
 import { requirePermission, type RbacContext } from '@cis/auth';
 import { writeAudit } from '@cis/audit';
@@ -18,6 +19,12 @@ import { EDITION_MANAGE_PERMISSION, type ActorContext } from './edition-service'
  *
  * The file has a header row. `name` is required; `slug` (the firm's short,
  * permanent identifier) is optional and is derived from the name when absent.
+ * NEW-2 (one-file CIS import): the same file may also carry each firm's
+ * contact — `contact name`, `email`, `phone` — and its `registration number`,
+ * all optional and matched case-insensitively with common aliases (see
+ * IMPORT_COLUMNS). A firm with an email on file can be invited straight away
+ * ("Invite all unclaimed firms" with no address pattern). A names-only file
+ * imports exactly as before.
  * Every import is previewed first (a dry run that writes nothing); the real
  * import writes the same plan in one transaction.
  *
@@ -40,7 +47,61 @@ export interface FirmImportRow {
   line: number;
   name: string;
   slug: string;
+  /** NEW-2: the firm's contact, when the file has those columns. */
+  contactName?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  registrationNumber?: string | null;
 }
+
+/**
+ * The columns a firm file may have, each with the header spellings accepted
+ * for it (compared ignoring case, spaces, hyphens and underscores).
+ */
+export const IMPORT_COLUMNS = {
+  name: [
+    'name',
+    'firm',
+    'firm name',
+    'firmname',
+    'company',
+    'company name',
+    'organisation',
+    'organization',
+  ],
+  slug: ['slug'],
+  contactName: ['contact name', 'contact', 'contact person', 'coordinator', 'coordinator name'],
+  email: ['email', 'e-mail', 'email address', 'contact email', 'contact email address'],
+  phone: ['phone', 'phone number', 'telephone', 'tel', 'mobile', 'mobile number', 'contact phone'],
+  registrationNumber: [
+    'registration number',
+    'registration no',
+    'registration',
+    'reg no',
+    'reg number',
+    'rc number',
+    'rc no',
+    'rc',
+  ],
+} as const;
+
+type ImportColumn = keyof typeof IMPORT_COLUMNS;
+
+const headerKey = (h: string) => h.toLowerCase().replace(/[\s_\-.]+/g, '');
+
+/** Where each known column is in the header row (-1 when absent). */
+function locateColumns(header: string[]): Record<ImportColumn, number> {
+  const keys = header.map(headerKey);
+  const at = {} as Record<ImportColumn, number>;
+  for (const col of Object.keys(IMPORT_COLUMNS) as ImportColumn[]) {
+    const names: readonly string[] = IMPORT_COLUMNS[col];
+    at[col] = keys.findIndex((k) => names.some((n) => headerKey(n) === k));
+  }
+  return at;
+}
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MAX_CONTACT_LENGTH = 200;
 
 export interface FirmImportPlan {
   /** Data rows read from the file (the header excluded, blank lines ignored). */
@@ -48,6 +109,8 @@ export interface FirmImportPlan {
   toAdd: FirmImportRow[];
   duplicates: Array<FirmImportRow & { reason: string }>;
   errors: Array<{ line: number; message: string }>;
+  /** NEW-2: rows (new or already listed) that carry an email to invite. */
+  withContact: number;
 }
 
 export interface FirmImportResult extends FirmImportPlan {
@@ -62,6 +125,8 @@ export interface FirmImportResult extends FirmImportPlan {
   enrolled: number | null;
   /** Why nobody was enrolled although an edition was given, if so. */
   enrolmentNote: string | null;
+  /** NEW-2: firms whose contact was saved from the file (0 on a dry run). */
+  contactsSaved: number;
 }
 
 /** Split CSV text into rows of fields. Handles quoted fields, doubled quotes,
@@ -129,18 +194,29 @@ function nameKey(name: string): string {
 /** Read the file and work out what an import would do — writes nothing. */
 export async function planFirmImport(pool: Pool, csv: string): Promise<FirmImportPlan> {
   const rows = parseCsv(csv);
-  const plan: FirmImportPlan = { totalRows: 0, toAdd: [], duplicates: [], errors: [] };
+  const plan: FirmImportPlan = {
+    totalRows: 0,
+    toAdd: [],
+    duplicates: [],
+    errors: [],
+    withContact: 0,
+  };
 
-  const header = rows[0]?.map((h) => h.trim().toLowerCase()) ?? [];
-  const nameCol = header.indexOf('name');
-  const slugCol = header.indexOf('slug');
+  const cols = locateColumns(rows[0]?.map((h) => h.trim()) ?? []);
+  const nameCol = cols.name;
+  const slugCol = cols.slug;
   if (nameCol === -1) {
     plan.errors.push({
       line: 1,
-      message: 'The first line must be a header with a "name" column (and optionally "slug").',
+      message:
+        'The first line must be a header with a "name" column (optionally also "contact name", "email", "phone" and "registration number").',
     });
     return plan;
   }
+  const cell = (cells: string[], col: ImportColumn): string | null => {
+    const v = cols[col] === -1 ? '' : (cells[cols[col]] ?? '').trim().replace(/\s+/g, ' ');
+    return v ? v : null;
+  };
 
   const existing = await listOrganizations(pool);
   const takenNames = new Map(existing.map((o) => [nameKey(o.displayName), o.displayName]));
@@ -185,7 +261,35 @@ export async function planFirmImport(pool: Pool, csv: string): Promise<FirmImpor
       continue;
     }
 
-    const row: FirmImportRow = { line, name, slug };
+    const email = cell(cells, 'email');
+    const phone = cell(cells, 'phone');
+    const contactName = cell(cells, 'contactName');
+    const registrationNumber = cell(cells, 'registrationNumber');
+    if (email && !EMAIL_RE.test(email)) {
+      plan.errors.push({ line, message: `"${email}" is not an email address.` });
+      continue;
+    }
+    if (phone && phone.replace(/\D/g, '').length < 7) {
+      plan.errors.push({ line, message: `"${phone}" is too short to be a phone number.` });
+      continue;
+    }
+    if ([contactName, registrationNumber].some((v) => v && v.length > MAX_CONTACT_LENGTH)) {
+      plan.errors.push({
+        line,
+        message: `A contact name or registration number is longer than ${MAX_CONTACT_LENGTH} characters.`,
+      });
+      continue;
+    }
+
+    const row: FirmImportRow = {
+      line,
+      name,
+      slug,
+      ...(contactName || email || phone || registrationNumber
+        ? { contactName, email, phone, registrationNumber }
+        : {}),
+    };
+    if (email) plan.withContact++;
     const key = nameKey(name);
     const reason = takenNames.has(key)
       ? `Already in the directory as "${takenNames.get(key)}".`
@@ -247,6 +351,7 @@ export async function importFirmDirectory(
       added: 0,
       enrolled: options.editionId ? 0 : null,
       enrolmentNote,
+      contactsSaved: 0,
     };
   }
 
@@ -257,16 +362,18 @@ export async function importFirmDirectory(
     );
   }
 
-  // Firms in the file that are already in the directory are enrolled too.
+  // Firms in the file that are already in the directory are enrolled too, and
+  // take the contact the file gives them.
   const existing = (await listOrganizations(pool)).filter((o) => o.orgType === 'firm');
-  const existingIds = new Set<string>();
+  const existingRows = new Map<string, FirmImportRow>();
   for (const d of plan.duplicates) {
     const match = existing.find(
       (o) => nameKey(o.displayName) === nameKey(d.name) || o.slug === d.slug,
     );
-    if (match) existingIds.add(match.id);
+    if (match && !existingRows.has(match.id)) existingRows.set(match.id, d);
   }
   let enrolled = 0;
+  let contacts = 0;
 
   try {
     await withTransaction(pool, async (client) => {
@@ -280,7 +387,37 @@ export async function importFirmDirectory(
         });
         enrolled += 1;
       };
-      for (const id of existingIds) await enrol(id);
+      const keepContact = async (organizationId: string, row: FirmImportRow) => {
+        if (!row.contactName && !row.email && !row.phone && !row.registrationNumber) return;
+        await upsertFirmContact(c, {
+          organizationId,
+          contactName: row.contactName ?? null,
+          email: row.email ?? null,
+          phone: row.phone ?? null,
+          registrationNumber: row.registrationNumber ?? null,
+          updatedBy: rbac.userId,
+        });
+        await writeAudit(c, {
+          actorId: rbac.userId,
+          actionType: 'firm_directory.contact_set',
+          entityType: 'organization',
+          entityId: organizationId,
+          newValue: {
+            contactName: row.contactName ?? null,
+            email: row.email ?? null,
+            phone: row.phone ?? null,
+            registrationNumber: row.registrationNumber ?? null,
+            source: 'csv_import',
+          },
+          ipAddress: ctx.ipAddress ?? null,
+          userAgent: ctx.userAgent ?? null,
+        });
+        contacts += 1;
+      };
+      for (const [id, row] of existingRows) {
+        await enrol(id);
+        await keepContact(id, row);
+      }
       for (const row of plan.toAdd) {
         const org = await createOrganization(c, {
           slug: row.slug,
@@ -288,6 +425,7 @@ export async function importFirmDirectory(
           orgType: 'firm',
         });
         await enrol(org.id);
+        await keepContact(org.id, row);
         await writeAudit(c, {
           actorId: rbac.userId,
           actionType: 'firm_directory.firm_added',
@@ -316,5 +454,6 @@ export async function importFirmDirectory(
     added: plan.toAdd.length,
     enrolled: options.editionId ? enrolled : null,
     enrolmentNote,
+    contactsSaved: contacts,
   };
 }

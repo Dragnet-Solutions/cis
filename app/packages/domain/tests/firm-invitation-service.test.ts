@@ -490,9 +490,9 @@ describe('operator links, CSV and bulk invitations', () => {
     expect(listed).toMatchObject({ considered: 1, invited: 1 });
   });
 
-  it('bulk invite needs an address pattern and the access:send right', async () => {
+  it('bulk invite refuses a malformed address pattern, and needs the access:send right', async () => {
     await expect(
-      bulkInviteFirms(pool, operator, { editionId, namePrefix: '[Test]' }, CTX),
+      bulkInviteFirms(pool, operator, { editionId, emailTemplate: 'not-an-address' }, CTX),
     ).rejects.toMatchObject({ code: 'EMAIL_INVALID' });
     await expect(
       bulkInviteFirms(

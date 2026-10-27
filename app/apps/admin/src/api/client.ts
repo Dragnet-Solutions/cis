@@ -379,7 +379,7 @@ export interface AdminClient {
   downloadFirmInvitationsCsv(editionId: string): Promise<Blob>;
   bulkInviteFirms(
     editionId: string,
-    body: { organizationIds?: string[]; namePrefix?: string; emailTemplate: string },
+    body: { organizationIds?: string[]; namePrefix?: string; emailTemplate?: string },
   ): Promise<BulkFirmInviteResult>;
   // People & Access (UX-OPS-006)
   getPeople(): Promise<PeopleResponse>;
