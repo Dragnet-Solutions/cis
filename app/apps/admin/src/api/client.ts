@@ -193,6 +193,8 @@ export interface AdminClient {
   getLatestNationalReport(id: string): Promise<{ report: { id: string } | null }>;
   getSufficiency(id: string): Promise<{
     sufficiency: Record<string, { counted: number; floor: number; meets: boolean }>;
+    /** Market institutions taking part and engaged, each counted once (BUG-05). */
+    marketInstitutions?: { engaged: number; total: number };
   }>;
   getNationalReport(reportId: string): Promise<NationalReportDetailResponse>;
   openNationalDraft(reportId: string): Promise<{ opened: boolean }>;

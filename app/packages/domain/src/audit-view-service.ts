@@ -7,6 +7,7 @@
  * Read-only: there is no edit or delete path. The one write is the audit
  * record of an export itself (`audit.exported`, with the filter and row count).
  */
+import { neutraliseFormula } from '@cis/survey';
 import { Pool } from 'pg';
 import { listAuditLog, listAuditFacets, type AuditLogFilter, type AuditLogRow } from '@cis/db';
 import { hasPermission, loadRbacContext, PermissionDeniedError } from '@cis/auth';
@@ -108,8 +109,7 @@ export async function getAuditFacets(
  * is quoted.
  */
 export function auditCsvCell(value: string | null | undefined): string {
-  const v = value ?? '';
-  const safe = /^[=+\-@\t\r]/.test(v) ? `'${v}` : v;
+  const safe = neutraliseFormula(value ?? '');
   return `"${safe.replace(/"/g, '""')}"`;
 }
 

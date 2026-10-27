@@ -4,6 +4,7 @@ import { registerSecurity } from './plugins/security';
 import { registerAuth } from './plugins/auth-plugin';
 import { parseTrustProxy } from './plugins/trust-proxy';
 import { serializeRequest } from './plugins/redact-url';
+import { registerEditionExists } from './plugins/edition-exists';
 import { isPoolBusyError } from '@cis/db';
 import { healthRoutes } from './routes/health';
 import { authRoutes } from './routes/auth';
@@ -102,6 +103,8 @@ export async function buildServer() {
 
   await registerSecurity(app);
   await registerAuth(app);
+  // Before the routes: an unknown edition is a 404 everywhere (BUG-07).
+  registerEditionExists(app);
 
   await app.register(healthRoutes);
   await app.register(authRoutes);

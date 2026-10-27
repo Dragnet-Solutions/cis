@@ -406,8 +406,10 @@ export async function listAudiences(pool: Pool, editionId: string): Promise<Audi
       audiences: [
         {
           id: 'regsall',
-          label: 'All three regulators',
-          sub: 'SEC, NGX and CSCS.',
+          // Counted in market institutions (BUG-05): exactly the ones with a
+          // contact on file, named — not a fixed "three regulators".
+          label: 'Market institutions with a contact on file',
+          sub: regs.length > 0 ? `${regs.map((r) => r.name).join(', ')}.` : 'None on file yet.',
           count: regs.length,
         },
       ],
@@ -892,7 +894,7 @@ export async function sendBatch(
         claimed: false,
       });
     }
-    audienceLabel = 'All three regulators';
+    audienceLabel = 'Market institutions with a contact on file';
   } else if (input.audienceId in PARTICIPANT_INSTRUMENTS && isParticipantReminder(template)) {
     // A survey reminder: only those who have not finished, each linked back
     // into their own survey. Anyone who submitted is never reminded.

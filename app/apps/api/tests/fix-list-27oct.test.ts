@@ -4,6 +4,8 @@
  *  - BUG-01: the "Market institutions" right (access:regs) is enforced on
  *    every market-institution endpoint, read and write, as the Dragnet right
  *    is: without it, 403.
+ *  - BUG-07: an edition that does not exist is a 404 on edition-scoped
+ *    routes, not 200 with empty data — and still 401 when not signed in.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
@@ -112,5 +114,79 @@ describe('BUG-01: the Market institutions right is enforced', () => {
       headers: auth(holder.token),
     });
     expect(roster.statusCode).toBe(200);
+  });
+});
+
+describe('BUG-07: an unknown edition is a 404', () => {
+  const NOPE = '00000000-0000-4000-8000-000000000000';
+
+  it('edition-scoped routes answer 404 for an edition that does not exist', async () => {
+    const { token } = await signIn(MAKER);
+    for (const url of [
+      `/editions/${NOPE}`,
+      `/editions/${NOPE}/regulators`,
+      `/editions/${NOPE}/firm-invitations`,
+      `/editions/${NOPE}/mission-board`,
+      `/editions/${NOPE}/dragnet/maturity`,
+    ]) {
+      const res = await app.inject({ method: 'GET', url, headers: auth(token) });
+      expect(res.statusCode, `${url}: ${res.body}`).toBe(404);
+      expect(res.json<{ message: string }>().message).toMatch(
+        /edition not found|edition was not found/i,
+      );
+    }
+    // The public, unauthenticated surfaces too.
+    const pub = await app.inject({
+      method: 'GET',
+      url: `/journeys/editions/${NOPE}/participating-firms`,
+    });
+    expect(pub.statusCode).toBe(404);
+    // A real edition still answers.
+    const real = await app.inject({
+      method: 'GET',
+      url: `/editions/${editionId}/regulators`,
+      headers: auth(token),
+    });
+    expect(real.statusCode).toBe(200);
+  });
+
+  it('not signed in is still 401, whether or not the edition exists', async () => {
+    for (const id of [NOPE, editionId]) {
+      const res = await app.inject({ method: 'GET', url: `/editions/${id}/regulators` });
+      expect(res.statusCode).toBe(401);
+    }
+  });
+});
+
+describe('BUG-05: "engaged" is counted in market institutions', () => {
+  it('the national-report form gets both counts without the Market institutions right', async () => {
+    const { token } = await signIn(CHECKER);
+    const res = await app.inject({
+      method: 'GET',
+      url: `/editions/${editionId}/sufficiency`,
+      headers: auth(token),
+    });
+    expect(res.statusCode).toBe(200);
+    const { marketInstitutions } = res.json<{
+      marketInstitutions: { engaged: number; total: number };
+    }>();
+    // Every market institution taking part, each once (six today, D-22).
+    expect(marketInstitutions.total).toBe(6);
+    expect(marketInstitutions.engaged).toBe(0);
+  });
+
+  it('refuses more institutions engaged than take part', async () => {
+    const { token } = await signIn(MAKER);
+    const res = await app.inject({
+      method: 'POST',
+      url: `/editions/${editionId}/national-report`,
+      headers: auth(token),
+      payload: {
+        scoringRunId: '00000000-0000-4000-8000-000000000001',
+        context: { segments: {}, regulatorsEngaged: 7 },
+      },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json<{ message: string }>().message).toMatch(/more than the 6 taking part/);
   });
 });

@@ -1,3 +1,4 @@
+import { csvRow } from '@cis/survey';
 import { Pool } from 'pg';
 import {
   withTransaction,
@@ -478,12 +479,6 @@ export async function listInvitationsWithLinks(
   });
 }
 
-function csvCell(value: string): string {
-  // A leading = + - @ would be read as a formula by a spreadsheet.
-  const safe = /^[=+\-@]/.test(value) ? `'${value}` : value;
-  return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
-}
-
 /**
  * The edition's usable (pending, unexpired) invitations as CSV —
  * `firm,email,link,expires` — for handing links to a test run or to people
@@ -499,9 +494,7 @@ export async function pendingInvitationsCsv(
   const lines = ['firm,email,link,expires'];
   for (const inv of list) {
     if (!inv.link) continue;
-    lines.push(
-      [inv.firmName, inv.email, inv.link, inv.expiresAt.toISOString()].map(csvCell).join(','),
-    );
+    lines.push(csvRow([inv.firmName, inv.email, inv.link, inv.expiresAt.toISOString()]));
   }
   return `${lines.join('\r\n')}\r\n`;
 }

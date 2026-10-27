@@ -177,7 +177,8 @@ describe('Section-level sufficiency — different rules that look alike', () => 
     const six = { ...fullContext(), regulatorsRequired: 6 };
     const partial = evaluateSection(spec, { ...six, regulatorsEngaged: 3 });
     expect(partial.disposition).toBe('suppressed');
-    expect(partial.reason).toContain('3 of 6 engaged');
+    // Named in its unit: market institutions, as the form labels it (BUG-05).
+    expect(partial.reason).toContain('3 of 6 market institutions engaged');
     expect(evaluateSection(spec, { ...six, regulatorsEngaged: 6 }).disposition).toBe('publishable');
     // No market institution registered at all is never "all of them".
     expect(

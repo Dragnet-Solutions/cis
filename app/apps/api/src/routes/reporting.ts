@@ -70,6 +70,21 @@ import { renderReportPdf, type PdfSession } from '../pdf/report-pdf';
 export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
   const segment = z.object({ meets: z.boolean(), thin: z.boolean() });
 
+  /**
+   * Market institutions in the edition, counted once each (D-22, BUG-05):
+   * `total` taking part, `engaged` of them confirmed.
+   */
+  async function marketInstitutionCounts(
+    editionId: string,
+  ): Promise<{ engaged: number; total: number }> {
+    const roles = await listRegulators(getPool(), editionId);
+    return {
+      total: new Set(roles.map((r) => r.institutionId)).size,
+      engaged: new Set(roles.filter((r) => r.status === 'confirmed').map((r) => r.institutionId))
+        .size,
+    };
+  }
+
   // ── National report (UX-ADM-005) ──────────────────────────────────────────
   app.post(
     '/editions/:id/national-report',
@@ -93,9 +108,16 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
       const withheld = withheldSections(await buildIndustryReportContent(pool, request.params.id));
       // How many market institutions the module needs is read from the edition
       // (every one taking part, counted once — D-22), never from the request.
-      const regulatorsRequired = new Set(
-        (await listRegulators(pool, request.params.id)).map((r) => r.institutionId),
-      ).size;
+      const { total: regulatorsRequired } = await marketInstitutionCounts(request.params.id);
+      // Engaged and required are the same unit — market institutions (BUG-05):
+      // more engaged than take part is a typing mistake, not a finding.
+      if (request.body.context.regulatorsEngaged > regulatorsRequired) {
+        return reply.status(400).send({
+          error: 'Bad Request',
+          message: `Market institutions engaged cannot be more than the ${regulatorsRequired} taking part`,
+          statusCode: 400,
+        });
+      }
       const { report, sections } = await generateNationalReport(pool, {
         editionId: request.params.id,
         scoringRunId: request.body.scoringRunId,
@@ -116,7 +138,10 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
     { preHandler: [app.authenticate], schema: { params: z.object({ id: z.string().uuid() }) } },
     async (request, reply) => {
       const sufficiency = await currentSegmentSufficiency(getPool(), request.params.id);
-      return reply.send({ sufficiency });
+      // Market institutions engaged and taking part, so the national-report
+      // form needs no Market institutions right to pre-fill them (BUG-05).
+      const marketInstitutions = await marketInstitutionCounts(request.params.id);
+      return reply.send({ sufficiency, marketInstitutions });
     },
   );
 

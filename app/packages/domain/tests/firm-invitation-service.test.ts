@@ -410,6 +410,18 @@ describe('FIRM_CLAIM_WITHOUT_INVITE (automated test runs only)', () => {
 });
 
 describe('operator links, CSV and bulk invitations', () => {
+  it('writes a formula-shaped firm name as plain text in the CSV (BUG-06)', async () => {
+    const evil = await createOrganization(pool, {
+      slug: 'evil-firm',
+      displayName: '=HYPERLINK("http://x.example","Click")',
+      orgType: 'firm',
+    });
+    await invite(evil.id, 'md@evil.example');
+    const csv = await pendingInvitationsCsv(pool, operator, editionId, PORTAL);
+    const row = csv.trim().split(/\r\n/)[1]!;
+    expect(row.startsWith(`"'=HYPERLINK(`)).toBe(true);
+  });
+
   it('shows the link of a usable invitation only, and lists it in the CSV', async () => {
     const open = await firm('openlink');
     const gone = await firm('gonelink');

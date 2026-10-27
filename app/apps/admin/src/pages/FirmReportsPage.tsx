@@ -1,3 +1,4 @@
+import { csvRow } from '@cis/survey';
 import { useCallback, useEffect, useState } from 'react';
 import { operatorFirmSource as firmSource } from '../reports/source';
 import { FirmReport as FirmReportDocument } from '../reports/FirmReport';
@@ -192,8 +193,9 @@ export function FirmReportsPage({
   const isOwnRequest = !!pending && pending.requestedBy.id === viewer.id;
 
   function downloadList(): void {
-    const rows = (reports ?? []).map(
-      (r) => `${firmName(r.organizationId)},${r.retailN},Guaranteed,${CUT_LABEL[r.cutState]}`,
+    // Formula-safe and quoted as needed (BUG-06): firm names come from the directory.
+    const rows = (reports ?? []).map((r) =>
+      csvRow([firmName(r.organizationId), r.retailN, 'Guaranteed', CUT_LABEL[r.cutState]]),
     );
     const csv = ['Firm,Own retail responses,Combined report,Retail category cut', ...rows].join(
       '\n',

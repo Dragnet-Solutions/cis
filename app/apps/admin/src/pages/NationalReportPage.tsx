@@ -133,8 +133,14 @@ export function NationalReportPage({
   useEffect(() => {
     client
       .getSufficiency(editionId)
-      .then(({ sufficiency }) => {
+      .then(({ sufficiency, marketInstitutions }) => {
         setCounted(sufficiency);
+        // Counted on the server by market institution (BUG-05), so this needs
+        // no Market institutions right.
+        if (marketInstitutions) {
+          setRegulatorsEngaged(marketInstitutions.engaged);
+          setRegulatorsTotal(marketInstitutions.total);
+        }
         setSegInputs((prev) => {
           const next = { ...prev };
           for (const seg of Object.keys(prev)) {
@@ -146,21 +152,6 @@ export function NationalReportPage({
       })
       .catch(() => {
         /* non-fatal — the boxes stay at "not met" and can be set by hand */
-      });
-  }, [client, editionId]);
-
-  useEffect(() => {
-    client
-      .getRegulators(editionId)
-      .then((r) => {
-        const engaged = new Set(
-          r.regulators.filter((x) => x.status === 'confirmed').map((x) => x.institutionId),
-        );
-        setRegulatorsEngaged(engaged.size);
-        setRegulatorsTotal(new Set(r.regulators.map((x) => x.institutionId)).size);
-      })
-      .catch(() => {
-        /* non-fatal — the generation form still works with a manually entered count */
       });
   }, [client, editionId]);
 
