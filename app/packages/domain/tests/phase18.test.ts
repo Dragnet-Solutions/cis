@@ -26,6 +26,7 @@ import {
   assembleFirmDigest,
   sendFirmDigest,
   getPublicContent,
+  DEFAULT_PUBLIC_CONTENT,
   listPreviousPublishedEditions,
   saveDraft,
   publishDraft,
@@ -297,6 +298,34 @@ describe('Gate — help/privacy/about wired to managed content, no hardcoding', 
     expect(content.organisationDescriptions.cis).toBe('CIS is the professional body.');
     expect(content.organisationDescriptions.dragnet).toBe('Dragnet built the platform.');
     expect(content.helpText).toBe('Email support@example.org for help.');
+  });
+
+  it('BUG-04: with nothing published, the public pages show Product’s wording, never blanks', async () => {
+    const content = await getPublicContent(pool);
+    expect(content.organisationDescriptions).toEqual(
+      DEFAULT_PUBLIC_CONTENT.organisationDescriptions,
+    );
+    expect(content.organisationDescriptions.cis).toMatch(
+      /^The Chartered Institute of Stockbrokers/,
+    );
+    expect(content.organisationDescriptions.dragnet).toMatch(/^Dragnet Solutions Limited/);
+    expect(content.helpText).toContain('support@cisdragnetstudy.com');
+  });
+
+  it('BUG-04: a blank published field falls back; a filled one wins', async () => {
+    const draft = await saveDraft(
+      pool,
+      'organisation_descriptions',
+      '',
+      JSON.stringify({ cis: 'Our own CIS wording.', dragnet: '   ' }),
+      setupUserId,
+    );
+    await publishDraft(pool, 'organisation_descriptions', '', draft.id, setupUserId);
+    const content = await getPublicContent(pool);
+    expect(content.organisationDescriptions.cis).toBe('Our own CIS wording.');
+    expect(content.organisationDescriptions.dragnet).toBe(
+      DEFAULT_PUBLIC_CONTENT.organisationDescriptions.dragnet,
+    );
   });
 
   it('privacy notice renders from governed_config via the same content-state routing', async () => {
