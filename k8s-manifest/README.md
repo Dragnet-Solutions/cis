@@ -1,6 +1,6 @@
 # K8s Manifest
 
-Raw (non-Kustomize) manifests for the CIS - Dragnet Study, organized the same way every other app in the
+Raw (non-Kustomize) manifests for the CIS-Dragnet Benchmark Study, organized the same way every other app in the
 org's shared AKS `dev` namespace is: one directory per component, ArgoCD `sync-wave` annotations
 for ordering, secrets from Azure Key Vault via External Secrets — never a plain committed `Secret`.
 
@@ -86,7 +86,7 @@ the nginx template.
   tracks whatever SHA the pipeline last pinned on `k8s-release`.
 
 ## Sender, replies and support address
-- **Sender**: `MAIL_FROM` is `CIS - Dragnet Study <noreply@idhub.ng>`. The address is still on
+- **Sender**: `MAIL_FROM` is `The CIS-Dragnet Benchmark Study <noreply@idhub.ng>`. The address is still on
   idhub.ng; moving it to `noreply@cisdragnetstudy.com` is a DevOps/IT task (verify the
   cisdragnetstudy.com domain in the ZeptoMail Mail Agent — SPF/DKIM — then change `MAIL_FROM`
   only). No code change is needed.
