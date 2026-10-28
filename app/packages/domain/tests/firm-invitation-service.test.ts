@@ -11,6 +11,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { Pool } from 'pg';
 import {
+  createEdition,
   createOrganization,
   getFirmClaim,
   listEmailsFor,
@@ -112,7 +113,7 @@ describe('inviteFirm', () => {
     expect(email.bodyText).toContain(`${PORTAL}/firm?invite=${token}`);
     expect(email.bodyHtml).toContain(`${PORTAL}/firm?invite=${token}`);
     // The approved firm invitation (F-01): the link is the invitation code.
-    expect(email.subject).toBe('CORDROS Ltd is invited to the CIS-Dragnet 2026 Benchmark Study');
+    expect(email.subject).toBe('CORDROS Ltd is invited to the 2026 CIS-Dragnet Benchmark Study');
     expect(email.bodyText).toContain(`Your invitation code:\n${PORTAL}/firm?invite=${token}`);
     expect(email.bodyText).toMatch(/Survey closes: /);
 
@@ -409,6 +410,18 @@ describe('FIRM_CLAIM_WITHOUT_INVITE (automated test runs only)', () => {
 });
 
 describe('operator links, CSV and bulk invitations', () => {
+  it('writes a formula-shaped firm name as plain text in the CSV (BUG-06)', async () => {
+    const evil = await createOrganization(pool, {
+      slug: 'evil-firm',
+      displayName: '=HYPERLINK("http://x.example","Click")',
+      orgType: 'firm',
+    });
+    await invite(evil.id, 'md@evil.example');
+    const csv = await pendingInvitationsCsv(pool, operator, editionId, PORTAL);
+    const row = csv.trim().split(/\r\n/)[1]!;
+    expect(row.startsWith(`"'=HYPERLINK(`)).toBe(true);
+  });
+
   it('shows the link of a usable invitation only, and lists it in the CSV', async () => {
     const open = await firm('openlink');
     const gone = await firm('gonelink');
@@ -490,9 +503,9 @@ describe('operator links, CSV and bulk invitations', () => {
     expect(listed).toMatchObject({ considered: 1, invited: 1 });
   });
 
-  it('bulk invite needs an address pattern and the access:send right', async () => {
+  it('bulk invite refuses a malformed address pattern, and needs the access:send right', async () => {
     await expect(
-      bulkInviteFirms(pool, operator, { editionId, namePrefix: '[Test]' }, CTX),
+      bulkInviteFirms(pool, operator, { editionId, emailTemplate: 'not-an-address' }, CTX),
     ).rejects.toMatchObject({ code: 'EMAIL_INVALID' });
     await expect(
       bulkInviteFirms(
@@ -502,5 +515,58 @@ describe('operator links, CSV and bulk invitations', () => {
         CTX,
       ),
     ).rejects.toMatchObject({ name: 'PermissionDeniedError' });
+  });
+});
+
+describe('Invitations belong to an edition (NEW-1)', () => {
+  it('an open invitation from the previous edition does not block or show in the next', async () => {
+    const t = await firm('t-carry');
+    await upsertEditionParticipation(pool, { editionId, organizationId: t.id, status: 'active' });
+    await inviteFirm(
+      pool,
+      operator,
+      { organizationId: t.id, editionId, email: 'coordinator+t-carry@test.example' },
+      CTX,
+    );
+    const next = await createEdition(pool, { label: '2099', priorEditionId: editionId });
+    await upsertEditionParticipation(pool, {
+      editionId: next.id,
+      organizationId: t.id,
+      status: 'active',
+    });
+
+    const bulk = await bulkInviteFirms(
+      pool,
+      operator,
+      {
+        editionId: next.id,
+        namePrefix: 'T-CARRY',
+        emailTemplate: 'coordinator+{slug}@test.example',
+      },
+      CTX,
+    );
+    expect(bulk).toMatchObject({ considered: 1, invited: 1, skippedPending: 0 });
+
+    // Each edition's panel shows only its own invitation; both stay usable.
+    const inNext = await listInvitations(pool, operator, {
+      organizationId: t.id,
+      editionId: next.id,
+    });
+    expect(inNext.map((i) => i.editionId)).toEqual([next.id]);
+    const inPrior = await listInvitations(pool, operator, { organizationId: t.id, editionId });
+    expect(inPrior.map((i) => i.editionId)).toEqual([editionId]);
+    // Without an edition, the firm's whole history.
+    expect(await listInvitations(pool, operator, { organizationId: t.id })).toHaveLength(2);
+
+    // Inviting the same address again in the new edition re-sends that
+    // edition's invitation rather than the old one.
+    const again = await inviteFirm(
+      pool,
+      operator,
+      { organizationId: t.id, editionId: next.id, email: 'coordinator+t-carry@test.example' },
+      CTX,
+    );
+    expect(again.resent).toBe(true);
+    expect(again.invitation.editionId).toBe(next.id);
   });
 });

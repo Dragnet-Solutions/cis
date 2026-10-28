@@ -265,16 +265,31 @@ export interface FirmSummary {
 }
 
 /** What a firm directory import would do (dry run) or did. */
+/** A firm row of the import file, with its contact when the file has one (NEW-2). */
+export interface FirmImportRow {
+  line: number;
+  name: string;
+  slug: string;
+  contactName?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  registrationNumber?: string | null;
+}
+
 export interface FirmImportResult {
   dryRun: boolean;
   totalRows: number;
   added: number;
-  toAdd: Array<{ line: number; name: string; slug: string }>;
-  duplicates: Array<{ line: number; name: string; slug: string; reason: string }>;
+  toAdd: FirmImportRow[];
+  duplicates: Array<FirmImportRow & { reason: string }>;
   errors: Array<{ line: number; message: string }>;
   /** Firms enrolled in the edition (null when no edition was given). */
   enrolled: number | null;
   enrolmentNote: string | null;
+  /** Rows carrying an email to invite. */
+  withContact: number;
+  /** Firms whose contact was saved (0 on a dry run). */
+  contactsSaved: number;
 }
 
 /** An invitation for a firm to set up its space (an emailed personal link). */
@@ -310,6 +325,8 @@ export interface BulkFirmInviteResult {
   invited: number;
   skippedClaimed: number;
   skippedPending: number;
+  /** Firms with no contact email on file (when no address pattern was given). */
+  skippedNoContact: number;
   failed: Array<{ organizationId: string; firmName: string; message: string }>;
 }
 
@@ -366,6 +383,27 @@ export interface NationalApprovalPreconditions {
 }
 
 /** The sentence-level review of the national report's draft (the AI narrative). */
+/** A firm report's fact-check decisions (BUG-20 / BUG-03). */
+export interface FirmNarrativeReviewView {
+  narrativeId: string | null;
+  model: string | null;
+  draftedAt: string | null;
+  findings: Array<{
+    narrativeIndex: number;
+    section: string;
+    text: string;
+    finding: { kind: string; why: string };
+    decision: {
+      disposition: 'SUPPRESS_CLAIM' | 'REJECT_WITH_REASON';
+      reason: string | null;
+      decidedBy: string;
+      decidedAt: string;
+    } | null;
+  }>;
+  undecided: number;
+  released: boolean;
+}
+
 export interface NationalReview {
   narrativeId: string | null;
   model: string | null;
@@ -463,6 +501,9 @@ export interface AuthUser {
   displayName: string;
   org: string | null;
   hasDragnetRight: boolean;
+  /** Holds the "Market institutions" right (BUG-01). Missing on a session
+   *  signed in before it existed — treated as held; the API still decides. */
+  hasRegulatorsRight?: boolean;
 }
 
 export interface LoginResponse {
@@ -864,8 +905,9 @@ export interface FirmReportContent {
   publishedAt?: string | null;
 }
 
-/** The scoring methodology's two-person approval (Runbook §5.2). */
+/** The record of the scoring methodology's two-person approval for one edition (BUG-02). */
 export interface MethodologyApprovalView {
+  editionId: string;
   methodology: { id: string; version: string };
   approved: {
     actionId: string;

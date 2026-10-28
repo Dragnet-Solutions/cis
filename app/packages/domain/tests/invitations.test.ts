@@ -24,6 +24,9 @@ import {
   recordDelivery,
   listBouncedRecipients,
   createCoordinator,
+  upsertFirmContact,
+  getPendingFirmInvitation,
+  createUser,
 } from '@cis/db';
 import * as domain from '../src';
 import {
@@ -197,6 +200,37 @@ describe('Deduplication is per template', () => {
     const r3 = await sendBatch(pool, { editionId, templateId: first, audienceId: 'all' });
     expect(r3.sent).toBe(1);
     expect(f.id).toBeTruthy();
+  });
+});
+
+describe('Campaign sends reach a firm through its directory contact (NEW-2)', () => {
+  it('a firm known only from the CIS file gets the campaign email and an invitation link', async () => {
+    const f = await firm('file-only-firm');
+    await upsertFirmContact(pool, {
+      organizationId: f.id,
+      contactName: 'Ada Obi',
+      email: 'ada@fileonly.example',
+      phone: null,
+      registrationNumber: null,
+      updatedBy: null,
+    });
+    const operator = await createUser(pool, {
+      email: 'sender@cis.example',
+      passwordHash: 'x',
+      displayName: 'Sender',
+      organization: 'CIS',
+    });
+    const first = await templateId('First invitation');
+    const r = await sendBatch(pool, {
+      editionId,
+      templateId: first,
+      audienceId: 'all',
+      sentBy: operator.id,
+      portalUrl: 'https://portal.example',
+    });
+    expect(r.sent).toBe(1);
+    const inv = await getPendingFirmInvitation(pool, f.id, 'ada@fileonly.example', editionId);
+    expect(inv).toMatchObject({ email: 'ada@fileonly.example', contactName: 'Ada Obi' });
   });
 });
 

@@ -35,6 +35,7 @@ import {
   type PasswordSetInfo,
   type ReleaseFirmReportsResult,
   type NationalReview,
+  type FirmNarrativeReviewView,
   type MethodologyApprovalView,
   type ReminderSchedule,
   type ResponsesMonitor,
@@ -163,8 +164,11 @@ export interface AdminClient {
   getMissionBoard(id: string): Promise<MissionBoardResponse>;
   // Scoring & sign-off (UX-ADM-004)
   triggerScoringRun(id: string): Promise<{ run: unknown }>;
-  getScoringMethodology(): Promise<MethodologyApprovalView>;
-  requestMethodologyApproval(reason: string): Promise<{ criticalActionId: string }>;
+  getScoringMethodology(editionId: string): Promise<MethodologyApprovalView>;
+  requestMethodologyApproval(
+    editionId: string,
+    reason: string,
+  ): Promise<{ criticalActionId: string }>;
   decideMethodologyApproval(
     actionId: string,
     approved: boolean,
@@ -193,6 +197,8 @@ export interface AdminClient {
   getLatestNationalReport(id: string): Promise<{ report: { id: string } | null }>;
   getSufficiency(id: string): Promise<{
     sufficiency: Record<string, { counted: number; floor: number; meets: boolean }>;
+    /** Market institutions taking part and engaged, each counted once (BUG-05). */
+    marketInstitutions?: { engaged: number; total: number };
   }>;
   getNationalReport(reportId: string): Promise<NationalReportDetailResponse>;
   openNationalDraft(reportId: string): Promise<{ opened: boolean }>;
@@ -204,6 +210,20 @@ export interface AdminClient {
     disposition: 'SUPPRESS_CLAIM' | 'REJECT_WITH_REASON',
     reason?: string,
   ): Promise<{ decided: boolean }>;
+  getFirmNarrativeReview(
+    editionId: string,
+    firmId: string,
+  ): Promise<{ review: FirmNarrativeReviewView }>;
+  decideFirmNarrativeFinding(
+    editionId: string,
+    firmId: string,
+    decision: {
+      narrativeId: string;
+      narrativeIndex: number;
+      disposition: 'SUPPRESS_CLAIM' | 'REJECT_WITH_REASON';
+      reason?: string;
+    },
+  ): Promise<{ review: FirmNarrativeReviewView }>;
   requestNationalApproval(reportId: string, reason: string): Promise<{ requested: boolean }>;
   approveNationalReport(reportId: string): Promise<{ status: string }>;
   // Firm reports (UX-ADM-006)
@@ -367,7 +387,11 @@ export interface AdminClient {
   }>;
   removeCoordinator(orgId: string, coordinatorId: string): Promise<{ removed: boolean }>;
   // Firm invitations — an emailed personal link to set up the firm's space.
-  listFirmInvitations(orgId: string): Promise<{ invitations: FirmInvitation[]; claimed: boolean }>;
+  /** A firm's invitations — only this edition's when `editionId` is given (NEW-1). */
+  listFirmInvitations(
+    orgId: string,
+    editionId?: string | null,
+  ): Promise<{ invitations: FirmInvitation[]; claimed: boolean }>;
   listEditionFirmInvitations(editionId: string): Promise<{ invitations: FirmInvitation[] }>;
   inviteFirm(
     orgId: string,
@@ -379,7 +403,7 @@ export interface AdminClient {
   downloadFirmInvitationsCsv(editionId: string): Promise<Blob>;
   bulkInviteFirms(
     editionId: string,
-    body: { organizationIds?: string[]; namePrefix?: string; emailTemplate: string },
+    body: { organizationIds?: string[]; namePrefix?: string; emailTemplate?: string },
   ): Promise<BulkFirmInviteResult>;
   // People & Access (UX-OPS-006)
   getPeople(): Promise<PeopleResponse>;
@@ -493,9 +517,10 @@ export function createClient(token: string | null, hooks: SessionHooks = {}): Ad
     getInstruments: (id) => request(`/editions/${id}/instruments`, { token }),
     getMissionBoard: (id) => request(`/editions/${id}/mission-board`, { token }),
     triggerScoringRun: (id) => request(`/editions/${id}/scoring-runs`, { method: 'POST', token }),
-    getScoringMethodology: () => request('/scoring-methodology', { token }),
-    requestMethodologyApproval: (reason) =>
-      request('/scoring-methodology/approval/request', {
+    getScoringMethodology: (editionId) =>
+      request(`/editions/${editionId}/scoring-methodology`, { token }),
+    requestMethodologyApproval: (editionId, reason) =>
+      request(`/editions/${editionId}/scoring-methodology/approval/request`, {
         method: 'POST',
         body: { reason },
         token,
@@ -542,6 +567,14 @@ export function createClient(token: string | null, hooks: SessionHooks = {}): Ad
       request(`/national-reports/${reportId}/findings/${findingId}/decision`, {
         method: 'POST',
         body: reason ? { disposition, reason } : { disposition },
+        token,
+      }),
+    getFirmNarrativeReview: (editionId, firmId) =>
+      request(`/editions/${editionId}/firms/${firmId}/report/review`, { token }),
+    decideFirmNarrativeFinding: (editionId, firmId, decision) =>
+      request(`/editions/${editionId}/firms/${firmId}/report/review/decision`, {
+        method: 'POST',
+        body: decision,
         token,
       }),
     openNationalDraft: (reportId) =>
@@ -720,7 +753,11 @@ export function createClient(token: string | null, hooks: SessionHooks = {}): Ad
       request(`/firms/${orgId}/coordinators/handover`, { method: 'POST', body, token }),
     removeCoordinator: (orgId, coordinatorId) =>
       request(`/firms/${orgId}/coordinators/${coordinatorId}`, { method: 'DELETE', token }),
-    listFirmInvitations: (orgId) => request(`/firms/${orgId}/invitations`, { token }),
+    listFirmInvitations: (orgId, editionId) =>
+      request(
+        `/firms/${orgId}/invitations${editionId ? `?editionId=${encodeURIComponent(editionId)}` : ''}`,
+        { token },
+      ),
     listEditionFirmInvitations: (editionId) =>
       request(`/editions/${editionId}/firm-invitations`, { token }),
     inviteFirm: (orgId, body) =>
@@ -749,7 +786,11 @@ export function createClient(token: string | null, hooks: SessionHooks = {}): Ad
       request('/reminders/schedule', { method: 'PUT', body: schedule, token }),
     setReminderCap: (cap) => request('/reminders/cap', { method: 'PUT', body: { cap }, token }),
     runReminders: (editionId) =>
-      request(`/editions/${editionId}/reminders/run`, { method: 'POST', body: {}, token }),
+      request(`/editions/${editionId}/reminders/run`, {
+        method: 'POST',
+        body: { now: true },
+        token,
+      }),
     get: <T = unknown>(path: string) => request<T>(path, { token }),
     post: <T = unknown>(path: string, body: unknown) =>
       request<T>(path, { method: 'POST', body, token }),

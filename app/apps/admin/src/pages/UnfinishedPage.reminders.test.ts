@@ -26,7 +26,7 @@ describe('describeReminderRun', () => {
 
   it('says when nothing was due, and how many are waiting', () => {
     expect(describeReminderRun({ ...base, notDue: 4 })).toBe(
-      'No reminders were due. 4 people not due yet.',
+      'No reminders were sent. 4 people not reminded: they had a reminder in the last day, or have had every reminder.',
     );
   });
 

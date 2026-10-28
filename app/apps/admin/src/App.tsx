@@ -32,7 +32,7 @@ import {
   tabUrl,
   type Tab,
 } from './editionNav';
-import { STUDY_NAME } from '@cis/survey';
+import { STUDY_SHORT_NAME } from '@cis/survey';
 import { BrandLockup } from './components/BrandLockup';
 
 /** A link into operations may name its page (`/?tab=national`), e.g. from an
@@ -209,13 +209,16 @@ export function App(): JSX.Element {
     );
   }
 
+  // The Market institutions tab follows its right, as Dragnet's does (BUG-01).
+  const hasRegulatorsRight = session.user.hasRegulatorsRight !== false;
+
   return (
     <div className="shell">
       <header className="top">
         <div className="lockup">
           <BrandLockup size="sm" />
           <span className="lockup-text">
-            {STUDY_NAME}
+            {STUDY_SHORT_NAME}
             <small>Study operations</small>
           </span>
         </div>
@@ -283,10 +286,14 @@ export function App(): JSX.Element {
         <NavTab tabKey="invitations" tab={tab} phase={phase} setTab={setTab}>
           Invitations
         </NavTab>
-        <span aria-hidden="true">·</span>
-        <NavTab tabKey="regulators" tab={tab} phase={phase} setTab={setTab}>
-          Market institutions
-        </NavTab>
+        {hasRegulatorsRight && (
+          <>
+            <span aria-hidden="true">·</span>
+            <NavTab tabKey="regulators" tab={tab} phase={phase} setTab={setTab}>
+              Market institutions
+            </NavTab>
+          </>
+        )}
         <span aria-hidden="true">·</span>
         <NavTab tabKey="scoring" tab={tab} phase={phase} setTab={setTab}>
           Scoring
@@ -336,6 +343,7 @@ export function App(): JSX.Element {
           client={client}
           editionId={editionId}
           hasDragnetRight={!!session.user.hasDragnetRight}
+          hasRegulatorsRight={hasRegulatorsRight}
           onNavigate={setTab}
         />
       ) : tab === 'responses' ? (
@@ -365,7 +373,7 @@ export function App(): JSX.Element {
         <PeopleAccessPage client={client} viewer={session.user} />
       ) : tab === 'invitations' ? (
         <InvitationsPage client={client} editionId={editionId} />
-      ) : tab === 'regulators' ? (
+      ) : tab === 'regulators' && hasRegulatorsRight ? (
         <RegulatorsPage client={client} editionId={editionId} />
       ) : tab === 'scoring' ? (
         <ScoresSignoffPage client={client} editionId={editionId} viewer={session.user} />

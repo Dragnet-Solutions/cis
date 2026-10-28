@@ -101,6 +101,7 @@ export {
   requestInvitation,
   getSeats,
   seatForCoordinator,
+  emailOwnSeatLink,
   assignSeat,
   SEAT_ASSIGNED_EMAIL_KIND,
   FIRM_SPACE_CLAIMED_EMAIL_KIND,
@@ -605,7 +606,11 @@ export type {
 
 // ── Phase 18: Public content — help/privacy/about + previous editions
 //    (UX-X-002, UX-PUB-002) ──────────────────────────────────────────────────
-export { getPublicContent, listPreviousPublishedEditions } from './public-content-service';
+export {
+  getPublicContent,
+  listPreviousPublishedEditions,
+  DEFAULT_PUBLIC_CONTENT,
+} from './public-content-service';
 export type {
   PublicContent,
   OrganisationDescriptions,
@@ -627,6 +632,7 @@ export {
   ReportContentError,
   institutionalThemes,
   withheldSections,
+  withholdUnsupportedSei,
   ratingByRespondent,
   type IndustryReportContent,
   type FirmReportContent,
@@ -643,6 +649,7 @@ export {
   industryNarrativeFacts,
   industryFacts,
   firmFacts,
+  sharedThemes,
   checkNarrativeSentence,
   sectionFinding,
   parseModelSections,
@@ -733,3 +740,14 @@ export {
   decideMethodologyApproval,
   type MethodologyApprovalState,
 } from './methodology-approval-service';
+
+// BUG-20 / BUG-03: the firm report's fact-check decision step.
+export {
+  FirmNarrativeReviewError,
+  getFirmNarrativeReview,
+  decideFirmNarrativeFinding,
+  undecidedFirmFindings,
+  type FirmNarrativeReview,
+  type FirmNarrativeFinding,
+  type FirmFindingDisposition,
+} from './firm-narrative-review-service';

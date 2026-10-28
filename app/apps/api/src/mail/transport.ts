@@ -1,5 +1,5 @@
 import { DEFAULT_SUPPORT_EMAIL, type InlineImage } from '@cis/domain';
-import { STUDY_NAME } from '@cis/survey';
+import { STUDY_SHORT_NAME } from '@cis/survey';
 
 /**
  * How a notice leaves the system. The outbox (email_outbox) is the record; a
@@ -44,7 +44,7 @@ export interface Sender {
   name: string;
 }
 
-export const DEFAULT_SENDER_NAME = STUDY_NAME;
+export const DEFAULT_SENDER_NAME = STUDY_SHORT_NAME;
 const DEFAULT_SENDER_ADDRESS = 'no-reply@cis.example';
 
 /**

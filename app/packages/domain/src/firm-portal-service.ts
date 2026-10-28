@@ -434,33 +434,54 @@ export async function requestInvitation(
 // ─── Seats ──────────────────────────────────────────────────────────────────
 
 /**
- * A seat as a coordinator sees it (D-24). A coordinator can never read a
- * respondent's answers, sent or in progress, so a seat reaches the firm portal
- * without the two handles that open a response:
+ * A seat as a coordinator sees it (D-24, BUG-16). A coordinator can never read
+ * a respondent's answers, sent or in progress, so a seat reaches the firm
+ * portal without either handle that opens a response:
  *
  *  - never the respondent id — `GET /journeys/:respondentId/resume` returns an
  *    unsent response's saved answers to whoever holds it;
- *  - the seat's link only on the coordinator's OWN seat (assigned to their own
- *    address). Anyone else's link goes only to that person's inbox: a
- *    coordinator who held it could open it and read the answers saved so far.
+ *  - never the seat's link, not even on the coordinator's own seat. A link
+ *    goes only to its holder's inbox; a coordinator answering their own survey
+ *    asks for it to be emailed to them (`emailOwnSeatLink`).
  */
-export type CoordinatorSeatView = Omit<SeatAssignment, 'respondentId' | 'linkToken'> & {
-  linkToken: string | null;
-};
+export type CoordinatorSeatView = Omit<SeatAssignment, 'respondentId' | 'linkToken'>;
 
-export function seatForCoordinator(
-  seat: SeatAssignment,
-  coordinatorEmail: string,
-): CoordinatorSeatView {
-  const own =
-    !!seat.assignedEmail &&
-    seat.assignedEmail.trim().toLowerCase() === coordinatorEmail.trim().toLowerCase();
-  const view: CoordinatorSeatView & { respondentId?: unknown } = {
-    ...seat,
-    linkToken: own ? seat.linkToken : null,
-  };
+export function seatForCoordinator(seat: SeatAssignment): CoordinatorSeatView {
+  const view: CoordinatorSeatView & { respondentId?: unknown; linkToken?: unknown } = { ...seat };
   delete view.respondentId;
+  delete view.linkToken;
   return view;
+}
+
+/**
+ * Email a coordinator the link to their OWN seat — the one assigned to their
+ * own address — so they can answer it without the portal ever holding the
+ * link (BUG-16). Refused for anyone else's seat, an empty or finished one, and
+ * once collection has closed. Returns the address it went to.
+ */
+export async function emailOwnSeatLink(
+  pool: Pool,
+  data: { editionId: string; organizationId: string; seatCode: string; coordinatorEmail: string },
+  notify: SeatNotify,
+): Promise<{ sentTo: string }> {
+  await assertCollectionOpen(pool, data.editionId);
+  const seat = (await ensureSeats(pool, data.editionId, data.organizationId)).find(
+    (s) => s.seatCode === data.seatCode,
+  );
+  const own =
+    !!seat?.assignedEmail &&
+    seat.assignedEmail.trim().toLowerCase() === data.coordinatorEmail.trim().toLowerCase();
+  if (!seat || !own) {
+    throw new FirmPortalError(
+      'Only the person a survey is assigned to receives its link',
+      'NOT_YOUR_SEAT',
+    );
+  }
+  if (seat.state === 'complete') {
+    throw new FirmPortalError('This survey has already been sent', 'SEAT_COMPLETE');
+  }
+  await queueSeatAssigned(pool, seat, notify);
+  return { sentTo: seat.assignedEmail ?? '' };
 }
 
 export async function getSeats(

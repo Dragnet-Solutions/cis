@@ -117,15 +117,26 @@ export async function publishIndustryReport(
   });
 }
 
-/** The public Industry report — only once published. */
+/** The public name of each document printed from the published Industry report. */
+const PUBLIC_DOCUMENT_NAME = {
+  industry: 'Industry report',
+  institutional: 'Institutional Perspectives report',
+} as const;
+
+/**
+ * The public Industry report — only once published. `document` names the one
+ * being asked for: Institutional Perspectives is printed from the same
+ * publication, and its "not published" answer must say its own name.
+ */
 export async function getPublishedIndustryReport(
   pool: Pool,
   editionId: string,
+  document: keyof typeof PUBLIC_DOCUMENT_NAME = 'industry',
 ): Promise<IndustryReportContent & { narrative: PublicNarrative | null; publishedAt: Date }> {
   const published = await getReportPublication(pool, editionId, 'industry', null);
   if (!published) {
     throw new ReportPublicationError(
-      'This Industry report has not been published.',
+      `The ${PUBLIC_DOCUMENT_NAME[document]} has not been published yet.`,
       'NOT_PUBLISHED',
     );
   }

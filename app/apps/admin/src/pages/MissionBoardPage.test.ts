@@ -102,3 +102,12 @@ describe('Mission Board rail — Dragnet analysis only for the Dragnet right', (
     expect(railFor(false)).toHaveLength(RAIL.length - 1);
   });
 });
+
+// BUG-01: the Market institutions section follows its right, as Dragnet does.
+describe('Mission Board rail — Market institutions only for its right', () => {
+  it('is hidden from someone without the right and shown to someone with it', () => {
+    expect(railFor(true, false).map((s) => s.key)).not.toContain('regulators');
+    expect(railFor(true, true).map((s) => s.key)).toContain('regulators');
+    expect(railFor(true, false)).toHaveLength(RAIL.length - 1);
+  });
+});

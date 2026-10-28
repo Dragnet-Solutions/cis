@@ -48,6 +48,8 @@ import {
   publishIndustryReport,
   generateIndustryNarrative,
   getPublishedIndustryReport,
+  getFirmNarrativeReview,
+  decideFirmNarrativeFinding,
   type NarrativeModel,
   type ReleaseOptions,
 } from '../src';
@@ -311,6 +313,16 @@ describe('Delivery: what leaves CIS, frozen as it left', () => {
     const gen = await generateFirmReports(pool, { editionId, scoringRunId });
     await approveNationalFor();
     const drafted = await draftFor(a.id, 'The analysis as released.');
+    // Its checker finding is decided before release (BUG-20 / BUG-03).
+    await decideFirmNarrativeFinding(pool, {
+      editionId,
+      firmId: a.id,
+      narrativeId: drafted.id,
+      narrativeIndex: 1,
+      disposition: 'SUPPRESS_CLAIM',
+      reason: null,
+      decidedBy: 'reviewer@cis.example',
+    });
 
     // Approving the release (two people) runs it, with the analysis prepared.
     const { release: result } = await releaseViaMakerChecker(
@@ -385,6 +397,15 @@ describe('Delivery: what leaves CIS, frozen as it left', () => {
     ).rejects.toMatchObject({ code: 'NATIONAL_NOT_APPROVED' });
     await expect(getPublishedIndustryReport(pool, editionId)).rejects.toMatchObject({
       code: 'NOT_PUBLISHED',
+      message: 'The Industry report has not been published yet.',
+    });
+    // BUG-08: Institutional Perspectives is printed from the same publication,
+    // and its refusal names it rather than the Industry report.
+    await expect(
+      getPublishedIndustryReport(pool, editionId, 'institutional'),
+    ).rejects.toMatchObject({
+      code: 'NOT_PUBLISHED',
+      message: 'The Institutional Perspectives report has not been published yet.',
     });
 
     await approveNationalFor();
@@ -397,6 +418,129 @@ describe('Delivery: what leaves CIS, frozen as it left', () => {
     await expect(
       generateIndustryNarrative(pool, editionId, model, 'op@cis.example'),
     ).rejects.toMatchObject({ code: 'ALREADY_PUBLISHED' });
+  });
+});
+
+describe('Firm narrative fact-check decisions before release (BUG-20 / BUG-03)', () => {
+  const draft = (firmId: string) =>
+    insertReportNarrative(pool, {
+      editionId,
+      kind: 'firm',
+      subjectId: firmId,
+      sentences: [
+        { section: 'SUMMARY', text: 'A verified sentence.', factIds: ['X'], finding: null },
+        {
+          section: 'F2',
+          text: 'Your firm rates itself lower than its investors do.',
+          factIds: ['DIM.1'],
+          finding: { kind: 'UNSUPPORTED COMPARISON', why: 'no self-view fact' },
+        },
+        {
+          section: 'F2',
+          text: 'A sentence the checker held back wrongly.',
+          factIds: ['X'],
+          finding: { kind: 'SPECULATIVE', why: 'test' },
+        },
+      ],
+      facts: [],
+      model: 'fake-model',
+      createdBy: 'op@cis.example',
+    });
+
+  it('blocks release until every finding is decided; an overturned sentence is shown', async () => {
+    const a = await participatingFirm('firm-review');
+    const gen = await generateFirmReports(pool, { editionId, scoringRunId });
+    await approveNationalFor();
+    const narrative = await draft(a.id);
+    const ids = gen.reports.map((r) => r.id);
+    for (const id of ids) await openFirmReport(pool, id, maker.userId);
+
+    const review = await getFirmNarrativeReview(pool, editionId, a.id);
+    expect(review.findings.map((f) => f.narrativeIndex)).toEqual([1, 2]);
+    expect(review.undecided).toBe(2);
+    await expect(
+      requestFirmReportRelease(pool, maker, editionId, { reason: 'All read', reportIds: ids }),
+    ).rejects.toMatchObject({ code: 'FINDINGS_UNDECIDED' });
+
+    const decide = (
+      narrativeIndex: number,
+      disposition: 'SUPPRESS_CLAIM' | 'REJECT_WITH_REASON',
+      reason: string | null,
+    ) =>
+      decideFirmNarrativeFinding(pool, {
+        editionId,
+        firmId: a.id,
+        narrativeId: narrative.id,
+        narrativeIndex,
+        disposition,
+        reason,
+        decidedBy: 'reviewer@cis.example',
+      });
+    // A sentence with no finding has nothing to decide; overturning needs a reason.
+    await expect(decide(0, 'SUPPRESS_CLAIM', null)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(decide(2, 'REJECT_WITH_REASON', ' ')).rejects.toMatchObject({
+      code: 'REASON_REQUIRED',
+    });
+    // The unsupported self-comparison stays out; the false positive goes back in.
+    await decide(1, 'SUPPRESS_CLAIM', null);
+    await expect(decide(1, 'REJECT_WITH_REASON', 'Changed my mind')).rejects.toMatchObject({
+      code: 'DECIDED',
+    });
+    const after = await decide(2, 'REJECT_WITH_REASON', 'It only restates the cited figure.');
+    expect(after.undecided).toBe(0);
+    expect(
+      (await getFirmNarrative(pool, editionId, a.id))?.sentences
+        .filter((x) => !x.finding)
+        .map((x) => x.text),
+    ).toEqual(['A verified sentence.', 'A sentence the checker held back wrongly.']);
+
+    const action = await requestFirmReportRelease(pool, maker, editionId, {
+      reason: 'All read, every finding decided',
+      reportIds: ids,
+    });
+    const { release } = await decideFirmReportRelease(
+      pool,
+      checker,
+      editionId,
+      action.id,
+      { approved: true },
+      {},
+      { releasedBy: 'op@cis.example', prepare: async () => ({ narrativeId: narrative.id }) },
+    );
+    expect(release?.released.map((r) => r.organizationId)).toEqual([a.id]);
+    // Released: the review is final, and the firm sees the overturned sentence.
+    await expect(decide(2, 'SUPPRESS_CLAIM', null)).rejects.toMatchObject({ code: 'RELEASED' });
+    const released = await getReleasedFirmReport(pool, editionId, a.id);
+    expect(released?.narrative?.sentences.map((x) => x.text)).toEqual([
+      'A verified sentence.',
+      'A sentence the checker held back wrongly.',
+    ]);
+  });
+
+  it('a firm with no self-assessment is never asked for a self-view, and a claim of one is held back', async () => {
+    const a = await participatingFirm('firm-no-self');
+    await generateFirmReports(pool, { editionId, scoringRunId });
+    let prompt = '';
+    const model: NarrativeModel = {
+      name: 'fake-model',
+      complete: async (_system, user) => {
+        prompt = user;
+        return JSON.stringify({
+          sections: {
+            SUMMARY: [
+              {
+                text: 'Your firm rates itself lower than its investors do.',
+                factIds: ['RETAIL.STATE'],
+              },
+            ],
+          },
+        });
+      },
+    };
+    const narrative = await generateFirmNarrative(pool, editionId, a.id, model, 'op@cis.example');
+    expect(prompt).not.toContain('- F3:');
+    expect(prompt).not.toContain('SELF.1');
+    expect(narrative.sentences[0]?.finding?.kind).toBe('UNSUPPORTED COMPARISON');
   });
 });
 

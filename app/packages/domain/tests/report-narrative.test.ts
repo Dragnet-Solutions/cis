@@ -190,6 +190,45 @@ describe('The narrative checker', () => {
     ).toBeNull();
   });
 
+  it('holds back a self-view comparison no cited fact supports (BUG-20)', () => {
+    const facts = new Map(FACTS);
+    facts.set('DIM.1', {
+      id: 'DIM.1',
+      state: 'REPORTABLE',
+      statement:
+        "Ease: the firm's investors rate it 54/100 against an industry 58/100 (−4; below the industry).",
+      numbers: [54, 58, 4, 3, 100],
+    });
+    facts.set('SELF.1', {
+      id: 'SELF.1',
+      state: 'REPORTABLE',
+      statement:
+        "The firm's leadership rates its own success at meeting investor expectations 54/100; its investors rate their experience 58/100 — a gap of 4 points, leadership lower.",
+      numbers: [54, 58, 4, 100],
+    });
+    // The −4 is the gap to the industry, not to the firm's own view.
+    expect(
+      checkNarrativeSentence(
+        { text: 'Your firm rates itself 4 points lower than its investors.', factIds: ['DIM.1'] },
+        facts,
+      )?.kind,
+    ).toBe('UNSUPPORTED COMPARISON');
+    // Against the industry, the same figure is fine.
+    expect(
+      checkNarrativeSentence(
+        { text: 'Investors rate the firm 4 points below the industry.', factIds: ['DIM.1'] },
+        facts,
+      ),
+    ).toBeNull();
+    // With the self-view fact cited, the comparison stands.
+    expect(
+      checkNarrativeSentence(
+        { text: 'Your firm rates itself 4 points lower than its investors.', factIds: ['SELF.1'] },
+        facts,
+      ),
+    ).toBeNull();
+  });
+
   it('allows the edition year without a fact', () => {
     expect(
       checkNarrativeSentence(

@@ -15,7 +15,9 @@ import {
 } from '@cis/domain';
 import { kickMailDispatcher } from '../mail/dispatcher';
 import { publicOrigin } from '../public-url';
-import { loadRbacContext } from '@cis/auth';
+import type { FastifyRequest } from 'fastify';
+import { loadRbacContext, requirePermission } from '@cis/auth';
+import { REGS_PERMISSION } from './regs-permission';
 
 /**
  * Regulator engagement routes — UX-OPS-007. One record per (edition,
@@ -33,6 +35,12 @@ import { loadRbacContext } from '@cis/auth';
  * routes are thin.
  */
 export const regulatorRoutes: FastifyPluginAsyncZod = async (app) => {
+  // Every market-institution route, read and write, needs the "Market
+  // institutions" right (access:regs), as the Dragnet analysis needs its own
+  // (BUG-01). Without it: 403.
+  const requireRegs = async (request: FastifyRequest): Promise<void> => {
+    requirePermission(await loadRbacContext(getPool(), request.session.sub), REGS_PERMISSION);
+  };
   const familyCode = z.enum(['A', 'B', 'C', 'D']);
   const editionParam = z.object({ id: z.string().uuid() });
   const oneParam = z.object({
@@ -45,7 +53,10 @@ export const regulatorRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.get(
     '/editions/:id/regulators',
-    { preHandler: [app.authenticate], schema: { params: editionParam, querystring: asOfQuery } },
+    {
+      preHandler: [app.authenticate, requireRegs],
+      schema: { params: editionParam, querystring: asOfQuery },
+    },
     async (request, reply) => {
       const regulators = await listRegulators(getPool(), request.params.id, asOfOf(request.query));
       return reply.send({ regulators });
@@ -54,7 +65,10 @@ export const regulatorRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.get(
     '/editions/:id/regulators/:institutionId/:familyCode',
-    { preHandler: [app.authenticate], schema: { params: oneParam, querystring: asOfQuery } },
+    {
+      preHandler: [app.authenticate, requireRegs],
+      schema: { params: oneParam, querystring: asOfQuery },
+    },
     async (request, reply) => {
       const regulator = await getRegulator(
         getPool(),
@@ -70,7 +84,7 @@ export const regulatorRoutes: FastifyPluginAsyncZod = async (app) => {
   app.put(
     '/editions/:id/regulators/:institutionId/:familyCode/contact',
     {
-      preHandler: [app.authenticate],
+      preHandler: [app.authenticate, requireRegs],
       schema: {
         params: oneParam,
         body: z.object({
@@ -97,7 +111,7 @@ export const regulatorRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post(
     '/editions/:id/regulators/:institutionId/:familyCode/issue-link',
     {
-      preHandler: [app.authenticate],
+      preHandler: [app.authenticate, requireRegs],
       schema: { params: oneParam, body: z.object({ targetBy: z.string() }) },
     },
     async (request, reply) => {
@@ -115,7 +129,7 @@ export const regulatorRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.post(
     '/editions/:id/regulators/:institutionId/:familyCode/reminder',
-    { preHandler: [app.authenticate], schema: { params: oneParam } },
+    { preHandler: [app.authenticate, requireRegs], schema: { params: oneParam } },
     async (request, reply) => {
       const regulator = await sendReminder(
         getPool(),
@@ -131,7 +145,7 @@ export const regulatorRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.post(
     '/editions/:id/regulators/:institutionId/:familyCode/text-reminder',
-    { preHandler: [app.authenticate], schema: { params: oneParam } },
+    { preHandler: [app.authenticate, requireRegs], schema: { params: oneParam } },
     async (request, reply) => {
       const regulator = await sendTextReminder(
         getPool(),
@@ -145,7 +159,7 @@ export const regulatorRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.post(
     '/editions/:id/regulators/:institutionId/:familyCode/decline',
-    { preHandler: [app.authenticate], schema: { params: oneParam } },
+    { preHandler: [app.authenticate, requireRegs], schema: { params: oneParam } },
     async (request, reply) => {
       const regulator = await markDeclined(
         getPool(),
@@ -161,7 +175,7 @@ export const regulatorRoutes: FastifyPluginAsyncZod = async (app) => {
   // correction of a mistaken decline, not a critical action).
   app.post(
     '/editions/:id/regulators/:institutionId/:familyCode/reopen',
-    { preHandler: [app.authenticate], schema: { params: oneParam } },
+    { preHandler: [app.authenticate, requireRegs], schema: { params: oneParam } },
     async (request, reply) => {
       const pool = getPool();
       const rbac = await loadRbacContext(pool, request.user.sub);
@@ -178,7 +192,7 @@ export const regulatorRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.post(
     '/editions/:id/regulators/:institutionId/:familyCode/submitted',
-    { preHandler: [app.authenticate], schema: { params: oneParam } },
+    { preHandler: [app.authenticate, requireRegs], schema: { params: oneParam } },
     async (request, reply) => {
       const regulator = await markSubmitted(
         getPool(),
@@ -193,7 +207,7 @@ export const regulatorRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post(
     '/editions/:id/regulators/:institutionId/:familyCode/history',
     {
-      preHandler: [app.authenticate],
+      preHandler: [app.authenticate, requireRegs],
       schema: { params: oneParam, body: z.object({ entry: z.string() }) },
     },
     async (request, reply) => {

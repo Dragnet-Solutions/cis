@@ -62,7 +62,7 @@ function longDate(d: Date): string {
 }
 
 const editionName = (edition: Edition | null) =>
-  edition ? `${STUDY_NAME} ${edition.label}` : STUDY_NAME;
+  edition ? `${edition.label} ${STUDY_NAME}` : STUDY_NAME;
 
 /**
  * When the report can be expected, from the edition's own data only. A

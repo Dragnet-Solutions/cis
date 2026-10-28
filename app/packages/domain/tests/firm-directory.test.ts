@@ -5,7 +5,12 @@
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { Pool } from 'pg';
-import { createOrganization, listOrganizations, updateEditionStatus } from '@cis/db';
+import {
+  createOrganization,
+  listOrganizations,
+  updateEditionStatus,
+  getFirmContact,
+} from '@cis/db';
 import { loadRbacContext, type RbacContext } from '@cis/auth';
 import {
   seedReferenceData,
@@ -13,6 +18,8 @@ import {
   parseCsv,
   slugifyFirmName,
   MAX_IMPORT_ROWS,
+  bulkInviteFirms,
+  listInvitations,
 } from '../src';
 import { getTestPool, runMigrations, truncateAllTables, closeTestPool } from '../../db/tests/setup';
 
@@ -74,7 +81,9 @@ describe('Preview (dry run)', () => {
   });
 
   it('refuses a file without a name column', async () => {
-    const result = await importFirmDirectory(pool, operator, 'firm\nAlpha\n', { dryRun: true });
+    const result = await importFirmDirectory(pool, operator, 'slug,email\nalpha,a@b.example\n', {
+      dryRun: true,
+    });
     expect(result.errors).toHaveLength(1);
     expect(result.toAdd).toHaveLength(0);
   });
@@ -199,5 +208,90 @@ describe('Importing enrols the firms in the edition (D34)', () => {
       importFirmDirectory(pool, operator, 'name\nOrphan Firm\n', { dryRun: false }),
     ).rejects.toMatchObject({ code: 'IMPORT_EDITION_REQUIRED' });
     expect(await firmNames()).toEqual([]);
+  });
+});
+
+describe('One file: firms and their contacts (NEW-2)', () => {
+  const CIS_FILE =
+    'Firm Name,Contact Name,E-mail,Mobile,RC Number\n' +
+    'Alpha Securities,Ada Obi,ada@alpha.example,+234 803 000 0001,RC 1001\n' +
+    'Beta Brokerage,,ops@beta.example,,\n' +
+    'Gamma Capital,,,,\n';
+
+  it('previews each firm with its contact, matching the headers loosely', async () => {
+    const preview = await importFirmDirectory(pool, operator, CIS_FILE, {
+      dryRun: true,
+      editionId,
+    });
+    expect(preview.errors).toEqual([]);
+    expect(preview.withContact).toBe(2);
+    expect(preview.toAdd[0]).toMatchObject({
+      name: 'Alpha Securities',
+      contactName: 'Ada Obi',
+      email: 'ada@alpha.example',
+      phone: '+234 803 000 0001',
+      registrationNumber: 'RC 1001',
+    });
+    expect(preview.toAdd[2]).not.toHaveProperty('email');
+  });
+
+  it('imports the firms and keeps their contacts, ready to invite in one step', async () => {
+    const result = await importFirmDirectory(pool, operator, CIS_FILE, {
+      dryRun: false,
+      editionId,
+    });
+    expect(result).toMatchObject({ added: 3, enrolled: 3, contactsSaved: 2 });
+    const orgs = await listOrganizations(pool);
+    const alpha = orgs.find((o) => o.displayName === 'Alpha Securities')!;
+    expect(await getFirmContact(pool, alpha.id)).toMatchObject({
+      contactName: 'Ada Obi',
+      email: 'ada@alpha.example',
+      registrationNumber: 'RC 1001',
+    });
+
+    // "Invite all unclaimed firms" with no address pattern uses the contacts.
+    const invited = await bulkInviteFirms(
+      pool,
+      operator,
+      { editionId },
+      { portalUrl: 'https://portal.example' },
+    );
+    expect(invited).toMatchObject({ considered: 3, invited: 2, skippedNoContact: 1, failed: [] });
+    const [inv] = await listInvitations(pool, operator, { organizationId: alpha.id });
+    expect(inv).toMatchObject({ email: 'ada@alpha.example', contactName: 'Ada Obi' });
+  });
+
+  it('a firm already listed takes the contact the file gives it', async () => {
+    const old = await createOrganization(pool, {
+      slug: 'old-firm',
+      displayName: 'Old Firm',
+      orgType: 'firm',
+    });
+    await importFirmDirectory(pool, operator, 'name,email\nOld Firm,md@old.example\n', {
+      dryRun: false,
+      editionId,
+    });
+    expect((await getFirmContact(pool, old.id))?.email).toBe('md@old.example');
+  });
+
+  it('refuses a file with an unreadable email or phone, naming the line', async () => {
+    const bad =
+      'name,email,phone\nGood Firm,a@b.example,08030000000\nBad Mail,not-an-email,\nBad Phone,,123\n';
+    const preview = await importFirmDirectory(pool, operator, bad, { dryRun: true, editionId });
+    expect(preview.errors.map((e) => e.line)).toEqual([3, 4]);
+    await expect(
+      importFirmDirectory(pool, operator, bad, { dryRun: false, editionId }),
+    ).rejects.toMatchObject({ code: 'IMPORT_INVALID' });
+    expect(await firmNames()).toEqual([]);
+  });
+
+  it('a names-only file still imports exactly as before, with no contacts', async () => {
+    const result = await importFirmDirectory(pool, operator, 'name\nPlain Firm\n', {
+      dryRun: false,
+      editionId,
+    });
+    expect(result).toMatchObject({ added: 1, contactsSaved: 0, withContact: 0 });
+    const plain = (await listOrganizations(pool)).find((o) => o.displayName === 'Plain Firm')!;
+    expect(await getFirmContact(pool, plain.id)).toBeNull();
   });
 });

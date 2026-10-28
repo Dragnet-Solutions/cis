@@ -2,6 +2,7 @@ import { Pool } from 'pg';
 import {
   createCriticalAction,
   getCriticalActionById,
+  getEditionById,
   getMethodologyMeta,
   listCriticalActionsByType,
 } from '@cis/db';
@@ -19,19 +20,23 @@ import { CriticalActionStateError, InvalidReasonError, MIN_REASON_LENGTH } from 
 import type { ActorContext } from './edition-service';
 
 /**
- * Approving the scoring methodology (Runbook §5.2: the method must be
- * externally approved before official use). Until it is, every scoring run is
- * TEST_UNAPPROVED and no index score reaches a report.
+ * The record of the scoring methodology's approval for an edition (Runbook
+ * §5.2). Per Bobby's 25 Oct direction CIS approves the method offline, so
+ * scoring does not wait on this record (BUG-02): it documents, per edition,
+ * that the approval was given — who asked, who approved, why, and for which
+ * methodology version.
  *
- * The approval is the usual two-person critical action: one person requests
- * it with a reason, a DIFFERENT person approves it. The record keeps who
- * requested and approved, when, and which methodology version — an approval
- * covers that version only; a new version of the method needs its own.
- * Identities come from the session, never a request body.
+ * The record is the usual two-person critical action: one person requests it
+ * with a reason, a DIFFERENT person approves it. It belongs to one edition and
+ * one methodology version; a new edition, or a new version of the method,
+ * starts with no record of its own. Identities come from the session, never a
+ * request body.
  */
 export const METHODOLOGY_APPROVAL_ACTION = 'scoring_methodology_approval';
 
 export interface MethodologyApprovalState {
+  /** The edition this record is for. */
+  editionId: string;
   methodology: { id: string; version: string };
   /** The approval in force for this version, if any. */
   approved: {
@@ -53,17 +58,23 @@ const currentMethodology = () => {
 const isFor = (a: CriticalAction, m: { id: string; version: string }) =>
   a.payload['methodologyId'] === m.id && a.payload['version'] === m.version;
 
+const isForEdition = (a: CriticalAction, editionId: string) => a.editionId === editionId;
+
 const reasonOf = (a: CriticalAction) =>
   typeof a.payload['reason'] === 'string' ? (a.payload['reason'] as string) : '';
 
-export async function getMethodologyApproval(pool: Pool): Promise<MethodologyApprovalState> {
+export async function getMethodologyApproval(
+  pool: Pool,
+  editionId: string,
+): Promise<MethodologyApprovalState> {
   const methodology = currentMethodology();
-  const actions = (await listCriticalActionsByType(pool, METHODOLOGY_APPROVAL_ACTION)).filter((a) =>
-    isFor(a, methodology),
+  const actions = (await listCriticalActionsByType(pool, METHODOLOGY_APPROVAL_ACTION)).filter(
+    (a) => isFor(a, methodology) && isForEdition(a, editionId),
   );
   const approved = actions.find((a) => a.status === 'approved' && a.approvedBy && a.approvedAt);
   const pending = actions.find((a) => a.status === 'pending');
   return {
+    editionId,
     methodology,
     approved: approved
       ? {
@@ -85,16 +96,16 @@ export async function getMethodologyApproval(pool: Pool): Promise<MethodologyApp
   };
 }
 
-/** Whether the methodology version in force has been approved by two people. */
-export async function isMethodologyApproved(pool: Pool): Promise<boolean> {
-  return (await getMethodologyApproval(pool)).approved !== null;
+/** Whether this edition has a two-person approval record for the version in force. */
+export async function isMethodologyApproved(pool: Pool, editionId: string): Promise<boolean> {
+  return (await getMethodologyApproval(pool, editionId)).approved !== null;
 }
 
-/** Maker step: ask for the methodology version in force to be approved. */
+/** Maker step: record that the methodology version in force is approved for this edition. */
 export async function requestMethodologyApproval(
   pool: Pool,
   rbac: RbacContext,
-  data: { reason: string },
+  data: { editionId: string; reason: string },
   ctx: ActorContext = {},
 ): Promise<CriticalAction> {
   const reason = data.reason.trim();
@@ -102,7 +113,10 @@ export async function requestMethodologyApproval(
   if (!canRequestCriticalAction(rbac, METHODOLOGY_APPROVAL_ACTION)) {
     throw new PermissionDeniedError(rbac.userId, `request:${METHODOLOGY_APPROVAL_ACTION}`);
   }
-  const state = await getMethodologyApproval(pool);
+  if (!(await getEditionById(pool, data.editionId))) {
+    throw new CriticalActionStateError('That edition was not found');
+  }
+  const state = await getMethodologyApproval(pool, data.editionId);
   if (state.approved) {
     throw new CriticalActionStateError(
       `${state.methodology.id} v${state.methodology.version} is already approved`,
@@ -119,7 +133,7 @@ export async function requestMethodologyApproval(
       version: state.methodology.version,
       reason,
     },
-    editionId: null,
+    editionId: data.editionId,
   });
   await notifyApprovalRequested(pool, {
     actionType: METHODOLOGY_APPROVAL_ACTION,
@@ -132,6 +146,7 @@ export async function requestMethodologyApproval(
     actionType: 'critical_action.requested',
     entityType: 'critical_action',
     entityId: action.id,
+    editionId: data.editionId,
     newValue: { actionType: METHODOLOGY_APPROVAL_ACTION, ...state.methodology },
     reason,
     ipAddress: ctx.ipAddress ?? null,
@@ -193,6 +208,7 @@ export async function decideMethodologyApproval(
     actionType: decision.approved ? 'critical_action.approved' : 'critical_action.rejected',
     entityType: 'critical_action',
     entityId: actionId,
+    editionId: action.editionId,
     oldValue: { status: 'pending' },
     newValue: {
       status: decision.approved ? 'approved' : 'rejected',

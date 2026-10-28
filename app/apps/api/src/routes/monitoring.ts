@@ -93,11 +93,21 @@ export const monitoringRoutes: FastifyPluginAsyncZod = async (app) => {
   );
 
   // D-03 — "Send reminders now": the same pass the hourly scheduler runs
-  // (advisory-locked, idempotent per step), for this edition only. Writing to
-  // participants needs "access:send"; every manual run is audited.
+  // (advisory-locked, idempotent per step), for this edition only. With
+  // `now`, each unfinished person's next reminder goes straight away instead
+  // of waiting for its step's time (the cap and the one-a-day gap still
+  // apply). Writing to participants needs "access:send"; every manual run is
+  // audited.
   app.post(
     '/editions/:id/reminders/run',
-    { preHandler: [app.authenticate], schema: { params: editionParam, querystring: asOfQuery } },
+    {
+      preHandler: [app.authenticate],
+      schema: {
+        params: editionParam,
+        querystring: asOfQuery,
+        body: z.object({ now: z.boolean().optional() }).nullish(),
+      },
+    },
     async (request, reply) => {
       const pool = getPool();
       const actorId = request.session.sub;
@@ -107,6 +117,7 @@ export const monitoringRoutes: FastifyPluginAsyncZod = async (app) => {
         asOf: asOfOf(request.query),
         portalUrl: publicOrigin(),
         editionIds: [editionId],
+        ...(request.body?.now ? { now: true } : {}),
       });
       if (!result.ran) {
         return reply.status(409).send({

@@ -406,8 +406,10 @@ export async function listAudiences(pool: Pool, editionId: string): Promise<Audi
       audiences: [
         {
           id: 'regsall',
-          label: 'All three regulators',
-          sub: 'SEC, NGX and CSCS.',
+          // Counted in market institutions (BUG-05): exactly the ones with a
+          // contact on file, named — not a fixed "three regulators".
+          label: 'Market institutions with a contact on file',
+          sub: regs.length > 0 ? `${regs.map((r) => r.name).join(', ')}.` : 'None on file yet.',
           count: regs.length,
         },
       ],
@@ -892,7 +894,7 @@ export async function sendBatch(
         claimed: false,
       });
     }
-    audienceLabel = 'All three regulators';
+    audienceLabel = 'Market institutions with a contact on file';
   } else if (input.audienceId in PARTICIPANT_INSTRUMENTS && isParticipantReminder(template)) {
     // A survey reminder: only those who have not finished, each linked back
     // into their own survey. Anyone who submitted is never reminded.
@@ -1294,12 +1296,12 @@ export async function resolveInvitationRequest(
           to,
           toName: req.requesterName,
           audience: 'firm',
-          subject: `Your invitation to the CIS-Dragnet 2026 Benchmark Study — ${req.firmName}`,
+          subject: `Your invitation to the 2026 CIS-Dragnet Benchmark Study — ${req.firmName}`,
           label: 'Your request',
           heading: `${req.firmName} already has its space`,
           paragraphs: [
             `Dear ${req.requesterName},`,
-            `Thank you for asking to take part in the CIS-Dragnet 2026 Benchmark Study for ${req.firmName} (ref ${ref}).`,
+            `Thank you for asking to take part in the 2026 CIS-Dragnet Benchmark Study for ${req.firmName} (ref ${ref}).`,
             `Your firm has already set up its space. Its coordinators sign in with their email address and PIN; ask one of them to add you to your firm's team.`,
           ],
           action: { label: 'Go to the firm portal', url: link },

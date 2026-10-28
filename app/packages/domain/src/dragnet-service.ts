@@ -20,6 +20,7 @@
  * data — no separate export query path that could drift.
  */
 
+import { csvCell } from '@cis/survey';
 import { Pool } from 'pg';
 import { getFirmMaturityRows, getDrgOpsAggregate, getDirectPermissionCodes } from '@cis/db';
 import type { FirmMaturityRow, DrgOpsAggregateRow } from '@cis/db';
@@ -122,13 +123,8 @@ export async function getDragnetMaturityCsv(
   const headers = ['Firm name', 'OMI', 'DMI', 'Tier'];
   if (hasAnyConsented) headers.push('Contact name', 'Contact role', 'Contact email');
 
-  const escape = (v: string | null | undefined): string => {
-    if (v == null) return '';
-    const s = String(v);
-    return s.includes(',') || s.includes('"') || s.includes('\n')
-      ? `"${s.replace(/"/g, '""')}"`
-      : s;
-  };
+  // Formula-safe and quoted as needed (BUG-06): contact details are typed by firms.
+  const escape = csvCell;
 
   const lines: string[] = [headers.join(',')];
   for (const row of withTiers) {

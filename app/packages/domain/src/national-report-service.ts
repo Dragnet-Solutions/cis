@@ -152,7 +152,10 @@ export function assertSectionId(id: string): asserts id is NationalReportSection
 export interface SufficiencyContext {
   /** Distinct-count vs floor per investor segment. */
   segments: Record<string, { meets: boolean; thin: boolean }>;
-  /** How many market institutions have engaged (confirmed). */
+  /**
+   * How many market institutions have engaged (confirmed), counted by
+   * distinct institution — the same unit as `regulatorsRequired` (BUG-05).
+   */
   regulatorsEngaged: number;
   /**
    * How many market institutions take part in the edition — SEC, NGX, CSCS,
@@ -226,7 +229,8 @@ function evaluateSectionRule(
             disposition: 'suppressed',
             reason:
               `Institutional Perspectives needs every market institution taking part; ` +
-              `${ctx.regulatorsEngaged} of ${required} engaged. Part of the set is not the ` +
+              `${ctx.regulatorsEngaged} of ${required} market institutions engaged. Part of ` +
+              `the set is not the ` +
               `module — omitting one (CSCS's clearing and settlement view, say) would ` +
               `misrepresent it rather than shorten it.`,
           };

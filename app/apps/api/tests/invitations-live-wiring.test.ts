@@ -27,7 +27,8 @@ import {
   insertRecipient,
   recordDelivery,
 } from '@cis/db';
-import { seedReferenceData } from '@cis/domain';
+import { seedReferenceData, addPerson } from '@cis/domain';
+import { hashPassword } from '@cis/auth';
 import { buildServer } from '../src/server';
 import {
   getTestPool,
@@ -130,5 +131,35 @@ describe('GET /invitations/batches/:batchId/bounced', () => {
     expect(res.statusCode).toBe(200);
     const { bounced } = res.json<{ bounced: Array<{ recipientEmail: string | null }> }>();
     expect(bounced.map((r) => r.recipientEmail)).toEqual(['bad@x.example']);
+  });
+});
+
+describe('POST /editions/:id/invitations/send needs the right to write to people', () => {
+  it('refuses an operator without "access:send", sending nothing', async () => {
+    const seed = await seedReferenceData(getPool());
+    const plain = await addPerson(getPool(), {
+      name: 'Plain',
+      email: 'plain@cis.example',
+      organization: 'CIS',
+      rights: {},
+      actorId: seed.makerUserId,
+    });
+    await getPool().query('UPDATE users SET password_hash = $1 WHERE id = $2', [
+      await hashPassword(PASSWORD),
+      plain.userId,
+    ]);
+    const templates = await getPool().query<{ id: string }>(
+      'SELECT id FROM message_templates WHERE edition_id = $1 LIMIT 1',
+      [seed.editionId],
+    );
+    const res = await app.inject({
+      method: 'POST',
+      url: `/editions/${seed.editionId}/invitations/send`,
+      headers: { authorization: `Bearer ${await login('plain@cis.example')}` },
+      payload: { templateId: templates.rows[0]!.id, audienceId: 'all' },
+    });
+    expect(res.statusCode).toBe(403);
+    const batches = await getPool().query('SELECT 1 FROM message_batches');
+    expect(batches.rowCount).toBe(0);
   });
 });

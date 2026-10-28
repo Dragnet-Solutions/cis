@@ -34,6 +34,8 @@ interface RailSection {
   phases: EditionPhase[];
   /** Shown only to someone holding the Dragnet right (the nav tab is too). */
   requiresDragnetRight?: boolean;
+  /** Shown only to someone holding the Market institutions right (BUG-01). */
+  requiresRegulatorsRight?: boolean;
 }
 
 // Written fresh for this screen — not the brief's own severity-classification
@@ -61,6 +63,7 @@ export const RAIL: RailSection[] = [
     label: 'Market institutions',
     target: 'regulators',
     built: true,
+    requiresRegulatorsRight: true,
     phases: ['before_launch', 'collection_open', 'closing_week'],
   },
   {
@@ -90,19 +93,25 @@ export const RAIL: RailSection[] = [
 
 /** The rail this person sees: a section they hold no right to is hidden, not
  *  greyed — greying is for sections that are simply not relevant yet. */
-export function railFor(hasDragnetRight: boolean): RailSection[] {
-  return RAIL.filter((s) => !s.requiresDragnetRight || hasDragnetRight);
+export function railFor(hasDragnetRight: boolean, hasRegulatorsRight = true): RailSection[] {
+  return RAIL.filter(
+    (s) =>
+      (!s.requiresDragnetRight || hasDragnetRight) &&
+      (!s.requiresRegulatorsRight || hasRegulatorsRight),
+  );
 }
 
 export function MissionBoardPage({
   client,
   editionId,
   hasDragnetRight,
+  hasRegulatorsRight,
   onNavigate,
 }: {
   client: AdminClient;
   editionId: string;
   hasDragnetRight: boolean;
+  hasRegulatorsRight: boolean;
   onNavigate: (target: RailTarget) => void;
 }): JSX.Element {
   const [cards, setCards] = useState<MissionCard[] | null>(null);
@@ -203,7 +212,7 @@ export function MissionBoardPage({
         </div>
 
         <nav aria-label="Operations" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {railFor(hasDragnetRight).map((s) => {
+          {railFor(hasDragnetRight, hasRegulatorsRight).map((s) => {
             const relevant = s.phases.includes(phase);
             return (
               <button

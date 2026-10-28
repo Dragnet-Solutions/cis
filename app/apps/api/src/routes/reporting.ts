@@ -48,6 +48,9 @@ import {
   prepareNationalReview,
   getNationalReview,
   decideFinding,
+  getFirmNarrativeReview,
+  decideFirmNarrativeFinding,
+  undecidedFirmFindings,
   NATIONAL_SECTIONS,
   listRegulators,
   type SufficiencyContext,
@@ -69,6 +72,21 @@ import { renderReportPdf, type PdfSession } from '../pdf/report-pdf';
  */
 export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
   const segment = z.object({ meets: z.boolean(), thin: z.boolean() });
+
+  /**
+   * Market institutions in the edition, counted once each (D-22, BUG-05):
+   * `total` taking part, `engaged` of them confirmed.
+   */
+  async function marketInstitutionCounts(
+    editionId: string,
+  ): Promise<{ engaged: number; total: number }> {
+    const roles = await listRegulators(getPool(), editionId);
+    return {
+      total: new Set(roles.map((r) => r.institutionId)).size,
+      engaged: new Set(roles.filter((r) => r.status === 'confirmed').map((r) => r.institutionId))
+        .size,
+    };
+  }
 
   // ── National report (UX-ADM-005) ──────────────────────────────────────────
   app.post(
@@ -93,9 +111,16 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
       const withheld = withheldSections(await buildIndustryReportContent(pool, request.params.id));
       // How many market institutions the module needs is read from the edition
       // (every one taking part, counted once — D-22), never from the request.
-      const regulatorsRequired = new Set(
-        (await listRegulators(pool, request.params.id)).map((r) => r.institutionId),
-      ).size;
+      const { total: regulatorsRequired } = await marketInstitutionCounts(request.params.id);
+      // Engaged and required are the same unit — market institutions (BUG-05):
+      // more engaged than take part is a typing mistake, not a finding.
+      if (request.body.context.regulatorsEngaged > regulatorsRequired) {
+        return reply.status(400).send({
+          error: 'Bad Request',
+          message: `Market institutions engaged cannot be more than the ${regulatorsRequired} taking part`,
+          statusCode: 400,
+        });
+      }
       const { report, sections } = await generateNationalReport(pool, {
         editionId: request.params.id,
         scoringRunId: request.body.scoringRunId,
@@ -116,7 +141,10 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
     { preHandler: [app.authenticate], schema: { params: z.object({ id: z.string().uuid() }) } },
     async (request, reply) => {
       const sufficiency = await currentSegmentSufficiency(getPool(), request.params.id);
-      return reply.send({ sufficiency });
+      // Market institutions engaged and taking part, so the national-report
+      // form needs no Market institutions right to pre-fill them (BUG-05).
+      const marketInstitutions = await marketInstitutionCounts(request.params.id);
+      return reply.send({ sufficiency, marketInstitutions });
     },
   );
 
@@ -312,6 +340,7 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
         displayName: request.session.displayName,
         org: request.session.org,
         hasDragnetRight: false,
+        hasRegulatorsRight: false,
       },
     },
   });
@@ -523,6 +552,59 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
     },
   );
 
+  // ── A firm report's fact-check decisions (BUG-20 / BUG-03) ────────────────
+  // The same step as the national report's: every finding the checker raised
+  // on the firm's written analysis is decided before the report can be
+  // released. Who decided is the session.
+  app.get(
+    '/editions/:id/firms/:firmId/report/review',
+    {
+      preHandler: [app.authenticate],
+      schema: { params: z.object({ id: z.string().uuid(), firmId: z.string().uuid() }) },
+    },
+    async (request, reply) => {
+      const review = await getFirmNarrativeReview(
+        getPool(),
+        request.params.id,
+        request.params.firmId,
+      );
+      return reply.send({ review });
+    },
+  );
+
+  app.post(
+    '/editions/:id/firms/:firmId/report/review/decision',
+    {
+      preHandler: [app.authenticate],
+      schema: {
+        params: z.object({ id: z.string().uuid(), firmId: z.string().uuid() }),
+        body: z.object({
+          narrativeId: z.string().uuid(),
+          narrativeIndex: z.number().int().min(0),
+          disposition: z.enum(['SUPPRESS_CLAIM', 'REJECT_WITH_REASON']),
+          reason: z.string().trim().max(2000).optional(),
+        }),
+      },
+    },
+    async (request, reply) => {
+      const review = await decideFirmNarrativeFinding(
+        getPool(),
+        {
+          editionId: request.params.id,
+          firmId: request.params.firmId,
+          narrativeId: request.body.narrativeId,
+          narrativeIndex: request.body.narrativeIndex,
+          disposition: request.body.disposition,
+          reason: request.body.reason ?? null,
+          decidedBy: request.session.email,
+          decidedById: request.session.sub,
+        },
+        { ipAddress: request.ip, userAgent: request.headers['user-agent'] ?? null },
+      );
+      return reply.send({ review });
+    },
+  );
+
   app.post(
     '/national-reports/:id/request-approval',
     {
@@ -707,6 +789,13 @@ export const reportingRoutes: FastifyPluginAsyncZod = async (app) => {
           session.email,
         );
         if (!narrative) throw new Error('there are no figures to write about yet');
+        // A redraft at release brings its own findings: they are decided first.
+        const undecided = await undecidedFirmFindings(pool, narrative);
+        if (undecided > 0) {
+          throw new Error(
+            `${undecided} fact-check ${undecided === 1 ? 'finding is' : 'findings are'} not yet decided — decide ${undecided === 1 ? 'it' : 'them'} on the report, then release again`,
+          );
+        }
         return { narrativeId: narrative.id };
       },
     };

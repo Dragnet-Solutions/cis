@@ -51,7 +51,7 @@ data:
   # The sender's domain must be verified in the ZeptoMail Mail Agent. The display
   # name is the study's name; the address stays on idhub.ng until DevOps/IT move
   # sending to cisdragnetstudy.com (see README) — only this value changes then.
-  MAIL_FROM: "CIS - Dragnet Study <noreply@idhub.ng>"
+  MAIL_FROM: "The CIS-Dragnet Benchmark Study <noreply@idhub.ng>"
   # Replies to every email go to the support address (unset, it defaults to
   # SUPPORT_EMAIL; set explicitly so the two are read together).
   MAIL_REPLY_TO: "support@cisdragnetstudy.com"

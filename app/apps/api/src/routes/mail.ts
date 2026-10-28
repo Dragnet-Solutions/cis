@@ -4,7 +4,7 @@ import { getPool, getEmailById, getOutboxHealth } from '@cis/db';
 import { loadRbacContext, requirePermission } from '@cis/auth';
 import { writeAudit } from '@cis/audit';
 import { queueNotice } from '@cis/domain';
-import { STUDY_NAME } from '@cis/survey';
+import { STUDY_NAME, STUDY_SHORT_NAME } from '@cis/survey';
 import { isMailDispatcherRunning, kickMailDispatcher } from '../mail/dispatcher';
 import { deliverDueEmails } from '../mail/mailer';
 import { transportKind } from '../mail/select-transport';
@@ -91,7 +91,7 @@ export const mailRoutes: FastifyPluginAsyncZod = async (app) => {
         label: 'Test',
         refId: null,
         to: request.body.to,
-        subject: `${STUDY_NAME}: test email`,
+        subject: `${STUDY_SHORT_NAME}: test email`,
         heading: 'Test email',
         paragraphs: [
           `This is a test email from the ${STUDY_NAME} operations site.`,

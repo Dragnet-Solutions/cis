@@ -15,7 +15,7 @@ import {
   show,
   signed,
 } from './parts';
-import { STUDY_NAME } from '@cis/survey';
+import { STUDY_ATTRIBUTION, STUDY_NAME, studyTitle } from '@cis/survey';
 
 /**
  * A firm's private report, laid out to the approved sample
@@ -26,6 +26,11 @@ import { STUDY_NAME } from '@cis/survey';
  * The agenda is read from the firm's own gaps only; a difference within the
  * comparison margin makes no claim. The retail cut follows the 10 / 30 gate.
  */
+
+/** Whether the firm has this report: released, by its own state or its publication. */
+export function isReleased(c: Pick<FirmReportContent, 'publishedAt' | 'report'>): boolean {
+  return !!c.publishedAt || c.report.releaseState === 'released';
+}
 
 const QUESTIONS = [
   'Where do we stand against the industry on the five indices?',
@@ -65,6 +70,10 @@ export function FirmReport({
     );
   }
 
+  // Released is the report's own state: a release recorded without a narrative
+  // publication has no publishedAt, and must still never print the draft
+  // banner ("Not yet approved") on what the firm received (BUG-24).
+  const released = isReleased(c);
   const sv = c.selfVsInvestors;
   const firmGap = gapOf(sv.firmSelfBelief, sv.investorExperience);
   const industryGap = gapOf(sv.industrySelfBelief, sv.industryInvestorExperience);
@@ -101,16 +110,18 @@ export function FirmReport({
             operator={operator}
           />
         )}
-        {operator && !c.publishedAt && (
+        {operator && !released && (
           <div className="rpt-draft-banner">
             Not yet released to the firm — this is the operator’s preview.{' '}
             {c.report.approvalState === 'approved' ? 'Approved.' : 'Not yet approved.'}
           </div>
         )}
-        {operator && !printMode && c.publishedAt && (
+        {operator && !printMode && released && (
           <div className="rpt-draft-banner">
-            Released to the firm on {new Date(c.publishedAt).toLocaleString()} — this is exactly
-            what they received, and it is final.
+            {c.publishedAt
+              ? `Released to the firm on ${new Date(c.publishedAt).toLocaleString()}`
+              : 'Released to the firm'}{' '}
+            — this is exactly what they received, and it is final.
           </div>
         )}
         <Cover
@@ -434,11 +445,8 @@ export function FirmReport({
         <div className="rpt-closing">
           <div className="rpt-foot" style={{ marginTop: 0 }}>
             <Brand />
-            <div>
-              State of Stockbroking Operations and Investor Experience in Nigeria: A{' '}
-              {c.edition.label} {STUDY_NAME}
-            </div>
-            <div>{STUDY_NAME} · Private Member Report</div>
+            <div>{studyTitle(c.edition.label)}</div>
+            <div>{STUDY_ATTRIBUTION} · Private Member Report</div>
           </div>
           <p className="rpt-method">
             This report is private to {c.firm.name}: it is never shared with other firms or any

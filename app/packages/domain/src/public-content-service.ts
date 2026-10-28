@@ -10,6 +10,7 @@
 import { Pool } from 'pg';
 import { getPreviousPublishedEditions, type PreviousEditionEntry } from '@cis/db';
 import { getContentState } from './managed-content-service';
+import { DEFAULT_SUPPORT_EMAIL } from './email-templates';
 
 export type { PreviousEditionEntry };
 
@@ -18,27 +19,49 @@ export interface OrganisationDescriptions {
   dragnet: string;
 }
 
-function parseOrganisationDescriptions(body: string | null): OrganisationDescriptions {
-  if (!body) return { cis: '', dragnet: '' };
+/**
+ * BUG-04: the wording Product supplied (27 Oct) for the public pages, used
+ * wherever the operators have not published their own. Published wording
+ * always wins; an area left empty, or a field left blank, falls back here, so
+ * the public pages are never blank.
+ */
+export const DEFAULT_PUBLIC_CONTENT: {
+  organisationDescriptions: OrganisationDescriptions;
+  helpText: string;
+} = {
+  organisationDescriptions: {
+    cis: 'The Chartered Institute of Stockbrokers is the professional body for stockbroking in Nigeria, and co-convenes the CIS-Dragnet Benchmark Study.',
+    dragnet:
+      'Dragnet Solutions Limited is the study’s delivery partner, running the survey platform, analysis and reporting for the CIS-Dragnet Benchmark Study.',
+  },
+  helpText: `Questions about the study or your survey? Email ${DEFAULT_SUPPORT_EMAIL}. Your answers are confidential and reported only in aggregate; no firm or person is named.`,
+};
+
+function nonBlank(v: unknown): string | null {
+  return typeof v === 'string' && v.trim() ? v : null;
+}
+
+function parseJson(body: string | null): Record<string, unknown> {
+  if (!body) return {};
   try {
-    const parsed = JSON.parse(body) as Record<string, unknown>;
-    return {
-      cis: typeof parsed['cis'] === 'string' ? (parsed['cis'] as string) : '',
-      dragnet: typeof parsed['dragnet'] === 'string' ? (parsed['dragnet'] as string) : '',
-    };
+    const parsed: unknown = JSON.parse(body);
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
   } catch {
-    return { cis: '', dragnet: '' };
+    return {};
   }
 }
 
+function parseOrganisationDescriptions(body: string | null): OrganisationDescriptions {
+  const parsed = parseJson(body);
+  const fallback = DEFAULT_PUBLIC_CONTENT.organisationDescriptions;
+  return {
+    cis: nonBlank(parsed['cis']) ?? fallback.cis,
+    dragnet: nonBlank(parsed['dragnet']) ?? fallback.dragnet,
+  };
+}
+
 function parseHelpText(body: string | null): string {
-  if (!body) return '';
-  try {
-    const parsed = JSON.parse(body) as Record<string, unknown>;
-    return typeof parsed['general'] === 'string' ? (parsed['general'] as string) : '';
-  } catch {
-    return '';
-  }
+  return nonBlank(parseJson(body)['general']) ?? DEFAULT_PUBLIC_CONTENT.helpText;
 }
 
 export interface PublicContent {

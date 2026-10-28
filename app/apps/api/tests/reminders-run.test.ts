@@ -13,6 +13,7 @@ import {
   setRespondentContact,
   upsertDraft,
   listReminderSends,
+  markRespondentSubmitted,
 } from '@cis/db';
 import { hashPassword } from '@cis/auth';
 import {
@@ -142,6 +143,44 @@ describe('POST /editions/:id/reminders/run — Send reminders now', () => {
     expect(audit.rows).toHaveLength(2);
     expect(audit.rows[0]!.actor_id).toBe(makerId);
     expect(audit.rows[0]!.new_value.emailed).toBe(2);
+  });
+
+  it('with now: every unfinished, reachable person gets their next reminder straight away', async () => {
+    const pool = getTestPool();
+    const stale = await idleInvestor('email', 1);
+    const fresh = await idleInvestor('email', 2);
+    // Stopped a minute ago: no step is due by the schedule yet.
+    await pool.query(`UPDATE respondent_drafts SET updated_at = NOW() WHERE respondent_id = $1`, [
+      fresh,
+    ]);
+    const done = await idleInvestor('email', 3);
+    await markRespondentSubmitted(pool, done);
+    const token = await login('adaeze.okoro@cis.example');
+
+    const scheduled = await run(token);
+    expect(scheduled.json()).toMatchObject({ emailed: 1, notDue: 1 });
+
+    const now = await app.inject({
+      method: 'POST',
+      url: `/editions/${editionId}/reminders/run`,
+      headers: auth(token),
+      payload: { now: true },
+    });
+    expect(now.statusCode).toBe(200);
+    // The fresh one now; the stale one was reminded minutes ago (one a day).
+    expect(now.json()).toMatchObject({ emailed: 1, notDue: 1 });
+    const sends = await listReminderSends(pool, editionId);
+    expect(sends.map((x) => x.responseId).sort()).toEqual([fresh, stale].sort());
+    expect(sends.some((x) => x.responseId === done)).toBe(false);
+
+    const again = await app.inject({
+      method: 'POST',
+      url: `/editions/${editionId}/reminders/run`,
+      headers: auth(token),
+      payload: { now: true },
+    });
+    expect(again.json()).toMatchObject({ emailed: 0, notDue: 2 });
+    expect(await reminderEmailCount()).toBe(2);
   });
 
   it('needs the "write to people" right', async () => {

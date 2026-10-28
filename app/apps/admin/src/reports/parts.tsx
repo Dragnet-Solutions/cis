@@ -46,6 +46,15 @@ export function Toolbar({
   );
 }
 
+/**
+ * The drop cap goes only on text that opens with a letter. On a numeral it
+ * floats the first digit away from the rest, so "81%" reads as a large "8"
+ * beside "1%" — and copy, PDF text and screen readers get "1%" (BUG-18).
+ */
+export function dropCapClass(text: string): string | undefined {
+  return /^\p{L}/u.test(text.trimStart()) ? 'rpt-lead' : undefined;
+}
+
 /** The checked AI sentences for one section, as a paragraph — or nothing. */
 export function Prose({
   narrative,
@@ -61,7 +70,7 @@ export function Prose({
     .map((s) => s.text)
     .join(' ');
   if (!text) return null;
-  return <p className={lead ? 'rpt-lead' : undefined}>{text}</p>;
+  return <p className={lead ? dropCapClass(text) : undefined}>{text}</p>;
 }
 
 /**
